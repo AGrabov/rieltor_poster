@@ -136,4 +136,8 @@ config.ini
 # History
 .history/
 .qodo/
+
+# Не нужные
 html/
+old/
+*.ipynb
