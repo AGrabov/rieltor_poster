@@ -4,7 +4,7 @@ Split into:
     - rieltor_session.py: Playwright lifecycle + login
     - new_offer_filler.py: create-offer page filling + validation report
 
-Keep importing `RieltorOfferPosterV2` from this module if you don't want to update imports.
+Keep importing `RieltorOfferPoster` from this module if you don't want to update imports.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ logger = setup_logger(__name__)
 from rieltor_session import RieltorCredentials, RieltorSession
 
 
-class RieltorOfferPosterV2:
+class RieltorOfferPoster:
     """High-level helper that manages browser session and fills the offer form."""
 
     CREATE_URL = "https://my.rieltor.ua/offers/create"
@@ -51,7 +51,7 @@ class RieltorOfferPosterV2:
             logger.setLevel("DEBUG")
         self.debug = debug
 
-    def __enter__(self) -> "RieltorOfferPosterV2":
+    def __enter__(self) -> "RieltorOfferPoster":
         self._session.__enter__()
         self.page = self._session.page
         if not self.page:
@@ -145,7 +145,7 @@ if __name__ == '__main__':
         ),
     )
 
-    with RieltorOfferPosterV2(phone=os.getenv("PHONE"), password=os.getenv("PASSWORD"), headless=False, debug=True) as poster:
+    with RieltorOfferPoster(phone=os.getenv("PHONE"), password=os.getenv("PASSWORD"), headless=False, debug=True) as poster:
         poster.login()
         poster.create_offer_draft(new_offer)
         report = poster.save_and_get_report()

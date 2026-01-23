@@ -138,14 +138,15 @@ config.ini
 .qodo/
 
 # Не нужные
+offer_page.html
 html/
 old/
-.ipynb
+*.ipynb
 
 # Файлы фото
 offers/pics/
-.jpg
-.jpeg
+*.jpg
+*.jpeg
 
 # gitignore
 .gitignore
