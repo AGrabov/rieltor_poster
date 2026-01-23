@@ -140,4 +140,12 @@ config.ini
 # Не нужные
 html/
 old/
-*.ipynb
+.ipynb
+
+# Файлы фото
+offers/pics/
+.jpg
+.jpeg
+
+# gitignore
+.gitignore
