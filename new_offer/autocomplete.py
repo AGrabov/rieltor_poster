@@ -321,7 +321,15 @@ class AutocompleteMixin:
         return False
 
     # -------- fill wrappers --------
-    def _fill_autocomplete(self, section: Locator, key: str, value: str, *, next_key: str | None = None) -> None:
+    def _fill_autocomplete(
+        self,
+        section: Locator,
+        key: str,
+        value: str,
+        *,
+        next_key: str | None = None,
+        force: bool = False,
+    ) -> None:
         label = self._expected_label(key) or str(value)
         ctrl = self._find_control_by_label(section, label)
         if not ctrl:
@@ -342,21 +350,17 @@ class AutocompleteMixin:
             c = cur.casefold()
             d = desired.casefold()
 
-            # дом: 17 == 17к1 / 17а (цифровой префикс)
             if key == "house_number":
                 import re
                 cd = re.sub(r"\D+", "", c)
                 dd = re.sub(r"\D+", "", d)
                 if dd and cd.startswith(dd):
                     return True
-                # плюс обычные проверки
                 return c == d or c.startswith(d) or d in c
 
-            # адресные поля: хотим достаточно строгую проверку
             if key in {"region", "city", "district", "street", "condo_complex"}:
                 return c == d or c.startswith(d)
 
-            # прочее: мягче
             return c == d or c.startswith(d) or d in c
 
         # текущее значение в input
@@ -365,21 +369,13 @@ class AutocompleteMixin:
         except Exception:
             cur_input = ""
 
-        # SKIP только если текущее значение реально совпадает с desired
-        if cur_input and _matches(cur_input):
-            # для каскада адреса: дополнительно убеждаемся, что следующий контрол уже доступен
+        # SKIP только если НЕ force и текущее значение совпадает с desired
+        if (not force) and cur_input and _matches(cur_input):
             if not next_key or self._wait_next_field_visible(section, next_key, timeout_ms=1200):
                 logger.info("Autocomplete skip '%s': already '%s'", key, cur_input)
                 return
 
-        # если input пустой, но есть chips/рендер — skip допустим ТОЛЬКО когда не каскад
-        # и только если desired уже присутствует в этих chips/рендере
-        if not cur_input and self._control_has_value(ctrl) and not next_key:
-            # тут лучше НЕ пропускать, если у нас есть desired (иначе ЖК/прочее может быть не тем)
-            # оставляем только для multi-полей, а single-поля должны пройти через verify
-            pass
-
-        logger.info("Autocomplete fill '%s' = '%s'", key, desired)
+        logger.info("Autocomplete fill '%s' = '%s'%s", key, desired, " (force)" if force else "")
 
         def _clear_and_type() -> None:
             try:
@@ -405,7 +401,6 @@ class AutocompleteMixin:
                     pass
 
         def _try_pick() -> bool:
-            # allow_single_option можно и не только для дома:
             allow_single = key in {"region", "city", "district", "street", "house_number"}
             allow_free = key == "house_number"
             return self._pick_autocomplete_option_and_verify(

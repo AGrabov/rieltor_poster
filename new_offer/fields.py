@@ -10,32 +10,117 @@ logger = setup_logger(__name__)
 
 
 class FieldsMixin:
+    # -------- internal helpers --------
+    def _active_listbox(self, *, prefer_menu_id: str | None = None) -> Locator | None:
+        """Return the currently opened MUI listbox.
+
+        MUI Popover/Select renders the listbox outside the form.
+        We try to scope it via aria-controls menu id (best), otherwise pick the last visible listbox.
+        """
+        try:
+            if prefer_menu_id:
+                # Use XPath to avoid CSS escaping issues for dynamic ids.
+                lit = self._xpath_literal(prefer_menu_id)
+                lb = self.page.locator(f"xpath=//div[@id={lit}]//*[@role='listbox']").first
+                if lb.count():
+                    lb.wait_for(state="visible", timeout=2500)
+                    return lb
+        except Exception:
+            pass
+
+        try:
+            lb = self.page.locator("css=[role='listbox']:visible").last
+            if lb.count():
+                lb.wait_for(state="visible", timeout=2500)
+                return lb
+        except Exception:
+            pass
+
+        try:
+            lb = self.page.locator("[role='listbox']").last
+            if lb.count():
+                return lb
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _norm_text(s: str) -> str:
+        return " ".join((s or "").replace("\xa0", " ").split()).strip()
+
+    def _find_option_in_listbox(self, listbox: Locator, desired: str) -> Locator | None:
+        desired_n = self._norm_text(desired)
+        if not desired_n:
+            return None
+
+        # 1) exact match (normalized)
+        opts = listbox.locator("[role='option']")
+        for i in range(opts.count()):
+            o = opts.nth(i)
+            try:
+                t = self._norm_text(o.inner_text())
+            except Exception:
+                continue
+            if t == desired_n:
+                return o
+
+        # 2) contains match
+        o = opts.filter(has_text=desired_n).first
+        return o if o.count() else None
+
     # -------- buttons / toggles --------
     def _click_box_button_in_section(self, root: Locator, section_h6: str, text: str) -> None:
         sec = self._section(root, section_h6)
-        target = (text or "").strip().lower()
+        target = (text or "").strip().casefold()
         logger.info("Select button in '%s': %s", section_h6, target)
 
-        lit = self._xpath_literal(target)
-        xp = (
-            ".//div[contains(@class,'MuiBox-root') and .//span and "
-            "contains(translate(normalize-space(.//span),"
-            "'ABCDEFGHIJKLMNOPQRSTUVWXYZАБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЬЮЯ',"
-            "'abcdefghijklmnopqrstuvwxyzабвгґдеєжзиіїйклмнопрстуфхцчшщьюя'),"
-            f"{lit})]"
-        )
-
-        btn = sec.locator(f"xpath={xp}").first
-        if btn.count() == 0:
-            logger.warning("Button not found in section '%s' for text '%s'", section_h6, target)
-            try:
-                texts = [t.strip() for t in sec.locator("css=span").all_inner_texts() if t.strip()]
-                logger.debug("Available button texts in '%s': %s", section_h6, texts)
-            except Exception:
-                pass
+        if not target:
             return
 
-        btn.click()
+        cards = sec.locator("xpath=.//div[contains(@class,'MuiBox-root')][.//img[@alt] and .//span]")
+
+        chosen = None
+        for i in range(cards.count()):
+            c = cards.nth(i)
+
+            alt = ""
+            try:
+                alt = (c.locator("css=img[alt]").first.get_attribute("alt") or "").strip().casefold()
+            except Exception:
+                pass
+
+            span_txt = ""
+            try:
+                span_txt = " ".join([t.strip() for t in c.locator("css=span").all_inner_texts() if t.strip()]).casefold()
+            except Exception:
+                pass
+
+            if (alt and target in alt) or (span_txt and target in span_txt):
+                chosen = c
+                break
+
+        if not chosen:
+            logger.warning("Button not found in section '%s' for text '%s'", section_h6, target)
+            return
+
+        try:
+            cls = (chosen.get_attribute("class") or "")
+            if "-selected" in cls:
+                logger.info("Box already selected in '%s' for '%s' (skip)", section_h6, target)
+                return
+        except Exception:
+            pass
+
+        try:
+            chosen.scroll_into_view_if_needed()
+        except Exception:
+            pass
+
+        try:
+            chosen.click()
+        except Exception:
+            chosen.click(force=True)
+
 
 
     def _click_section_toggle(self, root: Locator, section_h6: str) -> None:
@@ -119,22 +204,46 @@ class FieldsMixin:
         desired = ("" if value is None else str(value)).strip()
 
         # 0) radio-group?
-        form = self._find_formcontrol_by_label(sec, label)
-        if form and self._try_fill_radio_group(form, section, key, desired):
+        form_rg = self._find_formcontrol_by_label(sec, label)
+        if form_rg and self._try_fill_radio_group(form_rg, section, key, desired):
             logger.debug("Fill radio-group %s/%s = %s", section, key, desired)
             return
 
-        # 1) locate control
+        # 1) locate control by label
         ctrl = self._find_control_by_label(sec, label)
-        if not ctrl:
-            logger.warning("Select/text control not found for key=%s (label=%s) in section=%s", key, label, section)
-            return
 
-        form = ctrl.locator("xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]").first
-        select_btn = form.locator("css=div.MuiSelect-select[role='button']").first
+        # fallback: sometimes label is empty (rare for selects, but happens)
+        if not ctrl:
+            # if there is exactly one MUI select in section, use it
+            one_select = sec.locator("css=div.MuiSelect-select[role='button']").first
+            if one_select.count():
+                ctrl = one_select
+            else:
+                logger.warning("Select/text control not found for key=%s (label=%s) in section=%s", key, label, section)
+                return
+
+        # unwrap to formcontrol/select button if possible
+        try:
+            form = ctrl.locator("xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]").first
+        except Exception:
+            form = sec.locator("css=div.MuiFormControl-root").first
+
+        select_btn = None
+
+        # ctrl itself could be the select button
+        try:
+            role = ctrl.get_attribute("role")
+            cls = (ctrl.get_attribute("class") or "")
+            if role == "button" and "MuiSelect-select" in cls:
+                select_btn = ctrl
+        except Exception:
+            pass
+
+        if not select_btn:
+            select_btn = form.locator("css=div.MuiSelect-select[role='button']").first
 
         # ---------- MUI Select ----------
-        if select_btn.count():
+        if select_btn and select_btn.count():
             if not desired:
                 logger.info("Select skip %s/%s: empty value", section, key)
                 return
@@ -146,36 +255,110 @@ class FieldsMixin:
 
             if cur == desired:
                 logger.info("Select skip %s/%s: already '%s'", section, key, cur)
-                self._mark_touched(form)  # IMPORTANT: mark formcontrol, not only select_btn
+                try:
+                    self._mark_touched(form)
+                except Exception:
+                    pass
                 return
 
             logger.info("Select %s/%s -> %s", section, label, desired)
-            select_btn.click()
 
+            # Capture menu id to reliably choose the correct listbox
+            menu_id = None
             try:
-                self.page.wait_for_selector("xpath=//div[@id='menu-']//ul", timeout=4000)
+                menu_id = select_btn.get_attribute("aria-controls")
             except Exception:
+                menu_id = None
+
+            # Open menu (robust)
+            try:
+                select_btn.scroll_into_view_if_needed()
+            except Exception:
+                pass
+
+            opened_lb = None
+            for _ in range(2):
+                # primary click
+                try:
+                    select_btn.click(timeout=1500)
+                except Exception:
+                    try:
+                        select_btn.click(force=True, timeout=1500)
+                    except Exception:
+                        pass
+
+                opened_lb = self._active_listbox(prefer_menu_id=menu_id)
+                if opened_lb:
+                    break
+
+                # fallback: click arrow icon
+                try:
+                    form.locator("css=svg.MuiSelect-icon").first.click(timeout=1200)
+                except Exception:
+                    pass
+
+                opened_lb = self._active_listbox(prefer_menu_id=menu_id)
+                if opened_lb:
+                    break
+
+                # fallback: click input root
+                try:
+                    form.locator("css=.MuiInputBase-root").first.click(timeout=1200)
+                except Exception:
+                    pass
+
+                opened_lb = self._active_listbox(prefer_menu_id=menu_id)
+                if opened_lb:
+                    break
+
+                # keyboard fallback
+                try:
+                    select_btn.press("Enter")
+                except Exception:
+                    try:
+                        select_btn.press("Space")
+                    except Exception:
+                        pass
+
+                opened_lb = self._active_listbox(prefer_menu_id=menu_id)
+                if opened_lb:
+                    break
+
+            lb = opened_lb or self._active_listbox(prefer_menu_id=menu_id)
+            if not lb:
                 logger.warning("Select listbox not opened for %s/%s", section, key)
                 return
 
-            # ul = self.page.locator("xpath=//div[@id='menu-']//ul").first
-
-
-            opt = self.page.locator("[role='listbox'] [role='option']").filter(has_text=desired).first
-            if opt.count() == 0:
+            opt = self._find_option_in_listbox(lb, desired)
+            if not opt:
                 logger.warning("Option '%s' not found for %s/%s", desired, section, key)
-                texts = self._list_radio_options(opt)
-                logger.debug("Radio available options for %s/%s: %s", section, key, texts)
-                self.page.keyboard.press("Escape")
+                try:
+                    texts = self._list_listbox_options(lb)
+                    logger.debug("Select available options for %s/%s: %s", section, key, texts)
+                except Exception:
+                    pass
+                try:
+                    self.page.keyboard.press("Escape")
+                except Exception:
+                    pass
                 return
 
-            opt.click()
-            self._mark_touched(form)  # IMPORTANT
-            self.page.keyboard.press("Escape")
+            try:
+                opt.click()
+            finally:
+                try:
+                    self._mark_touched(form)
+                except Exception:
+                    pass
+                try:
+                    self.page.keyboard.press("Escape")
+                except Exception:
+                    pass
             return
 
         # ---------- Plain input / textarea ----------
         self._fill_by_label(root, section, key, desired)
+
 
 
     def _list_radio_options(self, form: Locator) -> list[str]:
@@ -312,25 +495,61 @@ class FieldsMixin:
 
         logger.info("Open checklist %s/%s and check %d items", section, key, len(items))
 
-        opener = self._find_control_by_label(sec, label)
-        if opener:
+        opener = None
+
+        # 1) стандартный путь — по label (работает если label реально есть)
+        try:
+            opener = self._find_control_by_label(sec, label)
+            if opener and opener.count() == 0:
+                opener = None
+        except Exception:
+            opener = None
+
+        # 2) fallback для кейса, когда label пустой (как в "В квартирі є")
+        #    берем первый MUI Select button внутри секции
+        if not opener:
+            opener = sec.locator(
+                "css=div.MuiSelect-select[role='button'], [role='button'][aria-haspopup='listbox']"
+            ).first
+            if opener.count() == 0:
+                opener = None
+
+        if not opener:
+            logger.warning("Checklist opener not found for %s/%s", section, key)
+            return
+
+        # click to open listbox
+        try:
+            opener.scroll_into_view_if_needed()
+        except Exception:
+            pass
+
+        try:
+            opener.click()
+        except Exception:
             try:
-                opener.click()
+                opener.click(force=True)
             except Exception:
                 pass
 
+        # scope listbox to opener (если aria-controls нет — берём последний видимый listbox)
+        menu_id = None
         try:
-            self.page.wait_for_selector("[role='listbox']", timeout=4000)
+            menu_id = opener.get_attribute("aria-controls")
         except Exception:
+            menu_id = None
+
+        lb = self._active_listbox(prefer_menu_id=menu_id)
+        if not lb:
             logger.warning("Select listbox not opened for %s/%s", section, key)
             return
 
-        ul = self.page.locator("xpath=//div[@id='menu-']//ul").first
-
         for item in items:
-            logger.debug("Check item: %s", str(item))
-            lit = self._xpath_literal(str(item))
-            node = ul.locator(f"xpath=//*[contains(normalize-space(.), {lit})]").first
+            node = self._find_option_in_listbox(lb, str(item))
+            if not node:
+                logger.warning("Checklist option not found: %s/%s -> %s", section, key, str(item))
+                continue
+
             cb = node.locator("css=input[type='checkbox']").first
             if cb.count():
                 try:
@@ -350,6 +569,7 @@ class FieldsMixin:
             self.page.keyboard.press("Escape")
         except Exception:
             pass
+
 
     def _set_multiselect_or_checklist(self, root: Locator, section: str, key: str, values: Sequence[str]) -> None:
         sec = self._section(root, section)

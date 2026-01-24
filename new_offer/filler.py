@@ -138,7 +138,7 @@ class NewOfferFormFiller(
                 if key == "offer_type":
                     self._click_box_button_in_section(root, section, deal_text(value))
                 else:
-                    self._click_box_button_in_section(root, section, self._to_text(value).lower())
+                    self._click_box_button_in_section(root, section, self._to_text(value))
                 continue
 
             if widget == "text_autocomplete":

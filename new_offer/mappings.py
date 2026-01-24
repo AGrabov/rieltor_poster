@@ -49,11 +49,37 @@ class MappingMixin:
             - role=combobox
             - div.MuiSelect-select[role=button]  (MUI Select)
         """
-        lit = self._xpath_literal((label_text or "").strip())
-        label = section.locator(f"xpath=.//label[contains(normalize-space(.), {lit})]").first
-        try:
-            label.wait_for(state="visible", timeout=2500)
-        except Exception:
+        raw = (label_text or "").strip()
+        if not raw:
+            return None
+
+        # IMPORTANT: avoid ambiguous "contains" matches.
+        # Example: "Планування" must NOT match "Планування кімнат".
+        # We try exact match (ignoring asterisks) first, then fall back to contains.
+        normalized = " ".join(raw.split())
+        normalized_no_ast = normalized.replace("*", "").strip()
+        lit_exact = self._xpath_literal(normalized_no_ast)
+        lit_contains = self._xpath_literal(normalized)
+
+        label = None
+        candidates = [
+            # exact match by label text node
+            f"xpath=.//label[normalize-space(translate(text(), '*', ''))={lit_exact}]",
+            # exact match by full label text (may include nested spans)
+            f"xpath=.//label[normalize-space(translate(., '*', ''))={lit_exact}]",
+            # fallback contains
+            f"xpath=.//label[contains(normalize-space(translate(., '*', '')), {lit_contains})]",
+        ]
+        for sel in candidates:
+            loc = section.locator(sel).first
+            try:
+                loc.wait_for(state="visible", timeout=1200)
+                label = loc
+                break
+            except Exception:
+                continue
+
+        if not label:
             return None
 
         form = label.locator("xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]").first
