@@ -8,6 +8,10 @@ from playwright.sync_api import Locator
 
 from models.choice_labels import OFFER_LABELS, ADDITIONAL_PARAMS_LABELS
 
+from setup_logger import setup_logger
+logger = setup_logger(__name__)
+
+
 
 class MappingMixin:
     """
@@ -67,3 +71,25 @@ class MappingMixin:
             return ctrl
         except Exception:
             return None
+
+
+    def _find_formcontrol_by_label(self, sec: Locator, label_text: str) -> Locator | None:
+        lit = (label_text or "").strip()
+        if not lit:
+            return None
+
+        form = sec.locator(
+            f"xpath=.//div[contains(@class,'MuiFormControl-root')][.//label[contains(@class,'MuiFormLabel-root') and normalize-space(text())='{lit}']]"
+        ).first
+        try:
+            form.wait_for(state="visible", timeout=2500)
+        except Exception as e:
+            return None
+        if not form.count():
+            return None
+
+        logger.debug("Find formcontrol by label: %s", label_text)
+        group = form.locator("xpath=.//div[@role='radiogroup']").first
+        if group.count():
+            return group
+        return None

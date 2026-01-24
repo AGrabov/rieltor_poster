@@ -140,8 +140,8 @@ OFFER_LABELS = {
 ADDITIONAL_PARAMS_LABELS = {
     "heating": "Опалення",
     "heating_type": "Тип опалення",
-    "hot_water": "Горяча вода",
-    "hot_water_type": "Тип горячої води",
+    "hot_water": "Гаряча вода",
+    "hot_water_type": "Тип гарячої води",
     "gas": "Газ",
     "internet": "Інтернет",
     "internet_type": "Тип інтернету",

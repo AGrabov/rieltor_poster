@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from playwright.sync_api import Locator
+from playwright.sync_api import Locator, Page
 
 from setup_logger import setup_logger
 
@@ -37,16 +37,6 @@ class FieldsMixin:
 
         btn.click()
 
-    def _find_formcontrol_by_label(self, sec: Locator, label_text: str) -> Locator | None:
-        lit = self._xpath_literal((label_text or "").strip())
-        lbl = sec.locator(f"xpath=.//label[contains(normalize-space(.), {lit})]").first
-        try:
-            lbl.wait_for(state="visible", timeout=2000)
-        except Exception:
-            return None
-
-        form = lbl.locator("xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]").first
-        return form if form.count() else None
 
     def _click_section_toggle(self, root: Locator, section_h6: str) -> None:
         sec = self._section(root, section_h6)
@@ -58,6 +48,7 @@ class FieldsMixin:
                 sec.click()
             except Exception:
                 pass
+
 
     # -------- inputs/selects --------
     def _fill_by_label(self, root: Locator, section: str, key: str, value: str) -> None:
@@ -130,6 +121,7 @@ class FieldsMixin:
         # 0) radio-group?
         form = self._find_formcontrol_by_label(sec, label)
         if form and self._try_fill_radio_group(form, section, key, desired):
+            logger.debug("Fill radio-group %s/%s = %s", section, key, desired)
             return
 
         # 1) locate control
@@ -157,26 +149,52 @@ class FieldsMixin:
                 self._mark_touched(form)  # IMPORTANT: mark formcontrol, not only select_btn
                 return
 
-            logger.info("Select %s/%s -> %s", section, key, desired)
+            logger.info("Select %s/%s -> %s", section, label, desired)
             select_btn.click()
 
             try:
-                self.page.wait_for_selector("[role='listbox']", timeout=4000)
+                self.page.wait_for_selector("xpath=//div[@id='menu-']//ul", timeout=4000)
             except Exception:
                 logger.warning("Select listbox not opened for %s/%s", section, key)
                 return
 
+            # ul = self.page.locator("xpath=//div[@id='menu-']//ul").first
+
+
             opt = self.page.locator("[role='listbox'] [role='option']").filter(has_text=desired).first
             if opt.count() == 0:
                 logger.warning("Option '%s' not found for %s/%s", desired, section, key)
+                texts = self._list_radio_options(opt)
+                logger.debug("Radio available options for %s/%s: %s", section, key, texts)
+                self.page.keyboard.press("Escape")
                 return
 
             opt.click()
             self._mark_touched(form)  # IMPORTANT
+            self.page.keyboard.press("Escape")
             return
 
         # ---------- Plain input / textarea ----------
         self._fill_by_label(root, section, key, desired)
+
+
+    def _list_radio_options(self, form: Locator) -> list[str]:
+        """Вернуть список всех доступных текстов радиокнопок внутри формы."""
+        options = []
+        try:
+            # Ищем все label'ы внутри формы
+            labels = form.locator("xpath=.//label").all()
+            for lbl in labels:
+                try:
+                    text = lbl.inner_text().strip()
+                    if text:
+                        options.append(text)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        logger.info("Radio options: %s", options)
+        return options
 
     def _try_fill_radio_group(self, form: Locator, section: str, key: str, value: str) -> bool:
         desired = (value or "").strip()
@@ -252,6 +270,42 @@ class FieldsMixin:
             pass
 
     # -------- checklists / multiselect --------
+    def _select_checklist_by_option_label(self, option_label: str) -> Locator | None:
+        desired = (option_label or "").strip()
+        if not desired:
+            return None
+
+        listboxes = self.page.locator("[role='listbox']")
+        count = listboxes.count()
+
+        for i in range(count):
+            lb = listboxes.nth(i)
+            options = self._list_listbox_options(lb)
+            logger.debug("Listbox options: %s -> %s", i, options)
+            if desired in options:
+                logger.info("Select listbox option: %s", desired)
+                return lb
+
+        logger.warning("Listbox option not found: %s", desired)
+        return self.page.locator("[role='listbox']").first
+
+
+    def _list_listbox_options(self, listbox: Locator) -> list[str]:
+        options = []
+        try:
+            items = listbox.locator("[role='option']")
+            count = items.count()
+            for i in range(count):
+                try:
+                    text = items.nth(i).inner_text().strip()
+                    if text:
+                        options.append(text)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return options
+
     def _open_checklist_and_check(self, root: Locator, section: str, key: str, items: Sequence[str]) -> None:
         sec = self._section(root, section)
         label = self._expected_label(key) or key
@@ -265,9 +319,18 @@ class FieldsMixin:
             except Exception:
                 pass
 
+        try:
+            self.page.wait_for_selector("[role='listbox']", timeout=4000)
+        except Exception:
+            logger.warning("Select listbox not opened for %s/%s", section, key)
+            return
+
+        ul = self.page.locator("xpath=//div[@id='menu-']//ul").first
+
         for item in items:
+            logger.debug("Check item: %s", str(item))
             lit = self._xpath_literal(str(item))
-            node = self.page.locator(f"xpath=//*[contains(normalize-space(.), {lit})]").first
+            node = ul.locator(f"xpath=//*[contains(normalize-space(.), {lit})]").first
             cb = node.locator("css=input[type='checkbox']").first
             if cb.count():
                 try:

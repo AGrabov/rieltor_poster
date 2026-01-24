@@ -16,7 +16,7 @@ from playwright.sync_api import Page
 # from new_offer_filler import NewOfferFormFiller
 from new_offer.filler import NewOfferFormFiller
 # from rieltor_dataclasses_01 import Offer, PhotoBlock, Address, OfferType, WithoutPowerSupply, PropertyType, Currency, RoomLayout, Condition
-from models.rieltor_dataclasses import Offer, PhotoBlock, Address, OfferType, WithoutPowerSupply, PropertyType, Currency, RoomLayout, Condition, DealOptions, BuildingOptions, Nearby, InApartment
+from models.rieltor_dataclasses import AdditionalParams, ApartmentLayout, ApartmentType, Bathroom, EntranceDoor, HeatingType, HotWaterType, InternetType, KitchenStove, Offer, PhotoBlock, Address, OfferType, WindowsCondition, WindowsType, WithoutPowerSupply, PropertyType, Currency, RoomLayout, Condition, DealOptions, BuildingOptions, Nearby, InApartment, WindowView
 from setup_logger import setup_logger
 logger = setup_logger(__name__)
 from rieltor_session import RieltorCredentials, RieltorSession
@@ -125,24 +125,71 @@ if __name__ == '__main__':
             gas=False,
             water=False,
         ),
-        apartment=PhotoBlock(
-            description="""Пропонується ексклюзивна однокімнатна квартира з авторським ремонтом та повним меблюванням у сучасному житловому комплексі Бізнес-класу Creator City - символі нового рівня комфорту та стилю в серці Шевченківського району. Квартира створена для тих, хто цінує простір, естетику та технологічність. Тут продумана кожна деталь - від планування до інженерних рішень. За адресою Дегтярівська вул., 17.
-            - Авторський ремонт 2026 року
-            - В квартирі ніхто не проживав
-            - Загальна площа 45 м.кв.
-            - Безпечний 3 поверх / 25 (з видом у двір)
-            - Чудовий інвестиційний варіант
-
-            Повністю укомплектована меблями та всією необхідною технікою для життя без зайвих турбот: вбудований холодильник, індукційна плита, духова шафа, мікрохвильова піч, посудомийна машина, пральна та сушильна машини, телевізор, витяжка, бойлер. Додатково встановлені система очищення води та центральне кондиціонування, що забезпечує комфорт у будь-яку пору року.
-
-            ЖК Creator City є концепція «місто в місті» - вся необхідна для життя інфраструктура знаходиться на території комплексу. Для безпеки майбутніх мешканців в громадських місцях встановлять камери відеоспостереження, внутрішні двори огородять парканом, а увійти в під'їзд та ліфт можна буде тільки з картою-пропуском. Для дітей різного віку розмістять кілька ігрових комплексів, для спортсменів — вуличні тренажери і футбольне поле, а родзинкою комплексу стане власний ландшафтний парк площею 2 га з водоймою. Щоб комфортному відпочинку не заважали автомобілі, забудовник передбачив підземний дворівневий паркінг з ліфтом.
-
-            Локація - ще одна сильна сторона. Поруч зелений парк імені Івана Багряного, Київський зоопарк, метро Лук’янівська та Шулявська, КПІ, інноваційний простір Unit City, житлові комплекси Crystal Park Tower та інші знакові об’єкти району. Тут зручно жити, працювати й відпочивати.
-
-            Це не просто нерухомість - це готовий простір для життя, куди можна заїхати з валізою і відразу відчути себе вдома.
-            Запрошую на перегляд, щоб ви змогли відчути цю атмосферу особисто.""",
-            photos=['offers/pics/photo_2025-12-09_02-43-25.jpg', 'offers/pics/photo_2025-12-09_02-44-14.jpg'],
+        in_apartment=InApartment(
+            tv=True,
+            cable_tv=True,
+            satellite_tv=True,
+            wardrobe=True,
+            bed=True,
+            floor_heating=True,
+            air_conditioner=True,
+            washing_machine=True,
+            drying_machine=True,
+            shower=True,
+            fridge=True,
+            microwave=True,
+            dishwasher=True,
+            alarms=True,
+            counters=True),
+        additional_params=AdditionalParams(
+            heating=True,
+            heating_type=HeatingType.CENTRAL,
+            hot_water=True,
+            hot_water_type=HotWaterType.CENTRAL,
+            gas=True,
+            internet=True,
+            internet_type=InternetType.CABLE,
+            ceiling_height=3.0,
+            nearby=Nearby(
+                school=True,
+                kindergarten=True,
+                stops=True,
+                entertainment_venues=True,
+                supermarket=True,
+                park=True
+            ),
+            apartment_type=ApartmentType.SEPARATED,
+            apartment_layout=ApartmentLayout.STANDARD,
+            kitchen_stove=KitchenStove.GAS,
+            bathroom=Bathroom.SEPARATE,
+            plumbing=True,
+            entrance_door=EntranceDoor.ARMORED,
+            windows_view=WindowView(
+                to_yard=True,
+                to_city=True,
+                ),
+            balconies=1,
+            windows_type=WindowsType.METAL_PLASTIC,
+            windows_condition=WindowsCondition.NEW
         ),
+    #     apartment=PhotoBlock(
+    #         description="""Пропонується ексклюзивна однокімнатна квартира з авторським ремонтом та повним меблюванням у сучасному житловому комплексі Бізнес-класу Creator City - символі нового рівня комфорту та стилю в серці Шевченківського району. Квартира створена для тих, хто цінує простір, естетику та технологічність. Тут продумана кожна деталь - від планування до інженерних рішень. За адресою Дегтярівська вул., 17.
+    #         - Авторський ремонт 2026 року
+    #         - В квартирі ніхто не проживав
+    #         - Загальна площа 45 м.кв.
+    #         - Безпечний 3 поверх / 25 (з видом у двір)
+    #         - Чудовий інвестиційний варіант
+
+    #         Повністю укомплектована меблями та всією необхідною технікою для життя без зайвих турбот: вбудований холодильник, індукційна плита, духова шафа, мікрохвильова піч, посудомийна машина, пральна та сушильна машини, телевізор, витяжка, бойлер. Додатково встановлені система очищення води та центральне кондиціонування, що забезпечує комфорт у будь-яку пору року.
+
+    #         ЖК Creator City є концепція «місто в місті» - вся необхідна для життя інфраструктура знаходиться на території комплексу. Для безпеки майбутніх мешканців в громадських місцях встановлять камери відеоспостереження, внутрішні двори огородять парканом, а увійти в під'їзд та ліфт можна буде тільки з картою-пропуском. Для дітей різного віку розмістять кілька ігрових комплексів, для спортсменів — вуличні тренажери і футбольне поле, а родзинкою комплексу стане власний ландшафтний парк площею 2 га з водоймою. Щоб комфортному відпочинку не заважали автомобілі, забудовник передбачив підземний дворівневий паркінг з ліфтом.
+
+    #         Локація - ще одна сильна сторона. Поруч зелений парк імені Івана Багряного, Київський зоопарк, метро Лук’янівська та Шулявська, КПІ, інноваційний простір Unit City, житлові комплекси Crystal Park Tower та інші знакові об’єкти району. Тут зручно жити, працювати й відпочивати.
+
+    #         Це не просто нерухомість - це готовий простір для життя, куди можна заїхати з валізою і відразу відчути себе вдома.
+    #         Запрошую на перегляд, щоб ви змогли відчути цю атмосферу особисто.""",
+    #         # photos=['offers/pics/photo_2025-12-09_02-43-25.jpg', 'offers/pics/photo_2025-12-09_02-44-14.jpg'],
+    #     ),
     )
 
     with RieltorOfferPoster(phone=os.getenv("PHONE"), password=os.getenv("PASSWORD"), headless=False, debug=True) as poster:

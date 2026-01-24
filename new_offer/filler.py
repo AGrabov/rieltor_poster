@@ -16,7 +16,7 @@ from .validation import ValidationMixin, FormValidationError
 from .misc import deal_text, truthy_fields_as_keys
 
 from models.schema import SECTION_BY_KEY, WIDGET_BY_KEY
-from models.choice_labels import ACCESSIBILITY_LABELS
+
 
 # labels
 from models.choice_labels import (
@@ -28,6 +28,7 @@ from models.choice_labels import (
     BUILDING_OPTIONS_LABELS,
     IN_APARTMENT_LABELS,
     DEAL_OPTIONS_LABELS,
+    ACCESSIBILITY_LABELS
 )
 
 from models.rieltor_dataclasses import Offer
@@ -107,8 +108,12 @@ class NewOfferFormFiller(
             if key in PHOTO_BLOCK_KEYS:
                 # fill all photo blocks once
                 if not photos_filled:
-                    self._fill_photos(root, offer)
-                    photos_filled = True
+                    try:
+                        self._fill_photos(root, offer)
+                        photos_filled = True
+                    except Exception:
+                        logger.exception("Failed to fill photos")
+                        pass
                 continue
 
             if key == "additional_params" and widget == "button":
@@ -155,7 +160,10 @@ class NewOfferFormFiller(
             if widget == "radio":
                 # site expects "Так/Ні" for bool radios
                 if isinstance(value, bool):
-                    desired = "Так" if value else "Ні"
+                    if key in ["renewal_program", "home_program"]:
+                        desired = "Так" if value else "Ні"
+                    else:
+                        desired = "Є" if value else "Немає"
                 else:
                     desired = self._to_text(value)
                 self._fill_select_or_text(root, section, key, desired)
@@ -283,6 +291,7 @@ class NewOfferFormFiller(
         out: List[str] = []
         for k in selected:
             out.append(labels_map.get(k, k))
+        logger.debug("Checklist items for key %s: %s", key, out)
         return out
 
     def _upload_file_in_section(self, root: Locator, section: str, key: str, value: Any) -> None:

@@ -1,4 +1,4 @@
-from rieltor_dataclasses_01 import Offer
+from models.rieltor_dataclasses import Offer
 from dotenv import load_dotenv
 load_dotenv()
 

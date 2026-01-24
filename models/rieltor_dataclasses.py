@@ -325,8 +325,8 @@ class Offer:
     commission_share: Optional[float] = None
 
     # Construction
-    building_type: Optional[str] = None
-    construction_technology: Optional[str] = None
+    building_type: Optional[BuildingType] = None
+    construction_technology: Optional[ConstructionType] = None
     construction_stage: Optional[ConstructionStatus] = None
     year_built: Optional[int] = None
     home_program: Optional[bool] = None
