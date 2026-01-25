@@ -81,6 +81,17 @@ class RieltorOfferPoster:
             raise RuntimeError("Poster not started")
         return self.filler.save_and_get_report()
 
+    def publish(self) -> None:
+        if not self.filler:
+            raise RuntimeError("Poster not started")
+        self.filler.publish()
+
+    def publish_and_get_report(self) -> List[dict]:
+        if not self.filler:
+            raise RuntimeError("Poster not started")
+        return self.filler.publish_and_get_report()
+
+
     def collect_validation_report(self) -> List[dict]:
         if not self.filler:
             raise RuntimeError("Poster not started")

@@ -51,9 +51,13 @@ class NewOfferFormFiller(
 
     CREATE_URL = "https://my.rieltor.ua/offers/create"
     ROOT_H5_TEXT = "Нове оголошення"
+    MANAGEMENT_URL_GLOB = "**/offers/management**"
+
 
     def __init__(self, page: Page, debug: bool = False) -> None:
         self.page = page
+        self.last_saved_offer_id: str | int | None = None
+
         if debug:
             logger.setLevel("DEBUG")
 
@@ -138,7 +142,7 @@ class NewOfferFormFiller(
                 if key == "offer_type":
                     self._click_box_button_in_section(root, section, deal_text(value))
                 else:
-                    self._click_box_button_in_section(root, section, self._to_text(value))
+                    self._click_box_button_in_section(root, section, self._to_text(value).lower())
                 continue
 
             if widget == "text_autocomplete":
@@ -203,26 +207,169 @@ class NewOfferFormFiller(
             # Unknown widget -> try generic fill
             self._fill_by_label(root, section, key, self._to_text(value))
 
+        # Убеждаемся, что нет ошибки карты (она блокирует сохранение)
+        if self._map_error_visible():
+            logger.warning("Map pin error is visible — trying to snap pin by reselecting house number")
+            try:
+                if getattr(offer, 'address', None) is not None:
+                    sec_addr = self._section(root, "Адреса об'єкта")
+                    self._force_reselect_house_number(sec_addr, getattr(offer.address, 'house_number', None))
+            except Exception:
+                pass
+
+            # если всё ещё не ок — перезаполняем адрес полностью
+            if self._map_error_visible():
+                logger.error("Map pin error still visible — refilling address")
+                self._fill_address(root, offer)
+
+
         # Required validation (touched fields)
         self._assert_required_filled(root)
         logger.info("Offer draft filled")
 
-    def save(self) -> None:
-        logger.info("Click save")
-        self.page.locator("button:has-text('Зберегти чернетку')").first.click()
-        self.page.wait_for_load_state("networkidle")
 
-    def save_and_get_report(self, raise_on_errors: bool = False) -> List[dict]:
-        self.save()
+
+    # -------------- Save draft --------------
+    def _submit_and_get_report(
+        self,
+        *,
+        publish_immediately: bool,
+        raise_on_errors: bool = False,
+    ) -> List[dict]:
+        """Common submit: save draft or publish.
+
+        - save -> click 'Зберегти чернетку'
+        - publish -> click 'Опублікувати' (+ optional confirm dialog)
+
+        Success signal: redirect to /offers/management...
+        If we stay on form, collect validation report.
+        """
+        action = "publish" if publish_immediately else "save"
+        btn_text = "Опублікувати" if publish_immediately else "Зберегти чернетку"
+        logger.info("Click %s", action)
+
+        btn = self.page.locator(f"button:has-text('{btn_text}')").first
+        btn.wait_for(state="visible", timeout=15_000)
+
+        # If publish button is disabled -> definitely not ready
+        if publish_immediately:
+            try:
+                if btn.is_disabled():
+                    logger.warning("Publish button is disabled")
+                    root = self._new_offer_root()
+                    report = self.collect_validation_report(root)
+                    if report and raise_on_errors:
+                        raise FormValidationError(report)
+                    return report
+            except Exception:
+                pass
+
+        def _ok(resp) -> bool:
+            """Any successful write to /api/offers (covers both save & publish flows)."""
+            try:
+                req = resp.request
+                if req.method not in ("POST", "PUT", "PATCH"):
+                    return False
+                url = resp.url or ""
+                if "/api/offers" not in url:
+                    return False
+                return 200 <= int(resp.status) < 400
+            except Exception:
+                return False
+
+        resp = None
+        got_resp = False
+
+        # 1) click + wait backend response (best signal)
+        try:
+            with self.page.expect_response(_ok, timeout=35_000) as rinfo:
+                btn.click()
+            resp = rinfo.value
+            got_resp = True
+            try:
+                logger.info("Submit response: %s %s -> %s", resp.request.method, resp.url, resp.status)
+            except Exception:
+                pass
+
+            # best-effort parse offer id on save/publish
+            try:
+                data = resp.json()
+                if isinstance(data, dict):
+                    for k in ("id", "offer_id", "offerId"):
+                        if k in data:
+                            self.last_saved_offer_id = data[k]
+                            break
+                if self.last_saved_offer_id is not None:
+                    logger.info("Offer id: %s", self.last_saved_offer_id)
+            except Exception:
+                pass
+
+        except Exception:
+            try:
+                btn.click(force=True)
+            except Exception:
+                pass
+
+        # 2) optional confirm dialog for publish
+        if publish_immediately:
+            try:
+                dlg = self.page.locator("css=[role='dialog']").first
+                if dlg.count():
+                    confirm = dlg.locator("button:has-text('Опублікувати')").first
+                    if confirm.count():
+                        try:
+                            with self.page.expect_response(_ok, timeout=35_000):
+                                confirm.click()
+                            got_resp = True
+                        except Exception:
+                            try:
+                                confirm.click(force=True)
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+
+        # 3) wait redirect to management page (most common after submit)
+        try:
+            self.page.wait_for_url(self.MANAGEMENT_URL_GLOB, timeout=60_000)
+        except Exception:
+            pass
+
+        # 4) If redirected -> consider success (no form errors to collect)
+        if "/offers/management" in (self.page.url or ""):
+            logger.info("Redirected to offers management: %s", self.page.url)
+            return []
+
+        # 5) settle + collect form errors (only if we stayed on form)
+        if got_resp:
+            try:
+                self.page.wait_for_timeout(900)
+            except Exception:
+                pass
+
         root = self._new_offer_root()
         report = self.collect_validation_report(root)
         if report:
-            logger.warning("Validation errors after save: %s", report)
+            logger.warning("Validation errors after %s: %s", action, report)
             if raise_on_errors:
                 raise FormValidationError(report)
         else:
-            logger.info("No validation errors detected")
+            logger.warning("%s finished without redirect and without visible validation errors", action)
+
         return report
+
+    # ---------------- public API (thin wrappers) ----------------
+    def save(self) -> None:
+        self._submit_and_get_report(publish_immediately=False, raise_on_errors=True)
+
+    def save_and_get_report(self, publish_immediately: bool = False) -> List[dict]:
+        return self._submit_and_get_report(publish_immediately=publish_immediately, raise_on_errors=False)
+
+    def publish(self) -> None:
+        self._submit_and_get_report(publish_immediately=True, raise_on_errors=True)
+
+    def publish_and_get_report(self) -> List[dict]:
+        return self._submit_and_get_report(publish_immediately=True, raise_on_errors=False)
 
     # -------------------- helpers --------------------
     def _get_offer_value(self, offer: Offer, key: str) -> Any | None:

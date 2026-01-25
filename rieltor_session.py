@@ -103,5 +103,9 @@ class RieltorSession:
         p.click("button[type='submit']")
         p.wait_for_load_state("networkidle")
         # check for any pop-up window and close it
-        self.close_popup()
+        if p.locator('div[role="dialog"]').count() > 0:
+            try:
+                self.close_popup()
+            except Exception:
+                pass
         logger.info("Login complete")

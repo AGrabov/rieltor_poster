@@ -15,9 +15,9 @@ def deal_text(offer_type: Any) -> str:
         v = str(offer_type).lower()
 
     if "прод" in v:
-        return "Продаж"
+        return "продаж"
     if "орен" in v or "аренд" in v:
-        return "Оренда"
+        return "оренда"
     return v
 
 

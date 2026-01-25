@@ -17,9 +17,9 @@ class AddressMixin:
         """
         ВАЖНО: ошибка лежит в более внешнем MuiBox-root, чем ближайший ancestor карты.
         Поэтому:
-          - берем .mapboxgl-map
-          - поднимаемся к такому MuiBox-root, который УЖЕ содержит Mui-error
-          - и ищем ошибку внутри него
+            - берем .mapboxgl-map
+            - поднимаемся к такому MuiBox-root, который УЖЕ содержит Mui-error
+            - и ищем ошибку внутри него
         """
         mapbox = self.page.locator("css=.mapboxgl-map").first
         if mapbox.count() == 0:
@@ -61,14 +61,14 @@ class AddressMixin:
         return self._map_error_visible() == want_visible
 
     def _force_reselect_house_number(self, sec: Locator, desired: str | None) -> None:
-        """
-        Делает то же, что ты руками:
-            - клик в house_number
-            - повторно выбрать значение из autocomplete (force=True)
+        """Стабильная фиксация пина на карте.
+
+        То, что работает руками: повторно выбрать номер дома из autocomplete.
+        Иногда UI не успевает обработать выбор с первого раза, поэтому делаем несколько попыток
+        и ждём исчезновения ошибки карты.
         """
         house = (desired or "").strip()
         if not house:
-            # если desired не задан — берём текущее значение из поля
             try:
                 label = self._expected_label("house_number") or "house_number"
                 ctrl = self._find_control_by_label(sec, label)
@@ -82,11 +82,31 @@ class AddressMixin:
             logger.warning("Cannot reselect house_number: empty")
             return
 
-        logger.warning("Reselect house_number='%s' to snap map pin to a building", house)
-        self._fill_autocomplete(sec, "house_number", house, force=True)
+        for attempt in range(1, 4):
+            logger.warning("Reselect house_number='%s' to snap map pin to a building (attempt %s/3)", house, attempt)
 
-        # часто ошибка появляется/исчезает с задержкой — ждём стабилизации
-        self._wait_map_error_state(want_visible=False, timeout_ms=5000)
+            self._fill_autocomplete(sec, "house_number", house, force=True)
+
+            if self._wait_map_error_state(want_visible=False, timeout_ms=9000):
+                return
+
+            # иногда помогает клик по маркеру/карте, чтобы пересчитать здание
+            try:
+                marker = self.page.locator("css=.mapboxgl-marker[aria-label='Map marker'], .mapboxgl-marker").first
+                if marker.count():
+                    marker.click(force=True)
+            except Exception:
+                pass
+
+            self._wait_map_error_state(want_visible=False, timeout_ms=7000)
+            if not self._map_error_visible():
+                return
+
+            try:
+                self.page.wait_for_timeout(400)
+            except Exception:
+                time.sleep(0.4)
+
 
     def _fill_address(self, root: Locator, offer: Offer) -> None:
         sec = self._section(root, "Адреса об'єкта")
@@ -132,7 +152,7 @@ class AddressMixin:
             condo_used = True
             # даём UI дорисовать карту/ошибку
             try:
-                self.page.wait_for_timeout(600)
+                self.page.wait_for_timeout(1000)
             except Exception:
                 time.sleep(0.6)
 

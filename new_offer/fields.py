@@ -70,6 +70,11 @@ class FieldsMixin:
 
     # -------- buttons / toggles --------
     def _click_box_button_in_section(self, root: Locator, section_h6: str, text: str) -> None:
+        """Click card-like option in section (used for 'Тип угоди', 'Тип нерухомості', etc).
+
+        Внутри секции есть вложенные MuiBox-root обёртки, которые тоже матчятся.
+        Поэтому кликаем только по "leaf" карточкам (которые не содержат внутри другую карточку).
+        """
         sec = self._section(root, section_h6)
         target = (text or "").strip().casefold()
         logger.info("Select button in '%s': %s", section_h6, target)
@@ -77,7 +82,11 @@ class FieldsMixin:
         if not target:
             return
 
-        cards = sec.locator("xpath=.//div[contains(@class,'MuiBox-root')][.//img[@alt] and .//span]")
+        # Leaf cards: MuiBox-root с img[alt]+span, но без вложенной такой же карточки
+        cards = sec.locator(
+            "xpath=.//div[contains(@class,'MuiBox-root')]"
+            "[.//img[@alt] and .//span and not(.//div[contains(@class,'MuiBox-root')][.//img[@alt] and .//span])]"
+        )
 
         chosen = None
         for i in range(cards.count()):
@@ -103,6 +112,7 @@ class FieldsMixin:
             logger.warning("Button not found in section '%s' for text '%s'", section_h6, target)
             return
 
+        # skip if already selected
         try:
             cls = (chosen.get_attribute("class") or "")
             if "-selected" in cls:
@@ -116,11 +126,18 @@ class FieldsMixin:
         except Exception:
             pass
 
+        # кликаем по внутреннему span (надёжнее), иначе по карточке
         try:
-            chosen.click()
+            inner = chosen.locator("xpath=.//span[normalize-space()]").first
+            if inner.count():
+                inner.click()
+            else:
+                chosen.click()
         except Exception:
-            chosen.click(force=True)
-
+            try:
+                chosen.click(force=True)
+            except Exception:
+                pass
 
 
     def _click_section_toggle(self, root: Locator, section_h6: str) -> None:

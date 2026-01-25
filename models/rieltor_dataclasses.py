@@ -31,7 +31,7 @@ class PropertyType(Enum):
     HOUSE = "Будинок"
     LAND = "Ділянка"
     PARKING = "Паркомісце"
-    COMMERCIAL = "Комерційна нерухомість"
+    COMMERCIAL = "Комерційна"
 
 
 class RoomLayout(Enum):
