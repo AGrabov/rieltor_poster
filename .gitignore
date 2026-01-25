@@ -142,6 +142,7 @@ offer_page.html
 html/
 old/
 *.ipynb
+*.json
 
 # Файлы фото
 offers/pics/
