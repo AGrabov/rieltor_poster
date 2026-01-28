@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Sequence
 
 from playwright.sync_api import Page, Locator
 
+import logging
 from setup_logger import setup_logger
 
 from .structure import StructureMixin
@@ -58,8 +59,23 @@ class NewOfferFormFiller(
         self.page = page
         self.last_saved_offer_id: str | int | None = None
 
-        if debug:
-            logger.setLevel("DEBUG")
+        self.debug = bool(debug)
+        if self.debug:
+            lvl = logging.DEBUG
+
+            # поднимаем уровень всем логгерам schema_collector.*
+            for name, obj in logging.root.manager.loggerDict.items():
+                if not isinstance(obj, logging.Logger):
+                    continue
+                if name == "schema_collector" or name.startswith("schema_collector."):
+                    obj.setLevel(lvl)
+                    for h in obj.handlers:
+                        h.setLevel(lvl)
+
+            # и текущему (на всякий)
+            logger.setLevel(lvl)
+            for h in logger.handlers:
+                h.setLevel(lvl)
 
     # -------- label resolution (REPLACES offer_name_mapping) --------
     def _expected_label(self, key: str) -> str | None:

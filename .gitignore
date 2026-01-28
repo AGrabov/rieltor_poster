@@ -140,6 +140,7 @@ config.ini
 # Не нужные
 offer_page.html
 html/
+debug_html/
 old/
 *.ipynb
 *.json
@@ -151,3 +152,7 @@ offers/pics/
 
 # gitignore
 .gitignore
+DICT_FILLER_README.md
+example_dict_filler_usage.py
+example_html_parser_usage.py
+test_html_parser.py
