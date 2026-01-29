@@ -19,6 +19,10 @@ class _SmokeFillMixin:
         values = self._radio_options(rg)
         if not values:
             return False
+        # Skip parking type selector radio (Гараж/Паркомісце) - handled by select_parking_type
+        values_cf = {_cf(v) for v in values}
+        if _cf("Гараж") in values_cf and _cf("Паркомісце") in values_cf:
+            return False
         pref = self._preferred_radio_value(values)
         labs = rg.locator("xpath=.//label[.//input[@type='radio']]")
         for i in range(labs.count()):
@@ -27,10 +31,6 @@ class _SmokeFillMixin:
                 t = _norm(l.locator("css=span.MuiFormControlLabel-label").inner_text() or "")
             except Exception:
                 t = ""
-            # Ignore "Гараж" and "Паркомісце"
-            if _cf(t) in [_cf("Гараж"), _cf("Паркомісце")]:
-                return False
-            
             if _cf(t) == _cf(pref):
                 ok = self._click_best_effort(l.locator("css=span.MuiFormControlLabel-label").first) or self._click_best_effort(l)
                 self.page.wait_for_timeout(self.ui_delay_ms + 250)
