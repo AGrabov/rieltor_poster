@@ -1,12 +1,9 @@
-# /mnt/data/mappings.py
 from __future__ import annotations
 
 from enum import Enum
 from typing import Any, Optional
 
 from playwright.sync_api import Locator
-
-from models.choice_labels import OFFER_LABELS, ADDITIONAL_PARAMS_LABELS
 
 from setup_logger import setup_logger
 logger = setup_logger(__name__)
@@ -20,7 +17,8 @@ class MappingMixin:
         - получение ожидаемого label по ключу (_expected_label)
         - поиск контрола по label внутри секции (_find_control_by_label)
 
-    Больше НИКАКИХ offer_mapping/селекторов — всё строится на schema.py + choice_labels.py.
+    Ключи offer_data = украинские подписи из JSON-схемы (напр. "Число кімнат"),
+    поэтому _expected_label(key) просто возвращает key.
     """
 
     @staticmethod
@@ -30,15 +28,8 @@ class MappingMixin:
         return "" if v is None else str(v)
 
     def _expected_label(self, key: str) -> Optional[str]:
-        # 1) общий словарь
-        if key in OFFER_LABELS:
-            return OFFER_LABELS[key]
-        # 2) доп.параметры
-        if key in ADDITIONAL_PARAMS_LABELS:
-            return ADDITIONAL_PARAMS_LABELS[key]
-        # 3) если лейбла нет на сайте/в словаре — вернём None,
-        # дальше логика может использовать fallback на key
-        return None
+        """Key IS the Ukrainian label in the new schema-driven format."""
+        return key
 
     def _find_control_by_label(self, section: Locator, label_text: str) -> Optional[Locator]:
         """

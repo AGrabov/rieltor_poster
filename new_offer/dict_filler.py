@@ -13,26 +13,22 @@ from .mappings import MappingMixin
 from .autocomplete import AutocompleteMixin
 from .fields import FieldsMixin
 from .address import AddressMixin
-from .photos import PhotosMixin
+from .photos import PhotosMixin, _LABEL_DESCRIPTION, _LABEL_VIDEO_URL
 from .validation import ValidationMixin, FormValidationError
 from .misc import deal_text
 
-# labels
-from models.choice_labels import (
-    OFFER_LABELS,
-    ADDITIONAL_PARAMS_LABELS,
-    WITHOUT_POWER_SUPPLY_LABELS,
-    NEARBY_LABELS,
-    WINDOW_VIEW_LABELS,
-    BUILDING_OPTIONS_LABELS,
-    IN_APARTMENT_LABELS,
-    DEAL_OPTIONS_LABELS,
-    ACCESSIBILITY_LABELS
-)
-
-from models.schema import SECTION_BY_KEY, WIDGET_BY_KEY
+from schemas import load_offer_schema
 
 logger = setup_logger(__name__)
+
+# Photo block keys (programmatic) → matched to "Блок N з 5: ..." sections in order
+_PHOTO_BLOCK_KEY_ORDER = ("apartment", "interior", "layout", "yard", "infrastructure")
+
+# Keys in offer_data that are handled specially (not schema fields)
+_SPECIAL_KEYS = frozenset({
+    "offer_type", "property_type", "article", "advertising",
+    "photo_download_link", "personal_notes", "address",
+})
 
 
 class DictOfferFormFiller(
@@ -44,52 +40,51 @@ class DictOfferFormFiller(
     PhotosMixin,
     ValidationMixin,
 ):
-    """Dict-based offer form filler - optimized version.
+    """Dict-based offer form filler — schema-driven version.
 
     Fill only the 'Нове оголошення' form on /offers/create using dict data.
-    Significantly faster than dataclass version by only processing populated fields.
+    All field metadata comes from JSON schemas in schemas/schema_dump/.
     Assumes Page already exists and user is logged in.
+
+    Keys in offer_data are Ukrainian labels from the schema
+    (e.g. "Число кімнат", "Поверх") except for a few special keys
+    ("offer_type", "property_type", "address", photo block keys, etc.).
     """
 
     CREATE_URL = "https://my.rieltor.ua/offers/create"
     ROOT_H5_TEXT = "Нове оголошення"
     MANAGEMENT_URL_GLOB = "**/offers/management**"
 
-    # Class-level schema cache (shared across instances)
-    _schema_cache: Dict[str, dict] = {}
-
-    # Photo block keys
-    PHOTO_BLOCK_KEYS = {"apartment", "interior", "layout", "yard", "infrastructure"}
-
-    # Address keys
-    ADDRESS_KEYS = {
-        "city", "region", "district", "street", "house_number",
-        "subway", "guide", "condo_complex"
-    }
-
-    def __init__(self, page: Page, property_type: str = "Квартира", debug: bool = False) -> None:
-        """Initialize dict-based filler.
-
-        Args:
-            page: Playwright Page object
-            property_type: Property type ("Квартира", "Будинок", "Ділянка", etc.)
-            debug: Enable debug logging
-        """
+    def __init__(
+        self,
+        page: Page,
+        property_type: str = "Квартира",
+        deal_type: str = "Продаж",
+        debug: bool = False,
+    ) -> None:
         self.page = page
         self.property_type = property_type
+        self.deal_type = deal_type
         self.last_saved_offer_id: str | int | None = None
 
         if debug:
             logger.setLevel("DEBUG")
 
-    # -------- label resolution (REPLACES offer_name_mapping) --------
-    def _expected_label(self, key: str) -> str | None:
-        """Get UI label for field key."""
-        if key in OFFER_LABELS:
-            return OFFER_LABELS[key]
-        if key in ADDITIONAL_PARAMS_LABELS:
-            return ADDITIONAL_PARAMS_LABELS[key]
-        return None
+        # Load schema and build lookups
+        self._schema = load_offer_schema(deal_type, property_type)
+
+        # Build photo block key → section title mapping from navigation
+        self._photo_block_sections: Dict[str, str] = {}
+        block_sections = [n for n in self._schema["navigation"] if n.startswith("Блок ")]
+        for i, section_name in enumerate(block_sections):
+            if i < len(_PHOTO_BLOCK_KEY_ORDER):
+                self._photo_block_sections[_PHOTO_BLOCK_KEY_ORDER[i]] = section_name
+
+        logger.debug(
+            "Schema loaded: %d fields, photo blocks: %s",
+            len(self._schema["fields"]),
+            self._photo_block_sections,
+        )
 
     # ---------- public API ----------
     def open(self) -> None:
@@ -98,80 +93,105 @@ class DictOfferFormFiller(
         logger.info("Opened create-offer page")
 
     def create_offer_draft(self, offer_data: dict) -> None:
-        """Fill form using dict data - OPTIMIZED version.
+        """Fill form using dict data — schema-driven version.
 
         Args:
-            offer_data: Dict with offer fields. Supports hybrid structure:
-                - Direct fields: "price", "rooms", "floor", etc.
-                - Nested address: "address": {"city": "Київ", ...}
-                - Nested photos: "apartment": {"description": "...", "photos": [...]}
-                - BoolGroups as lists: "accessibility": ["ramp", "ground_level_entrance"]
+            offer_data: Dict with offer fields. Keys are Ukrainian labels
+                from the schema (e.g. "Число кімнат", "Ціна") plus special
+                keys ("offer_type", "property_type", "address", photo blocks).
         """
         self.open()
         root = self._new_offer_root()
-        logger.info("Start filling offer draft (dict-based)")
+        logger.info("Start filling offer draft (dict-based, schema-driven)")
 
-        # Track state for special groups
         state = {
             'address_filled': False,
             'additional_opened': False,
-            'photos_filled': False
+            'photos_filled': False,
         }
 
-        # OPTIMIZATION: Only process keys in offer_data (not all schema keys)
         for key, value in offer_data.items():
-            # Skip empty values early
             if self._is_empty_value(value):
                 continue
 
-            # Special handling: address block
-            if key == 'address' and isinstance(value, dict):
+            # ── Special: offer_type (box_select) ──
+            if key == "offer_type":
+                self._click_box_button_in_section(root, "Тип угоди", deal_text(value))
+                continue
+
+            # ── Special: property_type (box_select) ──
+            if key == "property_type":
+                self._click_box_button_in_section(
+                    root, "Тип нерухомості", self._to_text(value).lower()
+                )
+                continue
+
+            # ── Special: address block ──
+            if key == "address" and isinstance(value, dict):
                 if not state['address_filled']:
                     self._fill_address_from_dict(root, value)
                     state['address_filled'] = True
                 continue
 
-            # Special handling: photo blocks
-            if key in self.PHOTO_BLOCK_KEYS:
+            # ── Special: photo blocks ──
+            if key in self._photo_block_sections:
                 if not state['photos_filled']:
                     self._fill_photos_from_dict(root, offer_data)
                     state['photos_filled'] = True
                 continue
 
-            # Get section for this key
-            section = SECTION_BY_KEY.get(key)
-            widget = WIDGET_BY_KEY.get(key)
+            # ── Special: personal_notes ──
+            if key == "personal_notes":
+                section = "Особисті нотатки"
+                self._fill_by_label(root, section, "Особисті нотатки", self._to_text(value))
+                continue
 
-            # Handle additional params toggle
-            if key == "additional_params" and widget == "button":
-                if not state['additional_opened']:
-                    self._click_section_toggle(root, section)
+            # ── Skip non-schema special keys ──
+            if key in _SPECIAL_KEYS:
+                continue
+
+            # ── Schema field lookup by label ──
+            label_lower = key.lower().strip()
+            field_info = self._schema["label_to_field"].get(label_lower)
+            if not field_info:
+                logger.debug("Key '%s' not in schema, skipping", key)
+                continue
+
+            section = self._schema["label_to_section"].get(label_lower, "")
+            widget = self._schema["label_to_widget"].get(label_lower, field_info.get("widget", "text"))
+
+            # Open "Додаткові параметри" if needed (lazy, once)
+            if not state['additional_opened'] and "Додаткові параметри" in self._schema["navigation"]:
+                # Check if we need to open it: field is in "Інформація про об'єкт"
+                # and its index suggests it's behind the toggle
+                if self._is_additional_param(field_info):
+                    self._click_section_toggle(root, "Додаткові параметри")
                     state['additional_opened'] = True
-                continue
 
-            # Skip if key not in schema
-            if not section:
-                logger.debug(f"Key '{key}' not in schema, skipping")
-                continue
-
-            # Open additional params section if needed
-            if self._needs_additional_section(key) and not state['additional_opened']:
-                self._click_section_toggle(root, "Додаткові параметри")
-                state['additional_opened'] = True
-
-            # Fill field using widget-specific handlers
             self._fill_field_from_dict(root, section, key, value, widget)
 
         # Map error handling (only if address was filled)
         if state['address_filled'] and self._map_error_visible():
-            self._handle_map_error_optimized(root, offer_data.get('address', {}))
+            self._handle_map_error(root, offer_data.get('address', {}))
 
         # Required validation
         self._assert_required_filled(root)
-        logger.info("Offer draft filled (dict-based)")
+        logger.info("Offer draft filled (dict-based, schema-driven)")
+
+    def _is_additional_param(self, field_info: dict) -> bool:
+        """Check if a field belongs to the 'Додаткові параметри' collapsible section.
+
+        These are fields in 'Інформація про об'єкт' that appear after the toggle
+        in the form (field_index >= 16 typically: Опалення, Гаряча вода, etc.).
+        """
+        if field_info.get("section") != "Інформація про об'єкт":
+            return False
+        idx = field_info.get("meta", {}).get("field_index")
+        if idx is None:
+            return True  # conditional fields (no index) are usually additional
+        return idx >= 16
 
     def _is_empty_value(self, value: Any) -> bool:
-        """Check if value is empty."""
         if value is None:
             return True
         if isinstance(value, str) and not value.strip():
@@ -182,31 +202,17 @@ class DictOfferFormFiller(
             return True
         return False
 
-    def _needs_additional_section(self, key: str) -> bool:
-        """Check if key belongs to additional params section."""
-        additional_keys = {
-            "heating", "heating_type", "hot_water", "hot_water_type",
-            "gas", "gas_type", "internet", "internet_type",
-            "apartment_type", "bathroom", "ceiling_height",
-            "nearby", "windows_view", "additional"
-        }
-        return key in additional_keys
-
     def _fill_field_from_dict(
         self,
         root: Locator,
         section: str,
         key: str,
         value: Any,
-        widget: str | None
+        widget: str | None,
     ) -> None:
         """Fill single field using widget-specific handler."""
-        # Dispatch by widget type
         if widget == "box_select":
-            if key == "offer_type":
-                self._click_box_button_in_section(root, section, deal_text(value))
-            else:
-                self._click_box_button_in_section(root, section, self._to_text(value).lower())
+            self._click_box_button_in_section(root, section, self._to_text(value).lower())
             return
 
         if widget == "text_autocomplete":
@@ -216,7 +222,8 @@ class DictOfferFormFiller(
 
         if widget == "autocomplete_multi":
             sec = self._section(root, section)
-            self._fill_autocomplete_multi(sec, key, [self._to_text(v) for v in value])
+            items = value if isinstance(value, (list, tuple)) else [value]
+            self._fill_autocomplete_multi(sec, key, [self._to_text(v) for v in items])
             return
 
         if widget == "checkbox":
@@ -224,12 +231,8 @@ class DictOfferFormFiller(
             return
 
         if widget == "radio":
-            # site expects "Так/Ні" for bool radios
             if isinstance(value, bool):
-                if key in ["renewal_program", "home_program"]:
-                    desired = "Так" if value else "Ні"
-                else:
-                    desired = "Є" if value else "Немає"
+                desired = "Так" if value else "Ні"
             else:
                 desired = self._to_text(value)
             self._fill_select_or_text(root, section, key, desired)
@@ -239,15 +242,7 @@ class DictOfferFormFiller(
             self._fill_select_or_text(root, section, key, self._to_text(value))
             return
 
-        if widget == "text":
-            self._fill_by_label(root, section, key, self._to_text(value))
-            return
-
-        if widget == "multiline_text":
-            self._fill_by_label(root, section, key, self._to_text(value))
-            return
-
-        if widget == "datetime":
+        if widget in ("text", "multiline_text", "datetime"):
             self._fill_by_label(root, section, key, self._to_text(value))
             return
 
@@ -256,22 +251,22 @@ class DictOfferFormFiller(
             return
 
         if widget == "checklist":
-            items = self._checklist_items_for_key(key, value)
-            if not items:
-                return
-            self._open_checklist_and_check(root, section, key, items)
+            items = self._checklist_items(key, value)
+            if items:
+                self._open_checklist_and_check(root, section, key, items)
             return
 
-        # Unknown widget -> try generic fill
+        # Unknown widget → try generic fill
         self._fill_by_label(root, section, key, self._to_text(value))
 
+    # ── Address ──
+
     def _fill_address_from_dict(self, root: Locator, address_data: dict) -> None:
-        """Fill address section from dict - only populated fields.
+        """Fill address section from dict with Ukrainian label keys.
 
         Args:
-            address_data: Dict with address fields like:
-                {"city": "Київ", "district": "Печерський", "street": "Хрещатик",
-                 "house_number": "1", "subway": ["Майдан"], "guide": ["Біля ЦУМу"]}
+            address_data: Dict like {"Місто": "Київ", "Новобудова": "ЖК Панорама",
+                           "Район": "...", "Будинок": "1", "Метро": [...]}
         """
         sec = self._section(root, "Адреса об'єкта")
 
@@ -279,118 +274,125 @@ class DictOfferFormFiller(
             logger.warning("Address data is empty, skip")
             return
 
-        # Normalize street and condo_complex
-        if "street" in address_data:
-            s = str(address_data["street"]).strip()
+        # Helper to get value by Ukrainian label (case-insensitive)
+        def _get(label: str) -> str | None:
+            for k, v in address_data.items():
+                if k.lower().strip() == label.lower().strip():
+                    return v
+            return None
+
+        city = _get("Місто")
+        condo = _get("Новобудова")
+        district = _get("Район")
+        street = _get("Вулиця")
+        house = _get("Будинок")
+        region = _get("Область")
+        subway = _get("Метро")
+        guide = _get("Орієнтир")
+
+        # Normalize street and condo
+        if street:
+            s = str(street).strip()
             if s.startswith("вул.") or s.startswith("вулиця "):
                 s = s.replace("вул.", "").replace("вулиця ", "").strip()
-            address_data["street"] = s
+            street = s
 
-        if "condo_complex" in address_data:
-            cc = str(address_data["condo_complex"]).strip()
+        if condo:
+            cc = str(condo).strip()
             if cc.startswith("ЖК "):
                 cc = cc.replace("ЖК ", "").strip()
-            address_data["condo_complex"] = cc
+            condo = cc
 
         logger.info(
             "Fill address: city=%s, condo=%s, district=%s, street=%s, house=%s",
-            address_data.get("city"),
-            address_data.get("condo_complex"),
-            address_data.get("district"),
-            address_data.get("street"),
-            address_data.get("house_number"),
+            city, condo, district, street, house,
         )
 
-        # Fill in optimal order based on what's present
-
         # 0) CITY
-        if "city" in address_data:
-            next_key = "condo_complex" if "condo_complex" in address_data else "district"
-            self._fill_autocomplete(sec, "city", address_data["city"], next_key=next_key)
+        if city:
+            next_key = "Новобудова" if condo else "Район"
+            self._fill_autocomplete(sec, "Місто", city, next_key=next_key)
 
-        # 1) CONDO COMPLEX
+        # 1) CONDO COMPLEX (triggers autofill of district/street/house)
         condo_used = False
-        if "condo_complex" in address_data:
-            self._fill_autocomplete(sec, "condo_complex", address_data["condo_complex"])
+        if condo:
+            self._fill_autocomplete(sec, "Новобудова", condo)
             condo_used = True
-            # Give UI time to render map/error
             try:
                 self.page.wait_for_timeout(1000)
             except Exception:
-                import time
                 time.sleep(0.6)
 
         # 2) REGION
-        if "region" in address_data:
-            self._fill_autocomplete(sec, "region", address_data["region"])
+        if region:
+            self._fill_autocomplete(sec, "Область", region)
 
-        # 3) DISTRICT (if not autofilled)
-        district_label = self._expected_label("district") or "district"
-        district_ctrl = self._find_control_by_label(sec, district_label)
+        # 3) DISTRICT (if not autofilled by condo)
+        district_ctrl = self._find_control_by_label(sec, "Район")
         if district_ctrl and not self._control_has_value(district_ctrl):
-            if "district" in address_data:
-                self._fill_autocomplete(sec, "district", address_data["district"], next_key="street")
+            if district:
+                self._fill_autocomplete(sec, "Район", district, next_key="Вулиця")
 
         # 4) STREET (if not autofilled)
-        street_label = self._expected_label("street") or "street"
-        street_ctrl = self._find_control_by_label(sec, street_label)
+        street_ctrl = self._find_control_by_label(sec, "Вулиця")
         if street_ctrl and not self._control_has_value(street_ctrl):
-            if "street" in address_data:
-                self._fill_autocomplete(sec, "street", address_data["street"], next_key="house_number")
+            if street:
+                self._fill_autocomplete(sec, "Вулиця", street, next_key="Будинок")
 
         # 5) HOUSE NUMBER (if not autofilled)
-        house_label = self._expected_label("house_number") or "house_number"
-        house_ctrl = self._find_control_by_label(sec, house_label)
+        house_ctrl = self._find_control_by_label(sec, "Будинок")
         if house_ctrl and not self._control_has_value(house_ctrl):
-            if "house_number" in address_data:
-                self._fill_autocomplete(sec, "house_number", address_data["house_number"])
+            if house:
+                self._fill_autocomplete(sec, "Будинок", house)
 
-        # KEY: if used ЖК - force reselect house_number (as manual interaction)
-        if condo_used and "house_number" in address_data:
-            self._force_reselect_house_number(sec, address_data["house_number"])
-            # If error still visible - try again
+        # If condo was used — force reselect house to snap map pin
+        if condo_used and house:
+            self._force_reselect_house_number(sec, house, house_label="Будинок")
             if self._map_error_visible():
-                self._force_reselect_house_number(sec, address_data["house_number"])
+                self._force_reselect_house_number(sec, house, house_label="Будинок")
 
         # 6) Multi-select fields
-        if "subway" in address_data:
-            self._fill_autocomplete_multi(sec, "subway", list(address_data["subway"]))
-        if "guide" in address_data:
-            self._fill_autocomplete_multi(sec, "guide", list(address_data["guide"]))
+        if subway:
+            items = subway if isinstance(subway, (list, tuple)) else [subway]
+            self._fill_autocomplete_multi(sec, "Метро", [str(v) for v in items])
+        if guide:
+            items = guide if isinstance(guide, (list, tuple)) else [guide]
+            self._fill_autocomplete_multi(sec, "Орієнтир", [str(v) for v in items])
 
-    def _handle_map_error_optimized(self, root: Locator, address_data: dict) -> None:
-        """Handle map pin error - optimized version."""
+    def _handle_map_error(self, root: Locator, address_data: dict) -> None:
+        """Handle map pin error — try to snap pin by reselecting house number."""
         logger.warning("Map pin error is visible — trying to snap pin by reselecting house number")
 
         if not address_data:
             return
 
+        def _get(label: str) -> str | None:
+            for k, v in address_data.items():
+                if k.lower().strip() == label.lower().strip():
+                    return v
+            return None
+
         try:
             sec_addr = self._section(root, "Адреса об'єкта")
-            house_number = address_data.get("house_number")
-            if house_number:
-                self._force_reselect_house_number(sec_addr, house_number)
+            house = _get("Будинок")
+            if house:
+                self._force_reselect_house_number(sec_addr, str(house), house_label="Будинок")
         except Exception:
             pass
 
-        # If still not ok - refill address completely
         if self._map_error_visible():
             logger.error("Map pin error still visible — refilling address")
             self._fill_address_from_dict(root, address_data)
 
+    # ── Photos ──
+
     def _fill_photos_from_dict(self, root: Locator, offer_data: dict) -> None:
-        """Fill only photo blocks that have data.
+        """Fill photo blocks that have data.
 
-        Args:
-            offer_data: Dict that may contain photo blocks like:
-                {"apartment": {"description": "...", "photos": [...]}, ...}
+        Photo block keys ("apartment", "interior", etc.) are mapped to
+        section titles from schema navigation ("Блок 1 з 5: Про квартиру", etc.).
         """
-        from models.choice_labels import PHOTO_BLOCK_LABELS
-
-        label_description = PHOTO_BLOCK_LABELS.get("description", "Опис")
-        label_video = PHOTO_BLOCK_LABELS.get("video_url", "Посилання на відеотур")
-
-        for key in self.PHOTO_BLOCK_KEYS:
+        for key, section_title in self._photo_block_sections.items():
             photo_block = offer_data.get(key)
             if not photo_block or not isinstance(photo_block, dict):
                 continue
@@ -399,21 +401,18 @@ class DictOfferFormFiller(
             video = str(photo_block.get("video_url", "")).strip()
             photos = photo_block.get("photos", [])
 
-            # Skip if all fields empty
             if not (desc or video or photos):
                 continue
 
-            section_title = self._expected_label(key) or key
             sec = self._section(root, section_title)
-
             self._ensure_photo_block_open(sec)
 
             if desc:
-                self._fill_text_in_photo_section(sec, label_description, desc)
+                self._fill_text_in_photo_section(sec, _LABEL_DESCRIPTION, desc)
 
-            # video_url exists only in first block "Блок 1 з 5: Про квартиру"
+            # video_url exists only in the first block
             if key == "apartment" and video:
-                self._fill_text_in_photo_section(sec, label_video, video)
+                self._fill_text_in_photo_section(sec, _LABEL_VIDEO_URL, video)
             elif video and key != "apartment":
                 logger.debug(
                     "PhotoBlock '%s': video_url set, but UI only has it in first block — skipping",
@@ -423,59 +422,27 @@ class DictOfferFormFiller(
             if photos:
                 self._upload_photos_in_photo_section(sec, list(photos))
 
-    def _checklist_items_for_key(self, key: str, value: Any) -> List[str]:
+    # ── Checklists ──
+
+    def _checklist_items(self, key: str, value: Any) -> List[str]:
         """Convert checklist value to UI labels.
 
-        Handles both:
-        - New dict format: list of keys like ['ramp', 'ground_level_entrance']
-        - Old dataclass format: BoolGroup with selected_keys() method (backward compat)
+        In the new schema-driven format, checklist values in offer_data are
+        already the Ukrainian UI label texts (from schema field options).
         """
-        # New dict-based format: already a list
         if isinstance(value, (list, tuple, set)):
-            return self._resolve_labels_for_keys(key, list(value))
-
-        # Old dataclass format: BoolGroup with selected_keys()
-        if hasattr(value, 'selected_keys'):
-            try:
-                keys = list(value.selected_keys())
-                return self._resolve_labels_for_keys(key, keys)
-            except Exception:
-                pass
-
+            return [str(v) for v in value if str(v).strip()]
         return []
 
-    def _resolve_labels_for_keys(self, field_key: str, keys: List[str]) -> List[str]:
-        """Map internal keys to UI labels using choice_labels."""
-        labels_map_dict = {
-            'without_power_supply': WITHOUT_POWER_SUPPLY_LABELS,
-            'accessibility': ACCESSIBILITY_LABELS,
-            'nearby': NEARBY_LABELS,
-            'windows_view': WINDOW_VIEW_LABELS,
-            'additional': BUILDING_OPTIONS_LABELS,
-            'in_apartment': IN_APARTMENT_LABELS,
-            'special_conditions': DEAL_OPTIONS_LABELS,
-        }
+    # ── Save / Publish ──
 
-        labels_map = labels_map_dict.get(field_key, {})
-        result = [labels_map.get(k, k) for k in keys]
-        logger.debug("Checklist items for key %s: %s", field_key, result)
-        return result
-
-    # -------------- Save draft / Publish (same as original) --------------
     def _submit_and_get_report(
         self,
         *,
         publish_immediately: bool,
         raise_on_errors: bool = False,
     ) -> List[dict]:
-        """Common submit: save draft or publish.
-
-        - save -> click 'Зберегти чернетку'
-        - publish -> click 'Опублікувати' (+ optional confirm dialog)
-
-        Success signal: redirect to /offers/management...
-        If we stay on form, collect validation report.
-        """
+        """Common submit: save draft or publish."""
         action = "publish" if publish_immediately else "save"
         btn_text = "Опублікувати" if publish_immediately else "Зберегти чернетку"
         logger.info("Click %s", action)
@@ -483,7 +450,6 @@ class DictOfferFormFiller(
         btn = self.page.locator(f"button:has-text('{btn_text}')").first
         btn.wait_for(state="visible", timeout=15_000)
 
-        # If publish button is disabled -> definitely not ready
         if publish_immediately:
             try:
                 if btn.is_disabled():
@@ -497,7 +463,6 @@ class DictOfferFormFiller(
                 pass
 
         def _ok(resp) -> bool:
-            """Any successful write to /api/offers (covers both save & publish flows)."""
             try:
                 req = resp.request
                 if req.method not in ("POST", "PUT", "PATCH"):
@@ -512,7 +477,6 @@ class DictOfferFormFiller(
         resp = None
         got_resp = False
 
-        # 1) click + wait backend response (best signal)
         try:
             with self.page.expect_response(_ok, timeout=35_000) as rinfo:
                 btn.click()
@@ -523,7 +487,6 @@ class DictOfferFormFiller(
             except Exception:
                 pass
 
-            # best-effort parse offer id on save/publish
             try:
                 data = resp.json()
                 if isinstance(data, dict):
@@ -542,7 +505,6 @@ class DictOfferFormFiller(
             except Exception:
                 pass
 
-        # 2) optional confirm dialog for publish
         if publish_immediately:
             try:
                 dlg = self.page.locator("css=[role='dialog']").first
@@ -561,18 +523,15 @@ class DictOfferFormFiller(
             except Exception:
                 pass
 
-        # 3) wait redirect to management page (most common after submit)
         try:
             self.page.wait_for_url(self.MANAGEMENT_URL_GLOB, timeout=60_000)
         except Exception:
             pass
 
-        # 4) If redirected -> consider success (no form errors to collect)
         if "/offers/management" in (self.page.url or ""):
             logger.info("Redirected to offers management: %s", self.page.url)
             return []
 
-        # 5) settle + collect form errors (only if we stayed on form)
         if got_resp:
             try:
                 self.page.wait_for_timeout(900)
@@ -590,26 +549,24 @@ class DictOfferFormFiller(
 
         return report
 
-    # ---------------- public API (thin wrappers) ----------------
+    # ── Public API (thin wrappers) ──
+
     def save(self) -> None:
-        """Save draft and raise on errors."""
         self._submit_and_get_report(publish_immediately=False, raise_on_errors=True)
 
     def save_and_get_report(self, publish_immediately: bool = False) -> List[dict]:
-        """Save draft and return validation report."""
         return self._submit_and_get_report(publish_immediately=publish_immediately, raise_on_errors=False)
 
     def publish(self) -> None:
-        """Publish offer and raise on errors."""
         self._submit_and_get_report(publish_immediately=True, raise_on_errors=True)
 
     def publish_and_get_report(self) -> List[dict]:
-        """Publish offer and return validation report."""
         return self._submit_and_get_report(publish_immediately=True, raise_on_errors=False)
 
-    # -------------------- helpers --------------------
+    # ── Helpers ──
+
     def _upload_file_in_section(self, root: Locator, section: str, key: str, value: Any) -> None:
-        """Upload file(s) in a section. `value` may be str path or list[str]."""
+        """Upload file(s) in a section."""
         files: List[str] = []
         if isinstance(value, str):
             if value.strip():
@@ -621,15 +578,10 @@ class DictOfferFormFiller(
             return
 
         sec = self._section(root, section)
-
-        # Prefer finding input[type=file] near label
-        label = self._expected_label(key) or key
-        if label:
-            lit = self._xpath_literal(label)
-            form = sec.locator(f"xpath=.//*[contains(normalize-space(.), {lit})]").first
-            inp = form.locator("css=input[type='file']").first if form.count() else sec.locator("css=input[type='file']").first
-        else:
-            inp = sec.locator("css=input[type='file']").first
+        label = key  # key IS the label
+        lit = self._xpath_literal(label)
+        form = sec.locator(f"xpath=.//*[contains(normalize-space(.), {lit})]").first
+        inp = form.locator("css=input[type='file']").first if form.count() else sec.locator("css=input[type='file']").first
 
         if inp.count() == 0:
             logger.warning("File input not found for %s/%s", section, key)

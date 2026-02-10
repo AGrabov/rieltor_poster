@@ -5,7 +5,6 @@ import time
 from playwright.sync_api import Locator
 
 from setup_logger import setup_logger
-from models.rieltor_dataclasses import Offer
 
 logger = setup_logger(__name__)
 
@@ -60,7 +59,9 @@ class AddressMixin:
                 time.sleep(0.2)
         return self._map_error_visible() == want_visible
 
-    def _force_reselect_house_number(self, sec: Locator, desired: str | None) -> None:
+    def _force_reselect_house_number(
+        self, sec: Locator, desired: str | None, house_label: str = "Будинок"
+    ) -> None:
         """Стабильная фиксация пина на карте.
 
         То, что работает руками: повторно выбрать номер дома из autocomplete.
@@ -70,8 +71,7 @@ class AddressMixin:
         house = (desired or "").strip()
         if not house:
             try:
-                label = self._expected_label("house_number") or "house_number"
-                ctrl = self._find_control_by_label(sec, label)
+                ctrl = self._find_control_by_label(sec, house_label)
                 if ctrl:
                     inp = ctrl.locator("css=input").first if ctrl.locator("css=input").count() else ctrl
                     house = (inp.input_value() or "").strip()
@@ -85,7 +85,7 @@ class AddressMixin:
         for attempt in range(1, 4):
             logger.warning("Reselect house_number='%s' to snap map pin to a building (attempt %s/3)", house, attempt)
 
-            self._fill_autocomplete(sec, "house_number", house, force=True)
+            self._fill_autocomplete(sec, house_label, house, force=True)
 
             if self._wait_map_error_state(want_visible=False, timeout_ms=9000):
                 return
@@ -108,89 +108,3 @@ class AddressMixin:
                 time.sleep(0.4)
 
 
-    def _fill_address(self, root: Locator, offer: Offer) -> None:
-        sec = self._section(root, "Адреса об'єкта")
-        a = offer.address
-        if a is None:
-            logger.warning("Offer has no address, skip")
-            return
-
-        # normalize
-        try:
-            if getattr(a, "street", None):
-                s = a.street.strip()
-                if s.startswith("вул.") or s.startswith("вулиця "):
-                    s = s.replace("вул.", "").replace("вулиця ", "").strip()
-                a.street = s
-
-            if getattr(a, "condo_complex", None):
-                cc = a.condo_complex.strip()
-                if cc.startswith("ЖК "):
-                    cc = cc.replace("ЖК ", "").strip()
-                a.condo_complex = cc
-        except Exception:
-            pass
-
-        logger.info(
-            "Fill address: city=%s, condo=%s, district=%s, street=%s, house=%s",
-            getattr(a, "city", None),
-            getattr(a, "condo_complex", None),
-            getattr(a, "district", None),
-            getattr(a, "street", None),
-            getattr(a, "house_number", None),
-        )
-
-        # 0) CITY
-        if getattr(a, "city", None):
-            next_key = "condo_complex" if getattr(a, "condo_complex", None) else "district"
-            self._fill_autocomplete(sec, "city", a.city, next_key=next_key)
-
-        # 1) CONDO COMPLEX
-        condo_used = False
-        if getattr(a, "condo_complex", None):
-            self._fill_autocomplete(sec, "condo_complex", a.condo_complex)
-            condo_used = True
-            # даём UI дорисовать карту/ошибку
-            try:
-                self.page.wait_for_timeout(1000)
-            except Exception:
-                time.sleep(0.6)
-
-        # 2) REGION
-        if getattr(a, "region", None):
-            self._fill_autocomplete(sec, "region", a.region)
-
-        # 3) DISTRICT
-        district_label = self._expected_label("district") or "district"
-        district_ctrl = self._find_control_by_label(sec, district_label)
-        if district_ctrl and not self._control_has_value(district_ctrl):
-            if getattr(a, "district", None):
-                self._fill_autocomplete(sec, "district", a.district, next_key="street")
-
-        # 4) STREET (если не автозаполнилось)
-        street_label = self._expected_label("street") or "street"
-        street_ctrl = self._find_control_by_label(sec, street_label)
-        if street_ctrl and not self._control_has_value(street_ctrl):
-            if getattr(a, "street", None):
-                self._fill_autocomplete(sec, "street", a.street, next_key="house_number")
-
-        # 5) HOUSE NUMBER (если не автозаполнилось)
-        house_label = self._expected_label("house_number") or "house_number"
-        house_ctrl = self._find_control_by_label(sec, house_label)
-        if house_ctrl and not self._control_has_value(house_ctrl):
-            if getattr(a, "house_number", None):
-                self._fill_autocomplete(sec, "house_number", a.house_number)
-
-        # === КЛЮЧЕВОЕ: если использовали ЖК — форсим повторный выбор house_number (как руками) ===
-        # (даже если ошибка ещё не “успела” отрисоваться)
-        if condo_used:
-            self._force_reselect_house_number(sec, getattr(a, "house_number", None))
-            # если ошибка всё ещё есть — ещё раз (иногда с первого раза список не успевает)
-            if self._map_error_visible():
-                self._force_reselect_house_number(sec, getattr(a, "house_number", None))
-
-        # 6) multi
-        if getattr(a, "subway", None):
-            self._fill_autocomplete_multi(sec, "subway", list(a.subway))
-        if getattr(a, "guide", None):
-            self._fill_autocomplete_multi(sec, "guide", list(a.guide))

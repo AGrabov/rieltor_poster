@@ -7,60 +7,20 @@ from playwright.sync_api import Locator
 
 from setup_logger import setup_logger
 
-from models.choice_labels import PHOTO_BLOCK_LABELS
-from models.rieltor_dataclasses import Offer, PhotoBlock
-
 from .photo_processing import prepare_photos
 
 logger = setup_logger(__name__)
+
+# UI labels for photo block controls (hardcoded — same across all property types)
+_LABEL_DESCRIPTION = "Опис"
+_LABEL_VIDEO_URL = "Посилання на відеотур"
+_LABEL_UPLOAD_PHOTOS = "Завантажити фото"
 
 
 class PhotosMixin:
     """Заполняет PhotoBlock-секции: описание, видео (только блок 1) и фото."""
 
     page: any  # Playwright Page
-
-    PHOTO_BLOCK_KEYS = ("apartment", "interior", "layout", "yard", "infrastructure")
-
-    def _fill_photos(self, root: Locator, offer: Offer) -> None:
-        """Заполнить все фото-блоки, которые имеют данные в offer."""
-        if offer is None:
-            return
-
-        label_description = PHOTO_BLOCK_LABELS.get("description", "Опис")
-        label_video = PHOTO_BLOCK_LABELS.get("video_url", "Посилання на відеотур")
-
-        for key in self.PHOTO_BLOCK_KEYS:
-            pb = getattr(offer, key, None)
-            if not isinstance(pb, PhotoBlock):
-                continue
-
-            desc = (pb.description or "").strip()
-            video = (pb.video_url or "").strip()
-            photos = list(pb.photos or [])
-
-            if not (desc or video or photos):
-                continue
-
-            section_title = self._expected_label(key) or key
-            sec = self._section(root, section_title)
-
-            self._ensure_photo_block_open(sec)
-
-            if desc:
-                self._fill_text_in_photo_section(sec, label_description, desc)
-
-            # video_url существует только в первом блоке "Блок 1 з 5: Про квартиру"
-            if key == "apartment" and video:
-                self._fill_text_in_photo_section(sec, label_video, video)
-            elif video and key != "apartment":
-                logger.debug(
-                    "PhotoBlock '%s': video_url задан, но в UI есть только в первом блоке — пропускаю",
-                    key,
-                )
-
-            if photos:
-                self._upload_photos_in_photo_section(sec, photos)
 
     # ---------- internals ----------
     def _ensure_photo_block_open(self, sec: Locator) -> None:
@@ -87,8 +47,8 @@ class PhotosMixin:
 
     def _photo_block_content_visible(self, sec: Locator) -> bool:
         """Проверяем по наличию кнопки загрузки/поля описания, что секция развернута."""
-        upload_text = (PHOTO_BLOCK_LABELS.get("photos") or "").strip() or "Завантажити фото"
-        desc_label = (PHOTO_BLOCK_LABELS.get("description") or "").strip() or "Опис"
+        upload_text = _LABEL_UPLOAD_PHOTOS
+        desc_label = _LABEL_DESCRIPTION
 
         # 1) кнопка загрузки
         try:

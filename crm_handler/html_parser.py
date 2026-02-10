@@ -6,27 +6,66 @@ compatible with DictOfferFormFiller.
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
 
 from bs4 import BeautifulSoup, Tag
-from .description_analyzer import DescriptionAnalyzer
+from description_analyzer import DescriptionAnalyzer
+from schemas import load_offer_schema, ADDRESS_LABELS
 
 from setup_logger import setup_logger
 
 logger = setup_logger(__name__)
 
+# ── CRM → Schema mapping tables ──────────────────────────────────────
+
+# CRM "Тип угоди" → subfolder inside schemas/schema_dump/
+DEAL_TYPE_TO_FOLDER = {
+    'продаж': 'sell',
+    'оренда': 'lease',
+}
+
+# CRM "Категорія" → schema filename (takes priority over Тип)
+CRM_CATEGORY_TO_SCHEMA = {
+    'комерційна нерухомість': 'Комерційна',
+}
+
+# CRM "Тип" → schema filename (used when category doesn't resolve)
+CRM_TYPE_TO_SCHEMA = {
+    # Житлова нерухомість
+    'квартира': 'Квартира',
+    'кімната': 'Кімната',
+    'будинок': 'Будинок',
+    'дім': 'Будинок',
+    # Земля
+    'ділянка': 'Ділянка',
+    'земельна ділянка': 'Ділянка',
+    # Паркомісце subtypes
+    'гараж': 'Паркомісце_garage',
+    'паркомісце': 'Паркомісце_parking',
+    'паркінг': 'Паркомісце_parking',
+    # Комерційна subtypes (fallback if category not matched)
+    'офіс': 'Комерційна',
+    'торговельне': 'Комерційна',
+    'склад': 'Комерційна',
+    'виробництво': 'Комерційна',
+}
+
+# Fields handled by dedicated extraction methods — skip in generic characteristics loop
+_SKIP_LABELS = frozenset({
+    'категорія', 'тип', 'тип угоди', 'реклама',
+})
+
 
 class HTMLOfferParser:
     """Parse real estate object HTML and extract data for dict_filler.
 
-    Uses dynamically collected schemas from models/schema_dump/ to map
-    Ukrainian field labels to programmatic keys.
+    Auto-detects property type and deal type from the HTML, then loads
+    the matching schema from ``schemas/schema_dump/{sell|lease}/``.
 
     Example:
-        >>> parser = HTMLOfferParser("html/Об'єкт.html", property_type="Квартира")
+        >>> parser = HTMLOfferParser("html/Об'єкт.html")
         >>> offer_data = parser.parse()
         >>> print(offer_data['price'], offer_data['address']['city'])
     """
@@ -34,17 +73,14 @@ class HTMLOfferParser:
     def __init__(
         self,
         html_content: Union[str, Path],
-        property_type: str = "Квартира",
-        debug: bool = False
+        debug: bool = False,
     ):
         """Initialize HTML parser.
 
         Args:
-            html_content: HTML string or path to HTML file
-            property_type: Property type to determine schema ("Квартира", "Будинок", etc.)
-            debug: Enable debug logging
+            html_content: HTML string or path to HTML file.
+            debug: Enable debug logging.
         """
-        self.property_type = property_type
         self.debug = debug
 
         if debug:
@@ -58,7 +94,6 @@ class HTMLOfferParser:
                 with open(path, 'r', encoding='utf-8') as f:
                     html_str = f.read()
             else:
-                # Assume it's HTML string
                 html_str = str(html_content)
         else:
             html_str = str(html_content)
@@ -66,65 +101,128 @@ class HTMLOfferParser:
         self.soup = BeautifulSoup(html_str, 'html.parser')
         logger.debug(f"Parsed HTML, title: {self.soup.title.string if self.soup.title else 'No title'}")
 
-        # Load schema
-        self.schema = self._load_schema(property_type)
-        self.label_to_field = self._create_label_mapping()
+        # Auto-detect deal type and property type from HTML
+        self.deal_type = self._detect_deal_type()
+        self.property_type = self._detect_property_type()
+        logger.info(f"Detected deal_type={self.deal_type}, property_type={self.property_type}")
+
+        # Load schema based on detected types (uses centralized loader)
+        self._schema_data = load_offer_schema(self.deal_type, self.property_type)
+        self.schema = {
+            'fields': self._schema_data['fields'],
+            'navigation': self._schema_data['navigation'],
+        }
+        self.label_to_field = self._schema_data['label_to_field']
         self.required_fields = self._get_required_fields()
 
         # Initialize description analyzer
         self.analyzer = DescriptionAnalyzer(self.schema['fields'], debug=debug)
 
-        logger.info(f"Initialized parser: property_type={property_type}, fields={len(self.schema['fields'])}, required={len(self.required_fields)}")
+        logger.info(
+            f"Initialized parser: deal_type={self.deal_type}, "
+            f"property_type={self.property_type}, "
+            f"fields={len(self.schema['fields'])}, required={len(self.required_fields)}"
+        )
 
-    def _load_schema(self, property_type: str) -> dict:
-        """Load schema from models/schema_dump/{property_type}.json.
+    # ==================== Auto-detection ====================
 
-        Args:
-            property_type: Property type name (e.g., "Квартира")
+    def _read_characteristics_table(self) -> Dict[str, str]:
+        """Read all label→value pairs from the first characteristics detail-view table.
 
         Returns:
-            Schema dict with fields and navigation
+            Dict mapping lowercase label → raw value text.
+        """
+        pairs: Dict[str, str] = {}
+        for table in self.soup.select('table.detail-view'):
+            for row in table.select('tr'):
+                cells = row.select('th, td')
+                if len(cells) >= 2:
+                    label = cells[0].get_text(strip=True).lower()
+                    value = cells[1].get_text(strip=True)
+                    if label and value:
+                        pairs.setdefault(label, value)
+        return pairs
+
+    def _detect_deal_type(self) -> str:
+        """Detect deal type (Продаж / Оренда) from HTML.
+
+        Strategy:
+            1. Look for "Тип угоди" row in characteristics table.
+            2. Fallback: parse the summary title (e.g. "Продаж / Квартира / ...").
+
+        Returns:
+            "Продаж" or "Оренда".
 
         Raises:
-            FileNotFoundError: If schema file doesn't exist
+            ValueError: If deal type cannot be determined.
         """
-        schema_path = Path(__file__).parent.parent / "models" / "schema_dump" / f"{property_type}.json"
+        chars = self._read_characteristics_table()
+        raw = chars.get('тип угоди', '').strip()
+        if raw:
+            logger.debug(f"Detected deal_type from table: {raw}")
+            return raw
 
-        if not schema_path.exists():
-            raise FileNotFoundError(
-                f"Schema file not found: {schema_path}\n"
-                f"Available property types: Квартира, Будинок, Кімната, Комерційна, Ділянка, Паркомісце"
-            )
+        # Fallback: summary title
+        title_elem = self.soup.select_one('.summary-estate-data h4')
+        if title_elem:
+            title_text = title_elem.get_text(strip=True).lower()
+            if 'продаж' in title_text:
+                return 'Продаж'
+            if 'оренда' in title_text:
+                return 'Оренда'
 
-        logger.debug(f"Loading schema from: {schema_path}")
-        with open(schema_path, 'r', encoding='utf-8') as f:
-            schema = json.load(f)
+        raise ValueError(
+            "Cannot detect deal type (Тип угоди) from HTML. "
+            "Expected 'Продаж' or 'Оренда' in characteristics table or page title."
+        )
 
-        return schema
+    def _detect_property_type(self) -> str:
+        """Detect property type and map it to the schema filename.
 
-    def _create_label_mapping(self) -> Dict[str, dict]:
-        """Create reverse mapping from lowercase labels to field info.
+        Strategy:
+            1. Read "Категорія" from characteristics — if it maps via
+               CRM_CATEGORY_TO_SCHEMA, use that directly.
+            2. Otherwise read "Тип" and look it up in CRM_TYPE_TO_SCHEMA.
+            3. Fallback: parse the summary title for known type names.
 
         Returns:
-            Dict mapping normalized labels to field definitions
+            Schema filename stem (e.g. "Квартира", "Комерційна").
+
+        Raises:
+            ValueError: If type cannot be determined.
         """
-        mapping = {}
+        chars = self._read_characteristics_table()
 
-        for field in self.schema['fields']:
-            label = field['label'].lower().strip()
-            # Store field info for this label
-            if label not in mapping:
-                mapping[label] = field
-            else:
-                # If duplicate, keep the one with more info (more options, or required)
-                existing = mapping[label]
-                if field.get('required') and not existing.get('required'):
-                    mapping[label] = field
-                elif len(field.get('options', [])) > len(existing.get('options', [])):
-                    mapping[label] = field
+        # 1. Try category first
+        category = chars.get('категорія', '').lower().strip()
+        if category in CRM_CATEGORY_TO_SCHEMA:
+            result = CRM_CATEGORY_TO_SCHEMA[category]
+            logger.debug(f"Detected property_type from category '{category}': {result}")
+            return result
 
-        logger.debug(f"Created label mapping: {len(mapping)} unique labels")
-        return mapping
+        # 2. Try "Тип" field
+        crm_type = chars.get('тип', '').lower().strip()
+        if crm_type in CRM_TYPE_TO_SCHEMA:
+            result = CRM_TYPE_TO_SCHEMA[crm_type]
+            logger.debug(f"Detected property_type from type '{crm_type}': {result}")
+            return result
+
+        # 3. Fallback: summary title
+        title_elem = self.soup.select_one('.summary-estate-data h4')
+        if title_elem:
+            title_lower = title_elem.get_text(strip=True).lower()
+            for crm_name, schema_name in CRM_TYPE_TO_SCHEMA.items():
+                if crm_name in title_lower:
+                    logger.debug(f"Detected property_type from title: {schema_name}")
+                    return schema_name
+
+        raise ValueError(
+            f"Cannot detect property type from HTML. "
+            f"Категорія='{chars.get('категорія', '')}', Тип='{chars.get('тип', '')}'. "
+            f"Known types: {list(CRM_TYPE_TO_SCHEMA.keys())}"
+        )
+
+    # ==================== Schema helpers ====================
 
     def _get_required_fields(self) -> List[dict]:
         """Extract required fields from schema.
@@ -140,13 +238,30 @@ class HTMLOfferParser:
         """Parse HTML and return dict compatible with DictOfferFormFiller.
 
         Returns:
-            Dict with extracted offer data
+            Dict with extracted offer data.
 
         Raises:
-            ValueError: If required fields are missing
+            ValueError: If required fields are missing.
         """
         logger.info("Starting HTML parse")
         result = {}
+
+        # Detected types (set during __init__)
+        result["offer_type"] = self.deal_type
+        result["property_type"] = self.property_type
+
+        # Extra fields (article, advertising, photo download link)
+        article = self._extract_article()
+        if article is not None:
+            result["article"] = article
+
+        advertising = self._extract_advertising()
+        if advertising is not None:
+            result["advertising"] = advertising
+
+        photo_dl = self._extract_photo_download_link()
+        if photo_dl is not None:
+            result["photo_download_link"] = photo_dl
 
         # Extract all data sections
         result.update(self._extract_basic_info())
@@ -159,7 +274,6 @@ class HTMLOfferParser:
 
         # Fallback to summary stats if needed
         summary_data = self._extract_summary_stats()
-        # Only use summary data if main extraction didn't get these fields
         for key, value in summary_data.items():
             if key not in result and value is not None:
                 result[key] = value
@@ -183,7 +297,6 @@ class HTMLOfferParser:
         if description or note:
             full_text = "\n\n".join([note or "", description or ""]).strip()
             analyzed_data = self.analyzer.analyze(full_text, result)
-            # Merge analyzed data (don't override existing fields)
             for key, value in analyzed_data.items():
                 if key not in result and value is not None:
                     result[key] = value
@@ -204,48 +317,36 @@ class HTMLOfferParser:
     # ==================== Field Extractors ====================
 
     def _extract_basic_info(self) -> dict:
-        """Extract basic info from summary section.
+        """Extract price and currency from summary section.
 
         Returns:
-            Dict with offer_type, property_type, price
+            Dict with schema label keys ("Ціна", "Валюта").
         """
         result = {}
 
-        # Extract price
         price_elem = self.soup.select_one('.price-per-object')
         if price_elem:
             price_text = price_elem.get_text(strip=True)
             amount, currency = self._parse_price(price_text)
             if amount is not None:
-                result["price"] = amount
+                result["Ціна"] = amount
             if currency:
-                result["currency"] = currency
+                result["Валюта"] = currency
             logger.debug(f"Extracted price: {amount} {currency}")
-
-        # Extract property type from page title or use parameter
-        result["property_type"] = self.property_type
-
-        # Extract offer type from title
-        title_elem = self.soup.select_one('.summary-estate-data h4')
-        if title_elem:
-            title_text = title_elem.get_text(strip=True).lower()
-            if 'продаж' in title_text or 'продаж' in title_text:
-                result["offer_type"] = "Продаж"
-            elif 'оренда' in title_text or 'аренда' in title_text:
-                result["offer_type"] = "Оренда"
-            logger.debug(f"Inferred offer_type from title: {result.get('offer_type')}")
 
         return result
 
     def _extract_characteristics(self) -> dict:
         """Extract data from characteristics tables.
 
+        Skips labels already handled by dedicated methods (see ``_SKIP_LABELS``)
+        and address fields (handled by ``_extract_address``).
+
         Returns:
-            Dict with fields extracted from detail-view tables
+            Dict with schema label keys (e.g. "Загальний стан", "Тип будинку").
         """
         result = {}
 
-        # Find all tables with class "detail-view"
         tables = self.soup.select('table.detail-view')
         logger.debug(f"Found {len(tables)} characteristic tables")
 
@@ -260,33 +361,26 @@ class HTMLOfferParser:
                     if not label_text or not value_text:
                         continue
 
-                    # Special cases for fields not in schema
-                    label_lower = label_text.lower()
+                    label_lower = label_text.lower().strip()
 
-                    # Extract property_type from "Тип"
-                    if label_lower == 'тип':
-                        result['property_type'] = value_text
-                        logger.debug(f"Extracted property_type={value_text} from HTML")
+                    # Skip fields handled by dedicated methods
+                    if label_lower in _SKIP_LABELS:
                         continue
 
-                    # Extract offer_type from "Тип угоди"
-                    if 'тип угоди' in label_lower:
-                        result['offer_type'] = value_text
-                        logger.debug(f"Extracted offer_type={value_text} from HTML")
-                        continue
-
-                    # Look up field in schema by label (handles HTML→Schema label mapping)
+                    # Look up field in schema by HTML label
                     field_info = self._look_up_field_by_html_label(label_text)
 
                     if field_info:
-                        # Infer programmatic key from label
-                        key = self._infer_key_from_label(field_info)
-                        if key:
-                            # Normalize value based on widget type
-                            normalized_value = self._normalize_value(field_info, value_text)
-                            if normalized_value is not None:
-                                result[key] = normalized_value
-                                logger.debug(f"Extracted {key}={normalized_value} from label '{label_text}'")
+                        # Skip address fields (handled separately)
+                        if field_info['label'].lower().strip() in ADDRESS_LABELS:
+                            continue
+
+                        # Use schema label as key
+                        schema_label = field_info['label']
+                        normalized_value = self._normalize_value(field_info, value_text)
+                        if normalized_value is not None:
+                            result[schema_label] = normalized_value
+                            logger.debug(f"Extracted '{schema_label}'={normalized_value} from HTML label '{label_text}'")
                     else:
                         logger.debug(f"No schema match for label: '{label_text}'")
 
@@ -296,11 +390,10 @@ class HTMLOfferParser:
         """Extract address data from address table section.
 
         Returns:
-            Dict with address fields (city, district, street, etc.)
+            Dict with schema label keys ("Місто", "Район", "Вулиця", etc.)
         """
         address = {}
 
-        # Find address tables
         tables = self.soup.select('table.detail-view')
 
         for table in tables:
@@ -314,40 +407,39 @@ class HTMLOfferParser:
                     if not label_text or not value_text:
                         continue
 
-                    # Check if this is an address field using HTML→Schema label mapping
+                    # Check if this is an address field
                     field_info = self._look_up_field_by_html_label(label_text)
 
-                    if field_info and field_info.get('section', '').lower() == 'адреса об\'єкта':
-                        key = self._infer_key_from_label(field_info, is_address=True)
-                        if key:
-                            # Clean up value
-                            value = value_text
-                            # Remove prefixes
-                            if key == 'street' and value.startswith('вул.'):
-                                value = value.replace('вул.', '').strip()
-                            elif key == 'condo_complex' and value.startswith('ЖК '):
-                                value = value.replace('ЖК ', '').strip()
+                    if field_info and field_info['label'].lower().strip() in ADDRESS_LABELS:
+                        schema_label = field_info['label']
+                        value = value_text
 
-                            address[key] = value
-                            logger.debug(f"Extracted address.{key}={value}")
+                        # Clean up prefixes
+                        label_lower = schema_label.lower().strip()
+                        if label_lower == 'вулиця' and value.startswith('вул.'):
+                            value = value.replace('вул.', '').strip()
+                        elif label_lower == 'новобудова' and value.startswith('ЖК '):
+                            value = value.replace('ЖК ', '').strip()
 
-        # Try to extract metro and house number from characteristics
-        for table in tables:
-            rows = table.select('tr')
-            for row in rows:
-                cells = row.select('th, td')
-                if len(cells) >= 2:
-                    label_text = cells[0].get_text(strip=True).lower()
-                    value_text = cells[1].get_text(strip=True)
+                        # Метро and Орієнтир are multi-value
+                        if label_lower in ('метро', 'орієнтир'):
+                            address[schema_label] = [value]
+                        else:
+                            address[schema_label] = value
+                        logger.debug(f"Extracted address.{schema_label}={value}")
 
-                    if 'метро' in label_text and value_text:
-                        # Store as list
-                        address['subway'] = [value_text]
-                        logger.debug(f"Extracted subway: {value_text}")
-                    elif 'номер будинку' in label_text and value_text:
-                        # House number is not in schema but needed for address
-                        address['house_number'] = value_text
-                        logger.debug(f"Extracted house_number: {value_text}")
+        # Fallback: try to extract house number from "Номер будинку" (CRM label)
+        if 'Будинок' not in address:
+            for table in tables:
+                for row in table.select('tr'):
+                    cells = row.select('th, td')
+                    if len(cells) >= 2:
+                        lbl = cells[0].get_text(strip=True).lower()
+                        val = cells[1].get_text(strip=True)
+                        if 'номер будинку' in lbl and val:
+                            address['Будинок'] = val
+                            logger.debug(f"Extracted address.Будинок={val} (from 'Номер будинку')")
+                            break
 
         return address if address else {}
 
@@ -355,36 +447,36 @@ class HTMLOfferParser:
         """Extract data from summary property values (fallback).
 
         Returns:
-            Dict with rooms, floor, floors_total, areas
+            Dict with schema label keys ("Число кімнат", "Поверх", etc.)
         """
         result = {}
 
-        # Find summary property values
         property_values = self.soup.select('.summary-property-value')
 
         if len(property_values) >= 3:
             # First value: rooms
             rooms_text = property_values[0].get_text(strip=True)
             if rooms_text.isdigit():
-                # Need to format as "N кімната/кімнати/кімнат"
                 rooms_field = self.label_to_field.get('число кімнат')
                 if rooms_field:
-                    result['rooms'] = self._normalize_rooms(rooms_text, rooms_field.get('options', []))
+                    result['Число кімнат'] = self._normalize_rooms(
+                        rooms_text, rooms_field.get('options', [])
+                    )
 
             # Second value: floor / total floors
             floor_text = property_values[1].get_text(strip=True)
             match = re.match(r'(\d+)\s*/\s*(\d+)', floor_text)
             if match:
-                result['floor'] = match.group(1)
-                result['floors_total'] = match.group(2)
+                result['Поверх'] = match.group(1)
+                result['Поверховість'] = match.group(2)
 
             # Third value: areas (total / living / kitchen)
             area_text = property_values[2].get_text(strip=True)
             match = re.match(r'([\d.]+)\s*/\s*([\d.]+)\s*/\s*([\d.]+)', area_text)
             if match:
-                result['total_area'] = match.group(1)
-                result['living_area'] = match.group(2)
-                result['kitchen_area'] = match.group(3)
+                result['Загальна площа, м²'] = match.group(1)
+                result['Житлова площа, м²'] = match.group(2)
+                result['Площа кухні, м²'] = match.group(3)
 
             logger.debug(f"Extracted summary stats: {result}")
 
@@ -445,6 +537,44 @@ class HTMLOfferParser:
             logger.debug(f"Extracted estate note: {text}")
             return text
         return ""
+
+    def _extract_article(self) -> Optional[str]:
+        """Extract article number from .article-label element.
+
+        Returns:
+            Article number string (without '#') or None.
+        """
+        elem = self.soup.select_one('.article-label')
+        if elem:
+            text = elem.get_text(strip=True).lstrip('#')
+            logger.debug(f"Extracted article: {text}")
+            return text
+        return None
+
+    def _extract_advertising(self) -> Optional[str]:
+        """Extract advertising permission from characteristics table.
+
+        Returns:
+            Advertising text (e.g. "Можна рекламувати") or None.
+        """
+        chars = self._read_characteristics_table()
+        value = chars.get('реклама')
+        if value:
+            logger.debug(f"Extracted advertising: {value}")
+        return value
+
+    def _extract_photo_download_link(self) -> Optional[str]:
+        """Extract bulk photo download URL.
+
+        Returns:
+            Relative URL like "/estate/17637/download-all-watermark-images" or None.
+        """
+        link = self.soup.select_one('a[href*="download-all-watermark-images"]')
+        if link:
+            href = link.get('href')
+            logger.debug(f"Extracted photo download link: {href}")
+            return href
+        return None
 
     # ==================== Value Normalizers ====================
 
@@ -583,67 +713,6 @@ class HTMLOfferParser:
 
         return amount, currency
 
-    def _infer_key_from_label(self, field_info: dict, is_address: bool = False) -> Optional[str]:
-        """Infer programmatic key from field label.
-
-        Args:
-            field_info: Field definition from schema
-            is_address: Whether this is an address field
-
-        Returns:
-            Programmatic key string or None
-        """
-        label = field_info['label'].lower().strip()
-
-        # Direct label to key mappings
-        key_map = {
-            # Basic
-            'ціна': 'price',
-            'валюта': 'currency',
-            'переуступка': 'assignment',
-            'комісія з покупця/орендатора': 'buyer_commission',
-
-            # Property info
-            'число кімнат': 'rooms',
-            'поверх': 'floor',
-            'поверховість': 'floors_total',
-            'загальний стан': 'condition',
-            'тип будинку': 'building_type',
-            'технологія будівництва': 'construction_technology',
-            'загальна площа, м²': 'total_area',
-            'житлова площа, м²': 'living_area',
-            'площа кухні, м²': 'kitchen_area',
-            'рік будівництва': 'year_built',
-            'планування кімнат': 'room_layout',
-
-            # Address
-            'місто': 'city',
-            'район': 'district',
-            'вулиця': 'street',
-            'будинок': 'house_number',
-            'номер будинку': 'house_number',
-            'новобудова': 'condo_complex',
-            'жилий комплекс': 'condo_complex',
-            'метро': 'subway',
-            'орієнтир': 'guide',
-            'область': 'region',
-
-            # Additional
-            'опалення': 'heating',
-            'гаряча вода': 'hot_water',
-            'газ': 'gas',
-            'інтернет': 'internet',
-            'особисті нотатки': 'personal_notes',
-        }
-
-        key = key_map.get(label)
-        if key:
-            return key
-
-        # Fallback: use label as key (with normalization)
-        logger.debug(f"No direct key mapping for label: '{label}', skipping")
-        return None
-
     def _look_up_field_by_html_label(self, html_label: str) -> Optional[dict]:
         """Look up field info by HTML table label (not schema label).
 
@@ -687,7 +756,7 @@ class HTMLOfferParser:
         """Validate that all required fields are present.
 
         Args:
-            data: Parsed offer data
+            data: Parsed offer data (keys are schema labels)
 
         Returns:
             List of missing required field labels
@@ -696,20 +765,17 @@ class HTMLOfferParser:
 
         for field in self.required_fields:
             label = field['label']
-            key = self._infer_key_from_label(field)
+            label_lower = label.lower().strip()
 
-            if not key:
+            # Check if label key exists in data
+            if label in data and data[label]:
                 continue
 
-            # Check if key exists in data
-            if key in data and data[key]:
-                continue
+            # Check in nested address (for address fields)
+            if label_lower in ADDRESS_LABELS:
+                if 'address' in data and label in data['address'] and data['address'][label]:
+                    continue
 
-            # Check in nested address
-            if 'address' in data and key in data['address'] and data['address'][key]:
-                continue
-
-            # Field is missing
             missing.append(label)
 
         return missing
@@ -718,7 +784,7 @@ class HTMLOfferParser:
         """Fill missing fields with sensible defaults where possible.
 
         Args:
-            data: Parsed offer data
+            data: Parsed offer data (keys are schema labels)
 
         Returns:
             Data with defaults filled
@@ -728,8 +794,8 @@ class HTMLOfferParser:
             data['address'] = {}
 
         # Default currency if price exists but currency doesn't
-        if 'price' in data and not data.get('currency'):
-            data['currency'] = 'доларів'  # Default to dollars
-            logger.debug("Defaulted currency to 'доларів'")
+        if 'Ціна' in data and not data.get('Валюта'):
+            data['Валюта'] = 'доларів'
+            logger.debug("Defaulted Валюта to 'доларів'")
 
         return data

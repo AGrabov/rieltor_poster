@@ -305,12 +305,12 @@ if __name__ == "__main__":
         phone=phone,
         password=password,
         property_types=[
-            # "Квартира",
+            "Квартира",
             # "Кімната",
             # "Будинок",
             # "Комерційна",
             # "Ділянка",
-            "Паркомісце"
+            # # "Паркомісце"
         ],
         deal_types=["sell", "lease"],  # Продаж and Оренда
         headless=False,

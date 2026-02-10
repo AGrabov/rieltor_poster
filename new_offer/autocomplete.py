@@ -4,9 +4,13 @@ from typing import Sequence
 
 from playwright.sync_api import Locator
 
+from schemas import ADDRESS_LABELS
 from setup_logger import setup_logger
 
 logger = setup_logger(__name__)
+
+# House number label (for special digit-matching logic)
+_HOUSE_LABEL = "будинок"
 
 
 class AutocompleteMixin:
@@ -342,6 +346,10 @@ class AutocompleteMixin:
             logger.info("Autocomplete skip '%s': empty desired value", key)
             return
 
+        key_lower = key.lower().strip()
+        is_address = key_lower in ADDRESS_LABELS
+        is_house = key_lower == _HOUSE_LABEL
+
         def _matches(cur: str) -> bool:
             cur = (cur or "").strip()
             if not cur:
@@ -350,7 +358,7 @@ class AutocompleteMixin:
             c = cur.casefold()
             d = desired.casefold()
 
-            if key == "house_number":
+            if is_house:
                 import re
                 cd = re.sub(r"\D+", "", c)
                 dd = re.sub(r"\D+", "", d)
@@ -358,7 +366,7 @@ class AutocompleteMixin:
                     return True
                 return c == d or c.startswith(d) or d in c
 
-            if key in {"region", "city", "district", "street", "condo_complex"}:
+            if is_address:
                 return c == d or c.startswith(d)
 
             return c == d or c.startswith(d) or d in c
@@ -401,8 +409,8 @@ class AutocompleteMixin:
                     pass
 
         def _try_pick() -> bool:
-            allow_single = key in {"region", "city", "district", "street", "house_number"}
-            allow_free = key == "house_number"
+            allow_single = is_address
+            allow_free = is_house
             return self._pick_autocomplete_option_and_verify(
                 inp,
                 desired,
