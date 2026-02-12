@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
 
 from bs4 import BeautifulSoup, Tag
-from description_analyzer import DescriptionAnalyzer
+from crm_data_parser.description_analyzer import DescriptionAnalyzer
 from schemas import load_offer_schema, ADDRESS_LABELS
 
 from setup_logger import setup_logger
@@ -55,7 +55,35 @@ CRM_TYPE_TO_SCHEMA = {
 # Fields handled by dedicated extraction methods — skip in generic characteristics loop
 _SKIP_LABELS = frozenset({
     'категорія', 'тип', 'тип угоди', 'реклама',
+    'посилання на відео',
 })
+
+# CRM-internal fields that must NOT end up in the offer dict
+_INTERNAL_LABELS = frozenset({
+    'тип об\'єкту (екс, макл, власник)',
+    'чи платить комісію',
+    'вигрузка на сайт',
+    'ключі',
+    'дата актуалізації',
+    'район (сайт)',
+    'додав співробітник',
+    'відповідальний',
+    'комісія',
+    'джерело',
+    'доданий',
+    'змінений',
+    'активність',
+})
+
+# CRM infrastructure title → schema "Поруч є" option mapping
+_INFRA_TO_NEARBY = {
+    'школи': 'Школа',
+    'дитячі садочки': 'Дитсадок',
+    'магазини': 'Супермаркет',
+    'трц': 'Супермаркет',
+    'відпочинок, розваги': 'Розважальні заклади',
+    'фітнес-центри': 'Розважальні заклади',
+}
 
 
 class HTMLOfferParser:
@@ -98,8 +126,12 @@ class HTMLOfferParser:
         else:
             html_str = str(html_content)
 
-        self.soup = BeautifulSoup(html_str, 'html.parser')
-        logger.debug(f"Parsed HTML, title: {self.soup.title.string if self.soup.title else 'No title'}")
+        self.full_soup = BeautifulSoup(html_str, 'html.parser')
+        logger.debug(f"Parsed HTML, title: {self.full_soup.title.string if self.full_soup.title else 'No title'}")
+
+        # Scope to .page-content to ignore navbars, footers, summary-tags, etc.
+        page_content = self.full_soup.select_one('.page-content')
+        self.soup = page_content if page_content else self.full_soup
 
         # Auto-detect deal type and property type from HTML
         self.deal_type = self._detect_deal_type()
@@ -263,9 +295,21 @@ class HTMLOfferParser:
         if photo_dl is not None:
             result["photo_download_link"] = photo_dl
 
+        # Video tour link
+        video_url = self._extract_video_url()
+        if video_url:
+            if "apartment" not in result:
+                result["apartment"] = {}
+            result["apartment"]["video_url"] = video_url
+
         # Extract all data sections
         result.update(self._extract_basic_info())
         result.update(self._extract_characteristics())
+
+        # Infrastructure → "Поруч є"
+        nearby = self._extract_infrastructure()
+        if nearby:
+            result["Поруч є"] = nearby
 
         # Extract address (nested dict)
         address_data = self._extract_address()
@@ -278,20 +322,28 @@ class HTMLOfferParser:
             if key not in result and value is not None:
                 result[key] = value
 
-        # Extract photos
+        # Extract photos (merge into apartment dict, don't overwrite)
         photos_data = self._extract_photos()
-        result.update(photos_data)
+        if "apartment" in photos_data:
+            if "apartment" not in result:
+                result["apartment"] = {}
+            result["apartment"].update(photos_data["apartment"])
+        else:
+            result.update(photos_data)
 
         # Extract text descriptions
         description = self._extract_description()
         note = self._extract_estate_note()
-        if note or description:
-            combined_notes = []
-            if note:
-                combined_notes.append(note)
-            if description:
-                combined_notes.append(description)
-            result["personal_notes"] = "\n\n".join(combined_notes).strip()
+
+        # Description → apartment.description (public "Опис" in photo block)
+        if description:
+            if "apartment" not in result:
+                result["apartment"] = {}
+            result["apartment"]["description"] = description
+
+        # Estate note → personal_notes (private "Особисті нотатки")
+        if note:
+            result["personal_notes"] = note
 
         # Analyze description for additional fields
         if description or note:
@@ -308,8 +360,7 @@ class HTMLOfferParser:
 
         missing = self._validate_required_fields(result)
         if missing:
-            logger.error(f"Missing required fields: {missing}")
-            raise ValueError(f"Missing required fields: {', '.join(missing)}")
+            logger.warning(f"Missing required fields: {missing}")
 
         logger.info(f"Parse complete: extracted {len(result)} top-level fields")
         return result
@@ -365,6 +416,10 @@ class HTMLOfferParser:
 
                     # Skip fields handled by dedicated methods
                     if label_lower in _SKIP_LABELS:
+                        continue
+
+                    # Skip CRM-internal fields
+                    if label_lower in _INTERNAL_LABELS:
                         continue
 
                     # Look up field in schema by HTML label
@@ -574,6 +629,76 @@ class HTMLOfferParser:
             href = link.get('href')
             logger.debug(f"Extracted photo download link: {href}")
             return href
+        return None
+
+    def _extract_video_url(self) -> Optional[str]:
+        """Extract video tour URL from characteristics table.
+
+        Returns:
+            Video URL string or None.
+        """
+        for table in self.soup.select('table.detail-view'):
+            for row in table.select('tr'):
+                cells = row.select('th, td')
+                if len(cells) >= 2:
+                    label = cells[0].get_text(strip=True).lower().strip()
+                    if label == 'посилання на відео':
+                        link = cells[1].select_one('a')
+                        if link:
+                            href = link.get('href', '').strip()
+                            if href:
+                                logger.debug(f"Extracted video URL: {href}")
+                                return href
+                        # Fallback: plain text URL
+                        text = cells[1].get_text(strip=True)
+                        if text.startswith('http'):
+                            logger.debug(f"Extracted video URL (text): {text}")
+                            return text
+        return None
+
+    def _extract_infrastructure(self) -> Optional[List[str]]:
+        """Extract nearby infrastructure and map to schema 'Поруч є' options.
+
+        Returns:
+            List of matched schema option values, or None.
+        """
+        infra_div = self.soup.select_one('.infrastructures.clearfix')
+        if not infra_div:
+            return None
+
+        # Collect unique infrastructure titles
+        titles: set = set()
+        for item in infra_div.select('.infrastructure'):
+            title_elem = item.select_one('.infrastructure-title')
+            if title_elem:
+                titles.add(title_elem.get_text(strip=True).lower())
+
+        if not titles:
+            return None
+
+        # Map to schema options
+        matched: List[str] = []
+        for title in titles:
+            option = _INFRA_TO_NEARBY.get(title)
+            if option and option not in matched:
+                matched.append(option)
+
+        # Also check schema options directly (e.g. "Парк" in title)
+        field_info = self.label_to_field.get('поруч є')
+        if field_info:
+            schema_options = field_info.get('options', [])
+            for option in schema_options:
+                if option in matched:
+                    continue
+                option_lower = option.lower()
+                for title in titles:
+                    if option_lower in title or title in option_lower:
+                        matched.append(option)
+                        break
+
+        if matched:
+            logger.debug(f"Extracted infrastructure → Поруч є: {matched}")
+            return matched
         return None
 
     # ==================== Value Normalizers ====================
@@ -797,5 +922,18 @@ class HTMLOfferParser:
         if 'Ціна' in data and not data.get('Валюта'):
             data['Валюта'] = 'доларів'
             logger.debug("Defaulted Валюта to 'доларів'")
+
+        # Fallback: living area = total area - kitchen area
+        if not data.get('Житлова площа, м²'):
+            total = data.get('Загальна площа, м²')
+            kitchen = data.get('Площа кухні, м²')
+            if total and kitchen:
+                try:
+                    living = round(float(total) - float(kitchen), 1)
+                    if living > 0:
+                        data['Житлова площа, м²'] = str(living)
+                        logger.debug(f"Calculated Житлова площа: {total} - {kitchen} = {living}")
+                except (ValueError, TypeError):
+                    pass
 
         return data

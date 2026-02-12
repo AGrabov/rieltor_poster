@@ -21,7 +21,7 @@ CONTEXTUAL_PATTERNS: Dict[str, List[tuple]] = {
         (r"мікрохвильов", "Мікрохвильовка"),
         (r"душов\w+\s+кабін", "Душова кабіна"),
         (r"джакузі", "Джакузі"),
-        (r"камін", "Камін"),
+        (r"камін(?!ь)", "Камін"),
         (r"підігрів\s+підлоги|тепл\w+\s+підлог", "Підігрів підлоги"),
         (r"сигналізаці", "Сигналізація"),
         (r"лічильник", "Лічильники"),
@@ -125,6 +125,12 @@ class DescriptionAnalyzer:
 
         return extracted
 
+    @staticmethod
+    def _option_in_text(option_lower: str, text: str) -> bool:
+        """Check if option appears as a whole word in text (not as a substring of another word)."""
+        pattern = re.escape(option_lower) + r'(?![а-яіїєґь])'
+        return bool(re.search(pattern, text))
+
     def _match_field_options(self, text: str, existing_data: dict) -> dict:
         """Match description text against field options.
 
@@ -151,7 +157,7 @@ class DescriptionAnalyzer:
             if widget in ['select', 'radio']:
                 for option in options:
                     option_lower = option.lower()
-                    if option_lower in text:
+                    if self._option_in_text(option_lower, text):
                         extracted[key] = option
                         if self.debug:
                             logger.debug(f"Matched {key}={option} in description")
@@ -161,7 +167,7 @@ class DescriptionAnalyzer:
                 matched_options = []
                 for option in options:
                     option_lower = option.lower()
-                    if option_lower in text:
+                    if self._option_in_text(option_lower, text):
                         matched_options.append(option)
 
                 if matched_options:
@@ -351,6 +357,46 @@ class DescriptionAnalyzer:
                         if self.debug:
                             logger.debug(f"Extracted Рік будівництва={year}")
                         break
+
+        # --- Bathroom count ---
+        if 'Кількість санвузлів' not in existing_data and 'Кількість санвузлів' not in extracted:
+            _WORD_TO_NUM = {
+                'один': 1, 'одн': 1,
+                'два': 2, 'двох': 2, 'двома': 2,
+                'три': 3, 'трьох': 3, 'трьома': 3,
+                'чотири': 4, 'п\'ять': 5,
+            }
+            bathroom_count = 0
+            # 1) Explicit number before санвузл: "2 санвузли", "два санвузли"
+            num_match = re.search(r'(\d+|один|одн\w*|два|двох|двома|три|трьох|трьома|чотири|п\'ять)\s+санвуз', text)
+            if num_match:
+                token = num_match.group(1)
+                if token.isdigit():
+                    bathroom_count = int(token)
+                else:
+                    for word, num in _WORD_TO_NUM.items():
+                        if token.startswith(word):
+                            bathroom_count = num
+                            break
+            # 2) Fallback: count separate mentions
+            if bathroom_count == 0:
+                bathroom_count = len(re.findall(r'санвузо[лк]|санвузл', text))
+
+            if bathroom_count > 0:
+                field_info = self.label_to_field.get('кількість санвузлів')
+                if field_info:
+                    options = field_info.get('options', [])
+                    if bathroom_count >= 3:
+                        value = '3 і більше'
+                    else:
+                        value = str(bathroom_count)
+                    # Validate against options
+                    if options and value not in options:
+                        for opt in options:
+                            if str(bathroom_count) in opt:
+                                value = opt
+                                break
+                    extracted['Кількість санвузлів'] = value
 
         # --- Ceiling height ---
         if 'Висота стель' not in existing_data and 'Висота стель' not in extracted:
