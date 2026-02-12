@@ -80,6 +80,7 @@ class AutocompleteMixin:
         *,
         allow_single_option: bool = False,
         anchor_box: dict | None = None,
+        is_house: bool = False,
     ) -> bool:
         desired = (desired or "").strip()
         if not desired:
@@ -93,12 +94,17 @@ class AutocompleteMixin:
                 const timeoutMs = params.timeoutMs;
                 const allowSingle = params.allowSingle;
                 const anchor = params.anchor;
+                const isHouse = params.isHouse;
 
                 const start = Date.now();
                 const norm = (s) => (s || '').replace(/\\s+/g,' ').trim().toLowerCase();
                 const onlyDigits = (s) => (s || '').replace(/\\D+/g,'');
+                // Strip hyphens + spaces + lowercase for house number comparison
+                // "20-а" / "20 а" / "20А" → "20а"
+                const normHouse = (s) => (s || '').replace(/[\\s\\-]+/g, '').toLowerCase();
                 const d = norm(desired);
                 const dDigits = onlyDigits(desired);
+                const dHouse = normHouse(desired);
 
                 const isVisible = (el) => {
                   if (!el) return false;
@@ -149,31 +155,52 @@ class AutocompleteMixin:
                       const txt = (el.innerText || '').trim();
                       if (!txt) continue;
 
-                      out.push({ txt, n: norm(txt), digits: onlyDigits(txt), r });
+                      out.push({ txt, n: norm(txt), digits: onlyDigits(txt), h: normHouse(txt), r });
                     }
                   }
                   out.sort((a,b) => a.r.top - b.r.top);
                   return out;
                 }
 
+                const mkResult = (o, mode, count) => ({
+                  ok:true, x:o.r.left + o.r.width/2,
+                  y:o.r.top + Math.min(18, o.r.height/2),
+                  text:o.txt, mode, count
+                });
+
                 function pick(opts) {
+                  // 1) Standard text match
                   for (const o of opts) {
                     if (o.n === d || o.n.startsWith(d) || o.n.includes(d)) {
-                      return { ok:true, x:o.r.left + o.r.width/2, y:o.r.top + Math.min(18, o.r.height/2), text:o.txt, mode:'match', count:opts.length };
+                      return mkResult(o, 'match', opts.length);
                     }
                   }
 
+                  // 2) House-normalized match: "20а" = "20-а" = "20 а" = "20А"
+                  if (isHouse && dHouse) {
+                    for (const o of opts) {
+                      if (o.h === dHouse) {
+                        return mkResult(o, 'house_exact', opts.length);
+                      }
+                    }
+                    for (const o of opts) {
+                      if (o.h.startsWith(dHouse)) {
+                        return mkResult(o, 'house_prefix', opts.length);
+                      }
+                    }
+                  }
+
+                  // 3) Digits-only prefix fallback
                   if (dDigits) {
                     for (const o of opts) {
                       if (o.digits && o.digits.startsWith(dDigits)) {
-                        return { ok:true, x:o.r.left + o.r.width/2, y:o.r.top + Math.min(18, o.r.height/2), text:o.txt, mode:'digits_prefix', count:opts.length };
+                        return mkResult(o, 'digits_prefix', opts.length);
                       }
                     }
                   }
 
                   if (allowSingle && opts.length === 1) {
-                    const o = opts[0];
-                    return { ok:true, x:o.r.left + o.r.width/2, y:o.r.top + Math.min(18, o.r.height/2), text:o.txt, mode:'single', count:1 };
+                    return mkResult(opts[0], 'single', 1);
                   }
 
                   return null;
@@ -190,7 +217,7 @@ class AutocompleteMixin:
                   tick();
                 });
             }""",
-            {"desired": desired, "timeoutMs": timeout_ms, "allowSingle": allow_single_option, "anchor": anchor_box},
+            {"desired": desired, "timeoutMs": timeout_ms, "allowSingle": allow_single_option, "anchor": anchor_box, "isHouse": is_house},
         )
 
         if not res or not res.get("ok"):
@@ -260,6 +287,7 @@ class AutocompleteMixin:
         next_key: str | None = None,
         allow_single_option: bool = False,
         allow_free_text: bool = False,
+        is_house: bool = False,
     ) -> bool:
         desired = (desired_text or "").strip()
 
@@ -279,6 +307,7 @@ class AutocompleteMixin:
             timeout_ms=timeout_ms,
             allow_single_option=allow_single_option,
             anchor_box=anchor,
+            is_house=is_house,
         )
 
         if not picked:
@@ -385,12 +414,27 @@ class AutocompleteMixin:
 
         logger.info("Autocomplete fill '%s' = '%s'%s", key, desired, " (force)" if force else "")
 
-        def _clear_and_type() -> None:
+        # Split house number into digit prefix and the rest (e.g. "20а" → "20", "а")
+        import re as _re
+        _house_digit_prefix = ""
+        _house_rest = desired
+        if is_house:
+            _m = _re.match(r'\d+', desired)
+            if _m:
+                _house_digit_prefix = _m.group(0)
+                _house_rest = desired[len(_house_digit_prefix):]
+
+        def _clear_and_type(text: str | None = None) -> None:
+            """Clear input and type text. If text is None, uses full desired value."""
+            to_type = text if text is not None else desired
+
+            # Click to focus (needed before fill/type)
             try:
                 inp.click()
             except Exception:
                 pass
 
+            # Clear via fill("") — dispatches proper React onChange events
             try:
                 inp.fill("")
             except Exception:
@@ -400,13 +444,42 @@ class AutocompleteMixin:
                 except Exception:
                     pass
 
-            try:
-                inp.type(desired, delay=25)
-            except Exception:
+            if is_house and text is None and _house_digit_prefix:
+                # Type digits one-by-one to let dropdown populate progressively
+                for ch in _house_digit_prefix:
+                    try:
+                        inp.type(ch, delay=0)
+                        self.page.wait_for_timeout(150)
+                    except Exception:
+                        pass
+                # Wait for dropdown to load after final digit
                 try:
-                    inp.fill(desired)
+                    self.page.wait_for_timeout(800)
                 except Exception:
                     pass
+                return
+
+            # Type character-by-character to trigger API search
+            try:
+                inp.type(to_type, delay=25)
+            except Exception as e:
+                logger.debug("inp.type() failed for '%s': %s", to_type, e)
+                try:
+                    inp.fill(to_type)
+                except Exception as e2:
+                    logger.warning("inp.fill() also failed for '%s': %s", to_type, e2)
+
+            # Verify text was actually typed
+            try:
+                cur = (inp.input_value() or "").strip()
+                if not cur:
+                    logger.warning("Input empty after typing '%s', retrying with fill()", to_type)
+                    try:
+                        inp.fill(to_type)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
         def _try_pick() -> bool:
             allow_single = is_address
@@ -418,12 +491,22 @@ class AutocompleteMixin:
                 next_key=next_key,
                 allow_single_option=allow_single,
                 allow_free_text=allow_free,
+                is_house=is_house,
             )
 
+        # First attempt: type digits only (for house) or full text
         _clear_and_type()
         if _try_pick():
             self._mark_touched(inp)
             return
+
+        # For house: if digits-only didn't match, type full value and retry
+        if is_house and _house_rest:
+            logger.debug("House: digits-only didn't match, typing full value '%s'", desired)
+            _clear_and_type(desired)
+            if _try_pick():
+                self._mark_touched(inp)
+                return
 
         logger.debug("Retry autocomplete selection (mouse) for '%s' = '%s'", key, desired)
         try:

@@ -923,16 +923,17 @@ class HTMLOfferParser:
             data['Валюта'] = 'доларів'
             logger.debug("Defaulted Валюта to 'доларів'")
 
-        # Fallback: living area = total area - kitchen area
+        # Fallback: living area ≈ total area - (1.4 × kitchen area)
+        # The multiplier accounts for corridors, hallways, bathrooms, etc.
         if not data.get('Житлова площа, м²'):
             total = data.get('Загальна площа, м²')
             kitchen = data.get('Площа кухні, м²')
             if total and kitchen:
                 try:
-                    living = round(float(total) - float(kitchen), 1)
+                    living = round(float(total) - 1.4 * float(kitchen), 1)
                     if living > 0:
                         data['Житлова площа, м²'] = str(living)
-                        logger.debug(f"Calculated Житлова площа: {total} - {kitchen} = {living}")
+                        logger.debug(f"Calculated Житлова площа: {total} - 1.4*{kitchen} = {living}")
                 except (ValueError, TypeError):
                     pass
 

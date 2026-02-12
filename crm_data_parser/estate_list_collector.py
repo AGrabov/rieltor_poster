@@ -23,6 +23,7 @@ from typing import List, Optional
 
 from bs4 import BeautifulSoup, Tag
 from playwright.sync_api import Page
+import os
 
 from setup_logger import setup_logger
 
@@ -32,11 +33,10 @@ CRM_BASE_URL = "https://crm-primes.realtsoft.net"
 
 # Default commission settings (value + unit)
 # Unit options from schema: "%", "гривнях", "долларах"
-COMMISSION_SALE = "3"
-COMMISSION_SALE_UNIT = "%"
-COMMISSION_RENT = "50"
-COMMISSION_RENT_UNIT = "%"
-
+COMMISSION_SALE = os.getenv("COMMISSION_SALE", "3")
+COMMISSION_SALE_UNIT = os.getenv("COMMISSION_SALE_UNIT", "%")
+COMMISSION_RENT = os.getenv("COMMISSION_RENT", "50")
+COMMISSION_RENT_UNIT = os.getenv("COMMISSION_RENT_UNIT", "%")
 
 @dataclass
 class EstateListItem:

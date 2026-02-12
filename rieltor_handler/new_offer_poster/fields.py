@@ -82,11 +82,19 @@ class FieldsMixin:
         if not target:
             return
 
-        # Leaf cards: MuiBox-root с img[alt]+span, но без вложенной такой же карточки
+        # Leaf cards: MuiBox-root with img+span (property type) or just span (deal type)
+        # Try image cards first, then text-only cards
         cards = sec.locator(
             "xpath=.//div[contains(@class,'MuiBox-root')]"
             "[.//img[@alt] and .//span and not(.//div[contains(@class,'MuiBox-root')][.//img[@alt] and .//span])]"
         )
+
+        # Fallback for text-only card sections (e.g. "Тип угоди": Продаж/Оренда)
+        if cards.count() == 0:
+            cards = sec.locator(
+                "xpath=.//div[contains(@class,'MuiBox-root')]"
+                "[.//span[normalize-space()] and not(.//div[contains(@class,'MuiBox-root')][.//span[normalize-space()]])]"
+            )
 
         chosen = None
         for i in range(cards.count()):
@@ -94,7 +102,9 @@ class FieldsMixin:
 
             alt = ""
             try:
-                alt = (c.locator("css=img[alt]").first.get_attribute("alt") or "").strip().casefold()
+                img = c.locator("css=img[alt]").first
+                if img.count():
+                    alt = (img.get_attribute("alt") or "").strip().casefold()
             except Exception:
                 pass
 
@@ -112,9 +122,13 @@ class FieldsMixin:
             logger.warning("Button not found in section '%s' for text '%s'", section_h6, target)
             return
 
-        # skip if already selected
+        # skip if already selected (check element itself and parent)
         try:
             cls = (chosen.get_attribute("class") or "")
+            if "-selected" not in cls:
+                parent_cls = chosen.evaluate("el => (el.parentElement && el.parentElement.className) || ''") or ""
+                if "-selected" in parent_cls:
+                    cls = parent_cls
             if "-selected" in cls:
                 logger.info("Box already selected in '%s' for '%s' (skip)", section_h6, target)
                 return

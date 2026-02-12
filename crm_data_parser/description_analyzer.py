@@ -128,7 +128,13 @@ class DescriptionAnalyzer:
     @staticmethod
     def _option_in_text(option_lower: str, text: str) -> bool:
         """Check if option appears as a whole word in text (not as a substring of another word)."""
-        pattern = re.escape(option_lower) + r'(?![а-яіїєґь])'
+        escaped = re.escape(option_lower)
+        # For purely numeric options (e.g. "1", "2"), require digit boundaries
+        # to avoid matching inside larger numbers like "#27274"
+        if re.fullmatch(r'\d+', option_lower):
+            pattern = r'(?<!\d)' + escaped + r'(?!\d)'
+        else:
+            pattern = escaped + r'(?![а-яіїєґь])'
         return bool(re.search(pattern, text))
 
     def _match_field_options(self, text: str, existing_data: dict) -> dict:

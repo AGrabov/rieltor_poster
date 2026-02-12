@@ -90,6 +90,14 @@ class DictOfferFormFiller(
     def open(self) -> None:
         """Open the create offer page."""
         self.page.goto(self.CREATE_URL, wait_until="domcontentloaded")
+        # Wait for MUI to fully render (h6 sections + card buttons)
+        try:
+            self.page.locator("h6", has_text="Тип угоди").first.wait_for(
+                state="visible", timeout=15_000
+            )
+            self.page.wait_for_timeout(1500)
+        except Exception:
+            pass
         logger.info("Opened create-offer page")
 
     def create_offer_draft(self, offer_data: dict) -> None:
@@ -102,6 +110,7 @@ class DictOfferFormFiller(
         """
         self.open()
         root = self._new_offer_root()
+        self.last_saved_offer_id = offer_data.get("article")
         logger.info("Start filling offer draft (dict-based, schema-driven)")
 
         state = {
@@ -110,27 +119,27 @@ class DictOfferFormFiller(
             'photos_filled': False,
         }
 
+        # ── Phase 1: offer_type → property_type → address (strict order) ──
+        if not self._is_empty_value(offer_data.get("offer_type")):
+            self._click_box_button_in_section(root, "Тип угоди", deal_text(offer_data["offer_type"]))
+
+        if not self._is_empty_value(offer_data.get("property_type")):
+            self._click_box_button_in_section(
+                root, "Тип нерухомості", self._to_text(offer_data["property_type"]).lower()
+            )
+
+        address_data = offer_data.get("address")
+        if isinstance(address_data, dict) and not self._is_empty_value(address_data):
+            self._fill_address_from_dict(root, address_data)
+            state['address_filled'] = True
+
+        # ── Phase 2: all remaining fields ──
         for key, value in offer_data.items():
             if self._is_empty_value(value):
                 continue
 
-            # ── Special: offer_type (box_select) ──
-            if key == "offer_type":
-                self._click_box_button_in_section(root, "Тип угоди", deal_text(value))
-                continue
-
-            # ── Special: property_type (box_select) ──
-            if key == "property_type":
-                self._click_box_button_in_section(
-                    root, "Тип нерухомості", self._to_text(value).lower()
-                )
-                continue
-
-            # ── Special: address block ──
-            if key == "address" and isinstance(value, dict):
-                if not state['address_filled']:
-                    self._fill_address_from_dict(root, value)
-                    state['address_filled'] = True
+            # Skip already-handled phase-1 keys
+            if key in ("offer_type", "property_type", "address"):
                 continue
 
             # ── Special: photo blocks ──
@@ -142,8 +151,7 @@ class DictOfferFormFiller(
 
             # ── Special: personal_notes ──
             if key == "personal_notes":
-                section = "Особисті нотатки"
-                self._fill_by_label(root, section, "Особисті нотатки", self._to_text(value))
+                self._fill_personal_notes(root, self._to_text(value))
                 continue
 
             # ── Skip non-schema special keys ──
@@ -162,8 +170,6 @@ class DictOfferFormFiller(
 
             # Open "Додаткові параметри" if needed (lazy, once)
             if not state['additional_opened'] and "Додаткові параметри" in self._schema["navigation"]:
-                # Check if we need to open it: field is in "Інформація про об'єкт"
-                # and its index suggests it's behind the toggle
                 if self._is_additional_param(field_info):
                     self._click_section_toggle(root, "Додаткові параметри")
                     state['additional_opened'] = True
@@ -174,8 +180,23 @@ class DictOfferFormFiller(
         if state['address_filled'] and self._map_error_visible():
             self._handle_map_error(root, offer_data.get('address', {}))
 
+        # If commission field is not in data, set it to "Немає" to avoid
+        # the site's default "Є" which requires filling child fields
+        _COMMISSION_LABEL = "Комісія з покупця/орендатора"
+        if _COMMISSION_LABEL not in offer_data:
+            commission_field = self._schema["label_to_field"].get(_COMMISSION_LABEL.lower().strip())
+            if commission_field:
+                self._set_commission_no(root, _COMMISSION_LABEL)
+
         # Required validation
         self._assert_required_filled(root)
+
+        # Let the form settle before save (async validations, map pin, etc.)
+        try:
+            self.page.wait_for_timeout(2000)
+        except Exception:
+            time.sleep(2)
+
         logger.info("Offer draft filled (dict-based, schema-driven)")
 
     def _is_additional_param(self, field_info: dict) -> bool:
@@ -308,48 +329,47 @@ class DictOfferFormFiller(
             city, condo, district, street, house,
         )
 
-        # 0) CITY
+        # 1) CITY
         if city:
             next_key = "Новобудова" if condo else "Район"
             self._fill_autocomplete(sec, "Місто", city, next_key=next_key)
 
-        # 1) CONDO COMPLEX (triggers autofill of district/street/house)
+        # 2) CONDO COMPLEX (triggers autofill of district/street/house)
         condo_used = False
         if condo:
             self._fill_autocomplete(sec, "Новобудова", condo)
             condo_used = True
             try:
-                self.page.wait_for_timeout(1000)
+                self.page.wait_for_timeout(2000)
             except Exception:
-                time.sleep(0.6)
+                time.sleep(1.5)
 
-        # 2) REGION
+        # 3) Early map error check — reselect house right after ЖК autofill
+        if condo_used and house and self._map_error_visible():
+            self._force_reselect_house_number(sec, house, house_label="Будинок")
+
+        # 4) Fill remaining unfilled address fields
         if region:
             self._fill_autocomplete(sec, "Область", region)
 
-        # 3) DISTRICT (if not autofilled by condo)
         district_ctrl = self._find_control_by_label(sec, "Район")
         if district_ctrl and not self._control_has_value(district_ctrl):
             if district:
                 self._fill_autocomplete(sec, "Район", district, next_key="Вулиця")
 
-        # 4) STREET (if not autofilled)
         street_ctrl = self._find_control_by_label(sec, "Вулиця")
         if street_ctrl and not self._control_has_value(street_ctrl):
             if street:
                 self._fill_autocomplete(sec, "Вулиця", street, next_key="Будинок")
 
-        # 5) HOUSE NUMBER (if not autofilled)
         house_ctrl = self._find_control_by_label(sec, "Будинок")
         if house_ctrl and not self._control_has_value(house_ctrl):
             if house:
                 self._fill_autocomplete(sec, "Будинок", house)
 
-        # If condo was used — force reselect house to snap map pin
-        if condo_used and house:
+        # 5) Final map error check — reselect house if still broken
+        if house and self._map_error_visible():
             self._force_reselect_house_number(sec, house, house_label="Будинок")
-            if self._map_error_visible():
-                self._force_reselect_house_number(sec, house, house_label="Будинок")
 
         # 6) Multi-select fields
         if subway:
@@ -383,6 +403,94 @@ class DictOfferFormFiller(
         if self._map_error_visible():
             logger.error("Map pin error still visible — refilling address")
             self._fill_address_from_dict(root, address_data)
+
+    # ── Personal notes ──
+
+    def _fill_personal_notes(self, root: Locator, text: str) -> None:
+        """Fill the personal notes textarea.
+
+        The notes textarea has no <label>, so we find it by locating
+        the section via h6 and then the textarea inside it.
+        """
+        text = (text or "").strip()
+        if not text:
+            return
+
+        try:
+            sec = self._section(root, "Особисті нотатки")
+        except Exception:
+            logger.warning("Cannot find 'Особисті нотатки' section")
+            return
+
+        textarea = sec.locator("css=textarea:not([aria-hidden='true'])").first
+        if textarea.count() == 0:
+            textarea = sec.locator("css=textarea").first
+
+        if textarea.count() == 0:
+            logger.warning("Notes textarea not found in 'Особисті нотатки'")
+            return
+
+        try:
+            cur = (textarea.input_value() or "").strip()
+        except Exception:
+            cur = ""
+
+        if cur == text:
+            logger.info("Notes skip: already filled")
+            return
+
+        logger.info("Fill personal notes (%d chars)", len(text))
+        try:
+            textarea.click()
+            textarea.fill(text)
+        except Exception:
+            try:
+                textarea.press("Control+A")
+                textarea.press("Backspace")
+                textarea.type(text, delay=10)
+            except Exception:
+                logger.exception("Failed to fill personal notes")
+                return
+
+        self._mark_touched(textarea)
+
+    # ── Commission radio ──
+
+    def _set_commission_no(self, root: Locator, label: str) -> None:
+        """Set commission radio to 'Немає' by directly clicking the radio label.
+
+        DOM structure: the label text lives in a <p> sibling to the
+        MuiFormControl-root, both wrapped in a MuiBox-root container:
+            MuiBox-root
+              ├── <p>Комісія з покупця/орендатора</p>
+              └── MuiBox-root
+                    └── MuiFormControl-root
+                          └── radiogroup
+        """
+        try:
+            sec = self._section(root, "Основні параметри")
+        except Exception:
+            logger.warning("Cannot find 'Основні параметри' section for commission radio")
+            return
+
+        lit = self._xpath_literal(label)
+        # Find the outer MuiBox-root that contains both the <p> label and a radiogroup
+        wrapper = sec.locator(
+            f"xpath=.//div[contains(@class,'MuiBox-root')]"
+            f"[.//p[contains(normalize-space(.), {lit})]]"
+            f"[.//div[@role='radiogroup']]"
+        ).first
+
+        if wrapper.count() == 0:
+            logger.warning("Commission radio wrapper not found for '%s'", label)
+            return
+
+        nemaye = wrapper.locator("xpath=.//label[contains(normalize-space(.), 'Немає')]").first
+        if nemaye.count():
+            nemaye.click()
+            logger.info("Set '%s' to 'Немає' (no commission data provided)", label)
+        else:
+            logger.warning("'Немає' option not found in commission radio for '%s'", label)
 
     # ── Photos ──
 
@@ -462,48 +570,53 @@ class DictOfferFormFiller(
             except Exception:
                 pass
 
-        def _ok(resp) -> bool:
-            try:
-                req = resp.request
-                if req.method not in ("POST", "PUT", "PATCH"):
-                    return False
-                url = resp.url or ""
-                if "/api/offers" not in url:
-                    return False
-                return 200 <= int(resp.status) < 400
-            except Exception:
-                return False
+        # Collect pre-existing errors (map error, etc.) to exclude from post-click check
+        pre_errors = set()
+        try:
+            root_pre = self._new_offer_root()
+            for e in self.collect_validation_report(root_pre):
+                pre_errors.add((e.get("section", ""), e.get("field", ""), e.get("message", "")))
+        except Exception:
+            pass
 
-        resp = None
-        got_resp = False
+        # Scroll into view and click
+        try:
+            btn.scroll_into_view_if_needed()
+        except Exception:
+            pass
 
         try:
-            with self.page.expect_response(_ok, timeout=35_000) as rinfo:
-                btn.click()
-            resp = rinfo.value
-            got_resp = True
-            try:
-                logger.info("Submit response: %s %s -> %s", resp.request.method, resp.url, resp.status)
-            except Exception:
-                pass
-
-            try:
-                data = resp.json()
-                if isinstance(data, dict):
-                    for k in ("id", "offer_id", "offerId"):
-                        if k in data:
-                            self.last_saved_offer_id = data[k]
-                            break
-                if self.last_saved_offer_id is not None:
-                    logger.info("Offer id: %s", self.last_saved_offer_id)
-            except Exception:
-                pass
-
+            btn.click()
         except Exception:
             try:
                 btn.click(force=True)
             except Exception:
-                pass
+                logger.warning("Failed to click '%s' button", btn_text)
+
+        # Quick check: if NEW validation errors appear, no API call was made
+        try:
+            self.page.wait_for_timeout(1500)
+        except Exception:
+            time.sleep(1.5)
+
+        root_check = self._new_offer_root()
+        all_errors = self.collect_validation_report(root_check)
+        new_errors = [
+            e for e in all_errors
+            if (e.get("section", ""), e.get("field", ""), e.get("message", "")) not in pre_errors
+        ]
+        if new_errors:
+            logger.warning("Client-side validation errors after %s:", action)
+            for err in new_errors:
+                logger.error(
+                    "  Validation error: [%s] %s — %s",
+                    err.get("section", ""), err.get("field", ""), err.get("message", ""),
+                )
+            if raise_on_errors:
+                raise FormValidationError(new_errors)
+            return new_errors
+
+        # No new client-side errors — wait for redirect
 
         if publish_immediately:
             try:
@@ -512,9 +625,7 @@ class DictOfferFormFiller(
                     confirm = dlg.locator("button:has-text('Опублікувати')").first
                     if confirm.count():
                         try:
-                            with self.page.expect_response(_ok, timeout=35_000):
-                                confirm.click()
-                            got_resp = True
+                            confirm.click()
                         except Exception:
                             try:
                                 confirm.click(force=True)
@@ -532,16 +643,21 @@ class DictOfferFormFiller(
             logger.info("Redirected to offers management: %s", self.page.url)
             return []
 
-        if got_resp:
-            try:
-                self.page.wait_for_timeout(900)
-            except Exception:
-                pass
+        # Still on the form — check for server-side validation errors
+        try:
+            self.page.wait_for_timeout(900)
+        except Exception:
+            pass
 
         root = self._new_offer_root()
         report = self.collect_validation_report(root)
         if report:
-            logger.warning("Validation errors after %s: %s", action, report)
+            logger.warning("Validation errors after %s:", action)
+            for err in report:
+                logger.error(
+                    "  [%s] %s — %s",
+                    err.get("section", ""), err.get("field", ""), err.get("message", ""),
+                )
             if raise_on_errors:
                 raise FormValidationError(report)
         else:
