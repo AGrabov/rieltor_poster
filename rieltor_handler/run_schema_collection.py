@@ -9,10 +9,10 @@ from setup_logger import init_logging
 logger = init_logging(level=str(os.environ.get("LOG_LEVEL", "DEBUG")).upper(), filename="logs/schema_collector.log")
 
 
-from schema_collector.collector import OfferCreateSchemaCollector
-from schema_collector.helpers import (_slug, _key4, _sig3)
+from .schema_collector.collector import OfferCreateSchemaCollector
+from .schema_collector.helpers import (_slug, _key4, _sig3)
 
-from rieltor_session import RieltorCredentials, RieltorSession
+from .rieltor_session import RieltorCredentials, RieltorSession
 
 
 

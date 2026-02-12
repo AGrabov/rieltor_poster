@@ -13,10 +13,10 @@ from typing import List, Optional
 
 from playwright.sync_api import Page
 
-from new_offer_poster import DictOfferFormFiller
+from .new_offer_poster import DictOfferFormFiller
 from setup_logger import setup_logger
 logger = setup_logger(__name__)
-from rieltor_session import RieltorCredentials, RieltorSession
+from .rieltor_session import RieltorCredentials, RieltorSession
 
 
 class RieltorOfferPoster:
