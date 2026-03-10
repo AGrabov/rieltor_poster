@@ -2,17 +2,20 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from setup_logger import setup_logger
-logger = setup_logger(__name__)
-
 from playwright.sync_api import Locator
 
-from .helpers import (_xpath_literal, _norm, _cf)
+from .helpers import _xpath_literal, _norm
+
+from setup_logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class _WidgetMixin:
     # ---------------- widgets/options ----------------
-    def _open_listbox(self, select_btn: Locator, menu_id: str | None) -> Optional[Locator]:
+    def _open_listbox(
+        self, select_btn: Locator, menu_id: str | None
+    ) -> Optional[Locator]:
         for _ in range(2):
             self._click_best_effort(select_btn)
             self.page.wait_for_timeout(self.ui_delay_ms)
@@ -20,7 +23,9 @@ class _WidgetMixin:
             if menu_id:
                 try:
                     lit = _xpath_literal(menu_id)
-                    lb = self.page.locator(f"xpath=//div[@id={lit}]//*[@role='listbox']").first
+                    lb = self.page.locator(
+                        f"xpath=//div[@id={lit}]//*[@role='listbox']"
+                    ).first
                     if lb.count():
                         lb.wait_for(state="visible", timeout=5000)
                         return lb
@@ -64,7 +69,9 @@ class _WidgetMixin:
         for i in range(labels.count()):
             lbl = labels.nth(i)
             try:
-                t = _norm(lbl.locator("css=span.MuiFormControlLabel-label").inner_text() or "")
+                t = _norm(
+                    lbl.locator("css=span.MuiFormControlLabel-label").inner_text() or ""
+                )
             except Exception:
                 t = ""
             if not t:
@@ -85,7 +92,9 @@ class _WidgetMixin:
             uniq.append(t)
         return uniq
 
-    def _collect_select_options(self, form: Locator) -> Tuple[List[str], Dict[str, Any]]:
+    def _collect_select_options(
+        self, form: Locator
+    ) -> Tuple[List[str], Dict[str, Any]]:
         """Open listbox for a select in this form and return option texts and metadata."""
         select_btn = form.locator("css=div.MuiSelect-select[role='button']").first
         if not select_btn.count():
@@ -112,7 +121,11 @@ class _WidgetMixin:
             pass
 
         opts = self._list_listbox_options(lb)
-        logger.debug("Collected select options: %d (multiselect=%s)", len(opts), select_meta.get("is_multiselect", False))
+        logger.debug(
+            "Collected select options: %d (multiselect=%s)",
+            len(opts),
+            select_meta.get("is_multiselect", False),
+        )
         try:
             self.page.keyboard.press("Escape")
         except Exception:
@@ -120,7 +133,9 @@ class _WidgetMixin:
         self.page.wait_for_timeout(self.ui_delay_ms)
         return opts, select_meta
 
-    def _collect_autocomplete_options(self, form: Locator, query: str = "а") -> List[str]:
+    def _collect_autocomplete_options(
+        self, form: Locator, query: str = "а"
+    ) -> List[str]:
         """Trigger autocomplete dropdown with a query and collect visible options."""
         inp = form.locator("css=input").first
         if not inp.count():
@@ -169,7 +184,9 @@ class _WidgetMixin:
             visible_cnt = 0
             try:
                 # Use enhanced wait method from _address_seed mixin (available via inheritance)
-                visible_cnt = self._wait_autocomplete_options(inp, timeout_s=3.0, debug_label=f"collect_options(q='{query}')")
+                visible_cnt = self._wait_autocomplete_options(
+                    inp, timeout_s=3.0, debug_label=f"collect_options(q='{query}')"
+                )
             except AttributeError:
                 # Fallback: simple wait if method not available
                 self.page.wait_for_timeout(1000)
@@ -265,7 +282,9 @@ class _WidgetMixin:
 
         return options
 
-    def _detect_widget_and_options_formcontrol(self, form: Locator) -> Tuple[str, List[str], Dict[str, Any]]:
+    def _detect_widget_and_options_formcontrol(
+        self, form: Locator
+    ) -> Tuple[str, List[str], Dict[str, Any]]:
         meta: Dict[str, Any] = {}
 
         rg = form.locator("css=[role='radiogroup']").first
@@ -295,7 +314,9 @@ class _WidgetMixin:
         if form.locator("css=textarea").count():
             return "multiline_text", [], meta
 
-        if form.locator("css=input:not([type='radio']):not([type='checkbox']):not([type='file'])").count():
+        if form.locator(
+            "css=input:not([type='radio']):not([type='checkbox']):not([type='file'])"
+        ).count():
             inp = form.locator("css=input").first
             try:
                 meta["input_type"] = inp.get_attribute("type") or "text"

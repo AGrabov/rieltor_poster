@@ -6,8 +6,8 @@ from typing import Any, Optional
 from playwright.sync_api import Locator
 
 from setup_logger import setup_logger
-logger = setup_logger(__name__)
 
+logger = setup_logger(__name__)
 
 
 class MappingMixin:
@@ -31,7 +31,9 @@ class MappingMixin:
         """Key IS the Ukrainian label in the new schema-driven format."""
         return key
 
-    def _find_control_by_label(self, section: Locator, label_text: str) -> Optional[Locator]:
+    def _find_control_by_label(
+        self, section: Locator, label_text: str
+    ) -> Optional[Locator]:
         """
         Надёжный способ: ищем label внутри section, потом поднимаемся до MuiFormControl-root
         и берём типичный контрол:
@@ -73,7 +75,9 @@ class MappingMixin:
         if not label:
             return None
 
-        form = label.locator("xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]").first
+        form = label.locator(
+            "xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]"
+        ).first
 
         ctrl = form.locator(
             "css="
@@ -89,8 +93,9 @@ class MappingMixin:
         except Exception:
             return None
 
-
-    def _find_formcontrol_by_label(self, sec: Locator, label_text: str) -> Locator | None:
+    def _find_formcontrol_by_label(
+        self, sec: Locator, label_text: str
+    ) -> Locator | None:
         lit = (label_text or "").strip()
         if not lit:
             return None
@@ -100,7 +105,7 @@ class MappingMixin:
         ).first
         try:
             form.wait_for(state="visible", timeout=2500)
-        except Exception as e:
+        except Exception:
             return None
         if not form.count():
             return None

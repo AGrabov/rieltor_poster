@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, Set
 
-from setup_logger import setup_logger
-logger = setup_logger(__name__)
-
 from playwright.sync_api import Locator
 
-from .helpers import (_cf, _norm, _key4)
+from .helpers import _cf, _norm, _key4
+
+from setup_logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class _SmokeFillMixin:
@@ -26,18 +27,25 @@ class _SmokeFillMixin:
         pref = self._preferred_radio_value(values)
         labs = rg.locator("xpath=.//label[.//input[@type='radio']]")
         for i in range(labs.count()):
-            l = labs.nth(i)
+            label = labs.nth(i)
             try:
-                t = _norm(l.locator("css=span.MuiFormControlLabel-label").inner_text() or "")
+                t = _norm(
+                    label.locator("css=span.MuiFormControlLabel-label").inner_text()
+                    or ""
+                )
             except Exception:
                 t = ""
             if _cf(t) == _cf(pref):
-                ok = self._click_best_effort(l.locator("css=span.MuiFormControlLabel-label").first) or self._click_best_effort(l)
+                ok = self._click_best_effort(
+                    label.locator("css=span.MuiFormControlLabel-label").first
+                ) or self._click_best_effort(label)
                 self.page.wait_for_timeout(self.ui_delay_ms + 250)
                 return ok
         return False
 
-    def smoke_fill_visible_fields(self, *, skip_nav_titles: Set[str] | None = None) -> int:
+    def smoke_fill_visible_fields(
+        self, *, skip_nav_titles: Set[str] | None = None
+    ) -> int:
         """Fill only safe widgets to trigger dynamic fields: text/textarea/select/radio.
         Skips checkboxes & file uploads.
         """
@@ -45,7 +53,9 @@ class _SmokeFillMixin:
         root = self._root()
         self.open_all_blocks_sticky()
 
-        forms = root.locator("xpath=.//div[contains(@class,'MuiFormControl-root') or contains(@class,'MuiTextField-root')]")
+        forms = root.locator(
+            "xpath=.//div[contains(@class,'MuiFormControl-root') or contains(@class,'MuiTextField-root')]"
+        )
         actions = 0
 
         for i in range(forms.count()):
@@ -87,7 +97,11 @@ class _SmokeFillMixin:
                 continue
 
             if widget in ("text", "multiline_text"):
-                inp = f.locator("css=input").first if widget == "text" else f.locator("css=textarea").first
+                inp = (
+                    f.locator("css=input").first
+                    if widget == "text"
+                    else f.locator("css=textarea").first
+                )
                 if not inp.count():
                     continue
                 try:
@@ -138,12 +152,25 @@ class _SmokeFillMixin:
                     self.page.wait_for_timeout(self.ui_delay_ms + 300)
                     # Try to pick first option if any appear
                     debug_label = f"smoke_fill({label})"
-                    visible = self._wait_autocomplete_options(inp, timeout_s=2.0, debug_label=debug_label)
+                    visible = self._wait_autocomplete_options(
+                        inp, timeout_s=2.0, debug_label=debug_label
+                    )
                     if visible > 0:
-                        click_ok, clicked_text = self._click_autocomplete_option_contains(inp, "", allow_first_fallback=True, debug_label=debug_label)
+                        click_ok, clicked_text = (
+                            self._click_autocomplete_option_contains(
+                                inp,
+                                "",
+                                allow_first_fallback=True,
+                                debug_label=debug_label,
+                            )
+                        )
                         if click_ok:
                             actions += 1
-                            logger.debug("Smoke filled autocomplete: %s with '%s'", label, clicked_text)
+                            logger.debug(
+                                "Smoke filled autocomplete: %s with '%s'",
+                                label,
+                                clicked_text,
+                            )
                     else:
                         # No options appeared, just clear the field
                         inp.fill("")
@@ -179,10 +206,20 @@ class _SmokeFillMixin:
             last_schema = schema
 
             keys = set(
-                _key4(f.get("nav", ""), f.get("section", ""), f.get("label", ""), f.get("widget", ""))
+                _key4(
+                    f.get("nav", ""),
+                    f.get("section", ""),
+                    f.get("label", ""),
+                    f.get("widget", ""),
+                )
                 for f in (schema.get("fields") or [])
             )
-            logger.info("Schema keys=%d (prev=%d, +%d)", len(keys), len(prev_keys), max(0, len(keys) - len(prev_keys)))
+            logger.info(
+                "Schema keys=%d (prev=%d, +%d)",
+                len(keys),
+                len(prev_keys),
+                max(0, len(keys) - len(prev_keys)),
+            )
 
             if keys.issubset(prev_keys) and prev_keys:
                 logger.info("Schema stable; stop discovery")

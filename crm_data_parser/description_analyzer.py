@@ -69,6 +69,43 @@ CONTEXTUAL_PATTERNS: Dict[str, List[tuple]] = {
         (r"супермаркет", "Супермаркет"),
         (r"зупинк", "Зупинки"),
     ],
+    "призначення": [
+        (r"банківськ\w+\s+приміщенн", "Банківське приміщення"),
+        (r"офісн\w+\s+приміщенн", "Офісне приміщення"),
+        (
+            r"приміщенн\w+\s+(?:для\s+)?надання\s+послуг|сервісн\w+\s+приміщенн",
+            "Приміщення для надання послуг",
+        ),
+        (r"(?:складськ\w+\s+приміщенн|під\s+склад(?!\s*\w))", "Склад"),
+        (r"виробнич\w+\s+приміщенн|під\s+виробництво", "Виробниче приміщення"),
+        (r"вільн\w+\s+призначенн", "Приміщення вільного призначення"),
+        (
+            r"торгівельн\w+\s+приміщенн|торговельн\w+\s+приміщенн|магазин",
+            "Торгівельне приміщення",
+        ),
+    ],
+    "вид будівлі": [
+        # Space inside an office/business center
+        (
+            r"(?:в|у)\s+(?:офісн\w+|бізнес[-\s]?)[-\s]?центр",
+            "Приміщення в офісному центрі",
+        ),
+        # The whole building is an office/business center
+        (
+            r"(?:офісн\w+|бізнес[-\s]?)[-\s]?центр(?!\s*(?:у|в|на|до|з|із|від))",
+            "Офісний центр",
+        ),
+        (
+            r"житлов\w+\s+будинок|жк\s|житлов\w+\s+комплекс",
+            "Приміщення в житловому будинку",
+        ),
+        (
+            r"окремо\s+стояч\w+\s+будівл|окрем\w+\s+будівл|адміністративн\w+\s+будівл",
+            "Окремо стояча будівля",
+        ),
+        (r"комплекс\s+будівель", "Комплекс будівель"),
+        (r"частина\s+будівл", "Частина будівлі"),
+    ],
 }
 
 
@@ -88,7 +125,7 @@ class DescriptionAnalyzer:
         """Create reverse mapping from label_lower to field info."""
         mapping = {}
         for field in self.schema:
-            label = field.get('label', '').lower().strip()
+            label = field.get("label", "").lower().strip()
             if label:
                 mapping[label] = field
         return mapping
@@ -117,11 +154,15 @@ class DescriptionAnalyzer:
         extracted.update(numeric_matches)
 
         # 4) Simple keyword patterns (heating boolean, hot water)
-        pattern_matches = self._extract_keyword_patterns(description_lower, existing_data)
+        pattern_matches = self._extract_keyword_patterns(
+            description_lower, existing_data
+        )
         extracted.update(pattern_matches)
 
         if self.debug and extracted:
-            logger.debug(f"DescriptionAnalyzer extracted {len(extracted)} fields: {list(extracted.keys())}")
+            logger.debug(
+                f"DescriptionAnalyzer extracted {len(extracted)} fields: {list(extracted.keys())}"
+            )
 
         return extracted
 
@@ -131,36 +172,63 @@ class DescriptionAnalyzer:
         escaped = re.escape(option_lower)
         # For purely numeric options (e.g. "1", "2"), require digit boundaries
         # to avoid matching inside larger numbers like "#27274"
-        if re.fullmatch(r'\d+', option_lower):
-            pattern = r'(?<!\d)' + escaped + r'(?!\d)'
+        if re.fullmatch(r"\d+", option_lower):
+            pattern = r"(?<!\d)" + escaped + r"(?!\d)"
         else:
-            pattern = escaped + r'(?![а-яіїєґь])'
+            pattern = escaped + r"(?![а-яіїєґь])"
         return bool(re.search(pattern, text))
+
+    # Fields whose options are all single short digits — skip generic matching,
+    # handled by dedicated numeric extractors in _extract_numeric_fields instead.
+    _NUMERIC_ONLY_FIELDS = frozenset(
+        {
+            "кількість балконів",
+            "кількість спален",
+            "кількість санвузлів",
+            "кількість кімнат",
+            "число кімнат",
+        }
+    )
 
     def _match_field_options(self, text: str, existing_data: dict) -> dict:
         """Match description text against field options.
 
         For fields with options (select, radio, checklist), check if any
         option value appears in the description text.
+
+        Skips:
+        - Так/Ні-only fields: too many false positives from Ukrainian word "так"
+          used as a connective ("...так і для...").
+        - Numeric-only count fields (балкони, спальні): handled by dedicated
+          extractors that require explicit context (e.g. "балкон" nearby).
         """
         extracted = {}
 
         for field in self.schema:
-            widget = field.get('widget')
-            options = field.get('options', [])
+            widget = field.get("widget")
+            options = field.get("options", [])
 
             if not options:
                 continue
 
-            key = field.get('label', '').strip()
+            key = field.get("label", "").strip()
             if not key or key in existing_data:
                 continue
 
-            is_address = field.get('section', '').lower() == 'адреса об\'єкта'
+            is_address = field.get("section", "").lower() == "адреса об'єкта"
             if is_address:
                 continue
 
-            if widget in ['select', 'radio']:
+            # Skip binary Так/Ні fields — "так" appears in normal Ukrainian sentences
+            options_lower = {o.lower() for o in options}
+            if options_lower <= {"так", "ні", "є", "немає"}:
+                continue
+
+            # Skip count fields with purely numeric options (digits + maybe "немає")
+            if key.lower() in self._NUMERIC_ONLY_FIELDS:
+                continue
+
+            if widget in ["select", "radio"]:
                 for option in options:
                     option_lower = option.lower()
                     if self._option_in_text(option_lower, text):
@@ -169,7 +237,7 @@ class DescriptionAnalyzer:
                             logger.debug(f"Matched {key}={option} in description")
                         break
 
-            elif widget == 'checklist':
+            elif widget == "checklist":
                 matched_options = []
                 for option in options:
                     option_lower = option.lower()
@@ -197,12 +265,12 @@ class DescriptionAnalyzer:
             if not field_info:
                 continue
 
-            schema_label = field_info['label']
+            schema_label = field_info["label"]
             if schema_label in existing_data:
                 continue
 
-            widget = field_info.get('widget', '')
-            options = field_info.get('options', [])
+            widget = field_info.get("widget", "")
+            options = field_info.get("options", [])
 
             matches = []
             for regex, value in patterns:
@@ -217,7 +285,7 @@ class DescriptionAnalyzer:
                 continue
 
             # checklist fields → list of values, select/radio → single value
-            if widget == 'checklist' or len(matches) > 1:
+            if widget == "checklist" or len(matches) > 1:
                 # Merge with existing option_matches if already extracted above
                 if schema_label in extracted:
                     existing = extracted[schema_label]
@@ -232,7 +300,9 @@ class DescriptionAnalyzer:
                     extracted[schema_label] = matches[0]
 
             if self.debug:
-                logger.debug(f"Context matched {schema_label}={extracted[schema_label]}")
+                logger.debug(
+                    f"Context matched {schema_label}={extracted[schema_label]}"
+                )
 
         return extracted
 
@@ -242,11 +312,22 @@ class DescriptionAnalyzer:
 
         # --- Areas ---
         area_patterns = [
-            (r"загальн\w*\s+площ\w*[:\s-]*(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?|кв\.?\s*м)", "Загальна площа, м²"),
+            (
+                r"загальн\w*\s+площ\w*[:\s\-–—]*(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?|кв\.?\s*м)",
+                "Загальна площа, м²",
+            ),
             (r"(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?)\s*загальн", "Загальна площа, м²"),
-            (r"житлов\w*\s+площ\w*[:\s-]*(\d+[.,]?\d*)", "Житлова площа, м²"),
-            (r"площ\w*\s+кухн\w*[:\s-]*(\d+[.,]?\d*)", "Площа кухні, м²"),
-            (r"кухн\w*[:\s-]*(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?|кв\.?\s*м)", "Площа кухні, м²"),
+            (r"житлов\w*\s+площ\w*[:\s\-–—]*(\d+[.,]?\d*)", "Житлова площа, м²"),
+            (r"площ\w*\s+кухн\w*[:\s\-–—]*(\d+[.,]?\d*)", "Площа кухні, м²"),
+            # "Кухня-вітальня — 15 м²" or "Кухня — 12 м²"
+            (
+                r"кухня(?:-\w+)?\s*[—–\-]\s*(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?|кв\.?\s*м)",
+                "Площа кухні, м²",
+            ),
+            (
+                r"кухн\w*[:\s\-–—]*(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?|кв\.?\s*м)",
+                "Площа кухні, м²",
+            ),
         ]
 
         for pattern, label in area_patterns:
@@ -267,16 +348,16 @@ class DescriptionAnalyzer:
                     extracted[label] = area_slash.group(group)
 
         # --- Floor ---
-        if 'Поверх' not in existing_data and 'Поверх' not in extracted:
+        if "Поверх" not in existing_data and "Поверх" not in extracted:
             floor_pattern = r"(\d+)\s*поверх\s*[/зі]+\s*(\d+)"
             floor_match = re.search(floor_pattern, text)
             if floor_match:
-                extracted['Поверх'] = floor_match.group(1)
-                if 'Поверховість' not in existing_data:
-                    extracted['Поверховість'] = floor_match.group(2)
+                extracted["Поверх"] = floor_match.group(1)
+                if "Поверховість" not in existing_data:
+                    extracted["Поверховість"] = floor_match.group(2)
 
         # --- Room count ---
-        if 'Число кімнат' not in existing_data and 'Число кімнат' not in extracted:
+        if "Число кімнат" not in existing_data and "Число кімнат" not in extracted:
             room_patterns = [
                 (r"однокімнатн", "1 кімната"),
                 (r"двокімнатн", "2 кімнати"),
@@ -286,39 +367,43 @@ class DescriptionAnalyzer:
             for pattern, value in room_patterns:
                 if re.search(pattern, text):
                     # Validate against schema options
-                    field_info = self.label_to_field.get('число кімнат')
+                    field_info = self.label_to_field.get("число кімнат")
                     if field_info:
-                        options = field_info.get('options', [])
+                        options = field_info.get("options", [])
                         if options and value not in options:
                             for opt in options:
                                 if value.split()[0] in opt:
                                     value = opt
                                     break
-                    extracted['Число кімнат'] = value
+                    extracted["Число кімнат"] = value
                     break
 
             # Generic N-кімнатна
-            if 'Число кімнат' not in extracted:
+            if "Число кімнат" not in extracted:
                 match = re.search(r"(\d+)[-\s]?кімнатн", text)
                 if match:
                     num = match.group(1)
                     room_map = {
-                        "1": "1 кімната", "2": "2 кімнати", "3": "3 кімнати",
-                        "4": "4 кімнати", "5": "5 кімнат", "6": "6 кімнат і більше",
+                        "1": "1 кімната",
+                        "2": "2 кімнати",
+                        "3": "3 кімнати",
+                        "4": "4 кімнати",
+                        "5": "5 кімнат",
+                        "6": "6 кімнат і більше",
                     }
                     value = room_map.get(num, f"{num} кімнат")
-                    field_info = self.label_to_field.get('число кімнат')
+                    field_info = self.label_to_field.get("число кімнат")
                     if field_info:
-                        options = field_info.get('options', [])
+                        options = field_info.get("options", [])
                         if options and value not in options:
                             for opt in options:
                                 if num in opt:
                                     value = opt
                                     break
-                    extracted['Число кімнат'] = value
+                    extracted["Число кімнат"] = value
 
         # --- Price ---
-        if 'Ціна' not in existing_data and 'Ціна' not in extracted:
+        if "Ціна" not in existing_data and "Ціна" not in extracted:
             price_patterns = [
                 (r"ціна[:\s]*(\d[\d\s]*)\s*(?:грн|гривень)", "гривень"),
                 (r"ціна[:\s]*(\d[\d\s]*)\s*(?:дол|\$|usd)", "доларів"),
@@ -332,49 +417,64 @@ class DescriptionAnalyzer:
                 if match:
                     price = re.sub(r"\s+", "", match.group(1))
                     if len(price) >= 4:  # at least 1000
-                        extracted['Ціна'] = price
-                        if 'Валюта' not in existing_data:
+                        extracted["Ціна"] = price
+                        if "Валюта" not in existing_data:
                             # Validate currency against schema options
-                            field_info = self.label_to_field.get('валюта')
+                            field_info = self.label_to_field.get("валюта")
                             if field_info:
-                                options = field_info.get('options', [])
+                                options = field_info.get("options", [])
                                 if options:
                                     for opt in options:
                                         if currency.lower() in opt.lower():
                                             currency = opt
                                             break
-                            extracted['Валюта'] = currency
+                            extracted["Валюта"] = currency
                         break
 
         # --- Year built ---
-        if 'Рік будівництва' not in existing_data and 'Рік будівництва' not in extracted:
+        if (
+            "Рік будівництва" not in existing_data
+            and "Рік будівництва" not in extracted
+        ):
             year_patterns = [
-                r'(?:рік\s+)?(?:будівництва|побудови)[:\s]*(\d{4})',
-                r'(?:побудован[оаи]?|збудован[оаи]?)\s*(?:в|у)?\s*(\d{4})',
-                r'(\d{4})\s*рік[уа]?\s*(?:будівництва|побудови)',
-                r'новобудова\s*(\d{4})',
+                r"(?:рік\s+)?(?:будівництва|побудови)[:\s]*(\d{4})",
+                r"(?:побудован[оаи]?|збудован[оаи]?)\s*(?:в|у)?\s*(\d{4})",
+                r"(\d{4})\s*рік[уа]?\s*(?:будівництва|побудови)",
+                r"новобудова\s*(\d{4})",
             ]
             for pattern in year_patterns:
                 match = re.search(pattern, text)
                 if match:
                     year = int(match.group(1))
                     if 1800 <= year <= 2100:
-                        extracted['Рік будівництва'] = str(year)
+                        extracted["Рік будівництва"] = str(year)
                         if self.debug:
                             logger.debug(f"Extracted Рік будівництва={year}")
                         break
 
         # --- Bathroom count ---
-        if 'Кількість санвузлів' not in existing_data and 'Кількість санвузлів' not in extracted:
+        if (
+            "Кількість санвузлів" not in existing_data
+            and "Кількість санвузлів" not in extracted
+        ):
             _WORD_TO_NUM = {
-                'один': 1, 'одн': 1,
-                'два': 2, 'двох': 2, 'двома': 2,
-                'три': 3, 'трьох': 3, 'трьома': 3,
-                'чотири': 4, 'п\'ять': 5,
+                "один": 1,
+                "одн": 1,
+                "два": 2,
+                "двох": 2,
+                "двома": 2,
+                "три": 3,
+                "трьох": 3,
+                "трьома": 3,
+                "чотири": 4,
+                "п'ять": 5,
             }
             bathroom_count = 0
             # 1) Explicit number before санвузл: "2 санвузли", "два санвузли"
-            num_match = re.search(r'(\d+|один|одн\w*|два|двох|двома|три|трьох|трьома|чотири|п\'ять)\s+санвуз', text)
+            num_match = re.search(
+                r"(\d+|один|одн\w*|два|двох|двома|три|трьох|трьома|чотири|п\'ять)\s+санвуз",
+                text,
+            )
             if num_match:
                 token = num_match.group(1)
                 if token.isdigit():
@@ -386,14 +486,14 @@ class DescriptionAnalyzer:
                             break
             # 2) Fallback: count separate mentions
             if bathroom_count == 0:
-                bathroom_count = len(re.findall(r'санвузо[лк]|санвузл', text))
+                bathroom_count = len(re.findall(r"санвузо[лк]|санвузл", text))
 
             if bathroom_count > 0:
-                field_info = self.label_to_field.get('кількість санвузлів')
+                field_info = self.label_to_field.get("кількість санвузлів")
                 if field_info:
-                    options = field_info.get('options', [])
+                    options = field_info.get("options", [])
                     if bathroom_count >= 3:
-                        value = '3 і більше'
+                        value = "3 і більше"
                     else:
                         value = str(bathroom_count)
                     # Validate against options
@@ -402,20 +502,54 @@ class DescriptionAnalyzer:
                             if str(bathroom_count) in opt:
                                 value = opt
                                 break
-                    extracted['Кількість санвузлів'] = value
+                    extracted["Кількість санвузлів"] = value
+
+        # --- Balcony count ---
+        if (
+            "Кількість балконів" not in existing_data
+            and "Кількість балконів" not in extracted
+        ):
+            balcony_match = re.search(
+                r"(\d+)\s+(?:балкон|лоджі)",
+                text,
+            )
+            if balcony_match:
+                count = balcony_match.group(1)
+                field_info = self.label_to_field.get("кількість балконів")
+                if field_info:
+                    options = field_info.get("options", [])
+                    value = (
+                        count
+                        if count in options
+                        else next((o for o in options if count in o), count)
+                    )
+                    extracted["Кількість балконів"] = value
+            elif re.search(r"балкон|лоджі", text):
+                # At least one balcony mentioned without an explicit count
+                field_info = self.label_to_field.get("кількість балконів")
+                if field_info:
+                    options = field_info.get("options", [])
+                    value = (
+                        "1"
+                        if "1" in options
+                        else options[1]
+                        if len(options) > 1
+                        else "1"
+                    )
+                    extracted["Кількість балконів"] = value
 
         # --- Ceiling height ---
-        if 'Висота стель' not in existing_data and 'Висота стель' not in extracted:
+        if "Висота стель" not in existing_data and "Висота стель" not in extracted:
             height_patterns = [
-                r'висот\w*\s+стел\w*[:\s-]*(\d+(?:[.,]\d+)?)\s*м?',
-                r'стелі\s*[-–—]?\s*(\d+(?:[.,]\d+)?)\s*м',
-                r'(\d+(?:[.,]\d+)?)\s*м\s*стелі',
+                r"висот\w*\s+стел\w*[:\s-]*(\d+(?:[.,]\d+)?)\s*м?",
+                r"стелі\s*[-–—]?\s*(\d+(?:[.,]\d+)?)\s*м",
+                r"(\d+(?:[.,]\d+)?)\s*м\s*стелі",
             ]
             for pattern in height_patterns:
                 match = re.search(pattern, text)
                 if match:
-                    height = match.group(1).replace(',', '.')
-                    extracted['Висота стель'] = height
+                    height = match.group(1).replace(",", ".")
+                    extracted["Висота стель"] = height
                     if self.debug:
                         logger.debug(f"Extracted Висота стель={height}")
                     break
@@ -426,12 +560,12 @@ class DescriptionAnalyzer:
         """Extract simple keyword-based boolean fields."""
         extracted = {}
 
-        if 'Опалення' not in existing_data:
-            if any(word in text for word in ['опалення', 'опален', 'тепло']):
-                extracted['Опалення'] = True
+        if "Опалення" not in existing_data:
+            if any(word in text for word in ["опалення", "опален", "тепло"]):
+                extracted["Опалення"] = True
 
-        if 'Гаряча вода' not in existing_data:
-            if any(word in text for word in ['гаряча вода', 'бойлер', 'водонагрівач']):
-                extracted['Гаряча вода'] = True
+        if "Гаряча вода" not in existing_data:
+            if any(word in text for word in ["гаряча вода", "бойлер", "водонагрівач"]):
+                extracted["Гаряча вода"] = True
 
         return extracted

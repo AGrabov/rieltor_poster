@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_playwright
+from playwright.sync_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    Playwright,
+    sync_playwright,
+)
 
 from setup_logger import setup_logger
 
@@ -12,6 +18,7 @@ logger = setup_logger(__name__)
 
 class RieltorErrorPageException(Exception):
     """Raised when the site displays an error page."""
+
     pass
 
 
@@ -58,7 +65,9 @@ class RieltorSession:
 
     def __enter__(self) -> "RieltorSession":
         self._p = sync_playwright().start()
-        self._browser = self._p.chromium.launch(headless=self.headless, slow_mo=self.slow_mo_ms)
+        self._browser = self._p.chromium.launch(
+            headless=self.headless, slow_mo=self.slow_mo_ms
+        )
         self._context = self._browser.new_context()
         self.page = self._context.new_page()
         self.page.set_default_timeout(self.default_timeout_ms)
@@ -68,7 +77,8 @@ class RieltorSession:
     def __exit__(self, exc_type, exc, tb) -> None:
         if self.debug:
             logger.debug("Saving page html...")
-            with open("offer_page.html", "w", encoding="utf-8") as f: f.write(self.page.content())
+            with open("offer_page.html", "w", encoding="utf-8") as f:
+                f.write(self.page.content())
             logger.info("Page html saved to offer_page.html")
         try:
             if self._context:
@@ -91,7 +101,7 @@ class RieltorSession:
         self.page.click('div[role="dialog"] svg.MuiSvgIcon-root')
 
         # Проверяем, что диалог закрылся
-        self.page.wait_for_selector('div[role="dialog"]', state='detached')
+        self.page.wait_for_selector('div[role="dialog"]', state="detached")
         logger.info("Popup successfully closed")
 
     def is_error_page(self) -> bool:
@@ -126,7 +136,9 @@ class RieltorSession:
             return True
         return False
 
-    def navigate_with_error_check(self, url: str, wait_until: str = "domcontentloaded") -> None:
+    def navigate_with_error_check(
+        self, url: str, wait_until: str = "domcontentloaded"
+    ) -> None:
         """Navigate to URL and check for error page.
 
         Args:
@@ -158,7 +170,12 @@ class RieltorSession:
         p.goto(self.LOGIN_URL, wait_until="domcontentloaded")
         self.check_for_error_page()
 
-        p.fill("input[name='phone']", self.creds.phone if not self.creds.phone.startswith('+380') else self.creds.phone.lstrip("+380"))
+        p.fill(
+            "input[name='phone']",
+            self.creds.phone
+            if not self.creds.phone.startswith("+380")
+            else self.creds.phone.lstrip("+380"),
+        )
         p.fill("input[name='password']", self.creds.password)
         p.click("button[type='submit']")
         p.wait_for_load_state("networkidle")

@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 from collections import Counter
-
-from setup_logger import setup_logger
-logger = setup_logger(__name__)
-
 from playwright.sync_api import Locator
 
-from .helpers import (_cf, _norm, _xpath_literal, _key4)
+from .helpers import _cf, _norm, _xpath_literal, _key4
+
+from setup_logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class _RadioProbeMixin:
@@ -75,10 +75,15 @@ class _RadioProbeMixin:
         try:
             if node.evaluate("(el)=>el.tagName==='LABEL'"):
                 sec = _norm(self._nearest_h6_title(node) or title_fallback)
-                label = _norm(self._label_text_labelcontrol(node) or self._fallback_label_from_context(node))
+                label = _norm(
+                    self._label_text_labelcontrol(node)
+                    or self._fallback_label_from_context(node)
+                )
                 itype = ""
                 try:
-                    itype = (node.locator("css=input").first.get_attribute("type") or "").casefold()
+                    itype = (
+                        node.locator("css=input").first.get_attribute("type") or ""
+                    ).casefold()
                 except Exception:
                     itype = ""
                 widget = "checkbox" if itype == "checkbox" else "radio"
@@ -87,18 +92,25 @@ class _RadioProbeMixin:
             pass
 
         sec = _norm(self._nearest_h6_title(node) or title_fallback)
-        lbl = _norm(self._label_text_formcontrol(node) or self._fallback_label_from_context(node))
+        lbl = _norm(
+            self._label_text_formcontrol(node)
+            or self._fallback_label_from_context(node)
+        )
         w, _, _ = self._detect_widget_and_options_formcontrol(node)
         return (sec, lbl, _norm(w).casefold())
 
     def _field_key_sig(self, nav: str, sec: str, lab: str, wid: str) -> str:
         return "||".join([_cf(nav), _cf(sec), _cf(lab), _cf(wid)])
 
-    def _sig_node_keyed(self, node: Locator, title_fallback: str, nav: str) -> Tuple[str, str, str, str]:
+    def _sig_node_keyed(
+        self, node: Locator, title_fallback: str, nav: str
+    ) -> Tuple[str, str, str, str]:
         sec, lab, wid = self._sig_node(node, title_fallback)
         return sec, lab, wid, self._field_key_sig(nav, sec, lab, wid)
 
-    def _snapshot_scope(self, scope: Locator, title_fallback: str, nav: str) -> Tuple[List[Dict[str, Any]], Counter]:
+    def _snapshot_scope(
+        self, scope: Locator, title_fallback: str, nav: str
+    ) -> Tuple[List[Dict[str, Any]], Counter]:
         nodes = self._collect_field_nodes_in_scope(scope)
         ordered: List[Dict[str, Any]] = []
         keys: List[str] = []
@@ -120,11 +132,14 @@ class _RadioProbeMixin:
     def _radio_current_value(self, rg: Locator) -> str:
         labels = rg.locator("xpath=.//label[.//input[@type='radio']]")
         for i in range(labels.count()):
-            l = labels.nth(i)
+            label = labels.nth(i)
             try:
-                inp = l.locator("css=input[type='radio']").first
+                inp = label.locator("css=input[type='radio']").first
                 if inp.count() and inp.is_checked():
-                    t = _norm(l.locator("css=span.MuiFormControlLabel-label").inner_text() or "")
+                    t = _norm(
+                        label.locator("css=span.MuiFormControlLabel-label").inner_text()
+                        or ""
+                    )
                     return t
             except Exception:
                 continue
@@ -134,22 +149,28 @@ class _RadioProbeMixin:
         value_cf = _cf(value)
         labels = rg.locator("xpath=.//label[.//input[@type='radio']]")
         for i in range(labels.count()):
-            l = labels.nth(i)
+            label = labels.nth(i)
             try:
-                t = _norm(l.locator("css=span.MuiFormControlLabel-label").inner_text() or "")
+                t = _norm(
+                    label.locator("css=span.MuiFormControlLabel-label").inner_text()
+                    or ""
+                )
             except Exception:
                 t = ""
             if _cf(t) == value_cf:
-                return self._set_radio_option(l)
+                return self._set_radio_option(label)
         return False
 
     def _radio_values(self, rg: Locator) -> List[str]:
         out: List[str] = []
         labels = rg.locator("xpath=.//label[.//input[@type='radio']]")
         for i in range(labels.count()):
-            l = labels.nth(i)
+            label = labels.nth(i)
             try:
-                t = _norm(l.locator("css=span.MuiFormControlLabel-label").inner_text() or "")
+                t = _norm(
+                    label.locator("css=span.MuiFormControlLabel-label").inner_text()
+                    or ""
+                )
             except Exception:
                 t = ""
             if t:
@@ -164,7 +185,9 @@ class _RadioProbeMixin:
             uniq.append(t)
         return uniq
 
-    def _counter_delta(self, base: Counter, after: Counter) -> Tuple[List[str], List[str]]:
+    def _counter_delta(
+        self, base: Counter, after: Counter
+    ) -> Tuple[List[str], List[str]]:
         added: List[str] = []
         removed: List[str] = []
         allk = set(base.keys()) | set(after.keys())
@@ -177,7 +200,9 @@ class _RadioProbeMixin:
                 removed.extend([k] * (b - a))
         return added, removed
 
-    def _local_probe_scope_for_rg(self, rg: Locator, nav_scope: Locator, nav_title: str) -> Locator:
+    def _local_probe_scope_for_rg(
+        self, rg: Locator, nav_scope: Locator, nav_title: str
+    ) -> Locator:
         sec_title = self._nearest_h6_title(rg)
         if sec_title:
             lit = _xpath_literal(sec_title)
@@ -186,15 +211,20 @@ class _RadioProbeMixin:
                     f"xpath=ancestor::div[contains(@class,'MuiBox-root')][.//h6[normalize-space(.)={lit}]][1]"
                 ).first
                 if box.count():
-                    if box.locator(
-                        "xpath=.//div[contains(@class,'MuiFormControl-root') or contains(@class,'MuiTextField-root')]"
-                    ).count() >= 2:
+                    if (
+                        box.locator(
+                            "xpath=.//div[contains(@class,'MuiFormControl-root') or contains(@class,'MuiTextField-root')]"
+                        ).count()
+                        >= 2
+                    ):
                         return box
             except Exception:
                 pass
         return nav_scope
 
-    def _find_select_form(self, scope: Locator, nav_title: str, section_cf: str, label_cf: str) -> Optional[Locator]:
+    def _find_select_form(
+        self, scope: Locator, nav_title: str, section_cf: str, label_cf: str
+    ) -> Optional[Locator]:
         forms = scope.locator(
             "xpath=.//div[contains(@class,'MuiFormControl-root') or contains(@class,'MuiTextField-root')][.//div[contains(@class,'MuiSelect-select') and @role='button']]"
         )
@@ -215,7 +245,9 @@ class _RadioProbeMixin:
             return f
         return None
 
-    def _cache_select_options_for_added(self, local_scope: Locator, nav_title: str, added: List[Dict[str, Any]]) -> None:
+    def _cache_select_options_for_added(
+        self, local_scope: Locator, nav_title: str, added: List[Dict[str, Any]]
+    ) -> None:
         for a in added:
             if _cf(a.get("widget", "")) != "select":
                 continue
@@ -228,12 +260,19 @@ class _RadioProbeMixin:
             cached = self._select_options_cache.get(cache_key)
             if cached is not None:
                 a.setdefault("options", cached)
-                logger.debug("Added-select cache hit: %s (opts=%d)", cache_key, len(cached))
+                logger.debug(
+                    "Added-select cache hit: %s (opts=%d)", cache_key, len(cached)
+                )
                 continue
 
             form = self._find_select_form(local_scope, nav_title, sec_cf, lab_cf)
             if not form:
-                logger.debug("Added-select form not found: nav=%s section=%s label=%s", nav_title, sec_cf, lab_cf)
+                logger.debug(
+                    "Added-select form not found: nav=%s section=%s label=%s",
+                    nav_title,
+                    sec_cf,
+                    lab_cf,
+                )
                 continue
 
             logger.debug("Added-select cache miss: %s", cache_key)
@@ -319,8 +358,12 @@ class _RadioProbeMixin:
                 self.expand_all_collapsibles(local_scope, max_rounds=6)
                 self.page.wait_for_timeout(self.ui_delay_ms)
 
-                base_ordered, base_counter = self._snapshot_scope(local_scope, title, title)
-                by_key_base: Dict[str, Dict[str, Any]] = {it["key"]: it for it in base_ordered}
+                base_ordered, base_counter = self._snapshot_scope(
+                    local_scope, title, title
+                )
+                by_key_base: Dict[str, Dict[str, Any]] = {
+                    it["key"]: it for it in base_ordered
+                }
 
                 controller_field_key = _key4(title, host_section, label, "radio")
 
@@ -340,26 +383,70 @@ class _RadioProbeMixin:
 
                 for v in values:
                     if _cf(v) == _cf(baseline_val):
-                        group_info["options"].append({"value": v, "select_failed": False, "added": [], "removed": []})
+                        group_info["options"].append(
+                            {
+                                "value": v,
+                                "select_failed": False,
+                                "added": [],
+                                "removed": [],
+                            }
+                        )
                         continue
 
                     ok = self._radio_set_by_value(rg, v)
                     if not ok:
                         logger.debug("Radio set failed: %s=%s", label, v)
-                        group_info["options"].append({"value": v, "select_failed": True, "added": [], "removed": []})
+                        group_info["options"].append(
+                            {
+                                "value": v,
+                                "select_failed": True,
+                                "added": [],
+                                "removed": [],
+                            }
+                        )
                         continue
 
                     self.page.wait_for_timeout(self.ui_delay_ms + 450)
                     self.expand_all_collapsibles(local_scope, max_rounds=6)
                     self.page.wait_for_timeout(self.ui_delay_ms)
 
-                    after_ordered, after_counter = self._snapshot_scope(local_scope, title, title)
-                    by_key_after: Dict[str, Dict[str, Any]] = {it["key"]: it for it in after_ordered}
+                    after_ordered, after_counter = self._snapshot_scope(
+                        local_scope, title, title
+                    )
+                    by_key_after: Dict[str, Dict[str, Any]] = {
+                        it["key"]: it for it in after_ordered
+                    }
 
-                    add_keys, rem_keys = self._counter_delta(base_counter, after_counter)
+                    add_keys, rem_keys = self._counter_delta(
+                        base_counter, after_counter
+                    )
 
-                    added = [by_key_after.get(k, {"nav": title, "section": "", "label": "", "widget": "", "key": k}) for k in add_keys]
-                    removed = [by_key_base.get(k, {"nav": title, "section": "", "label": "", "widget": "", "key": k}) for k in rem_keys]
+                    added = [
+                        by_key_after.get(
+                            k,
+                            {
+                                "nav": title,
+                                "section": "",
+                                "label": "",
+                                "widget": "",
+                                "key": k,
+                            },
+                        )
+                        for k in add_keys
+                    ]
+                    removed = [
+                        by_key_base.get(
+                            k,
+                            {
+                                "nav": title,
+                                "section": "",
+                                "label": "",
+                                "widget": "",
+                                "key": k,
+                            },
+                        )
+                        for k in rem_keys
+                    ]
 
                     if added or removed:
                         any_change = True
@@ -369,8 +456,21 @@ class _RadioProbeMixin:
                     except Exception as e:
                         logger.debug("Cache select options for added failed: %s", e)
 
-                    group_info["options"].append({"value": v, "select_failed": False, "added": added, "removed": removed})
-                    logger.debug("Radio diff: %s=%s added=%d removed=%d", label, v, len(added), len(removed))
+                    group_info["options"].append(
+                        {
+                            "value": v,
+                            "select_failed": False,
+                            "added": added,
+                            "removed": removed,
+                        }
+                    )
+                    logger.debug(
+                        "Radio diff: %s=%s added=%d removed=%d",
+                        label,
+                        v,
+                        len(added),
+                        len(removed),
+                    )
 
                     if baseline_val:
                         self._radio_set_by_value(rg, baseline_val)

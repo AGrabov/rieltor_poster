@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from playwright.sync_api import Locator, Page
+from playwright.sync_api import Locator
 
 from setup_logger import setup_logger
 
@@ -21,7 +21,9 @@ class FieldsMixin:
             if prefer_menu_id:
                 # Use XPath to avoid CSS escaping issues for dynamic ids.
                 lit = self._xpath_literal(prefer_menu_id)
-                lb = self.page.locator(f"xpath=//div[@id={lit}]//*[@role='listbox']").first
+                lb = self.page.locator(
+                    f"xpath=//div[@id={lit}]//*[@role='listbox']"
+                ).first
                 if lb.count():
                     lb.wait_for(state="visible", timeout=2500)
                     return lb
@@ -69,7 +71,9 @@ class FieldsMixin:
         return o if o.count() else None
 
     # -------- buttons / toggles --------
-    def _click_box_button_in_section(self, root: Locator, section_h6: str, text: str) -> None:
+    def _click_box_button_in_section(
+        self, root: Locator, section_h6: str, text: str
+    ) -> None:
         """Click card-like option in section (used for 'Тип угоди', 'Тип нерухомості', etc).
 
         Внутри секции есть вложенные MuiBox-root обёртки, которые тоже матчятся.
@@ -110,7 +114,13 @@ class FieldsMixin:
 
             span_txt = ""
             try:
-                span_txt = " ".join([t.strip() for t in c.locator("css=span").all_inner_texts() if t.strip()]).casefold()
+                span_txt = " ".join(
+                    [
+                        t.strip()
+                        for t in c.locator("css=span").all_inner_texts()
+                        if t.strip()
+                    ]
+                ).casefold()
             except Exception:
                 pass
 
@@ -119,18 +129,27 @@ class FieldsMixin:
                 break
 
         if not chosen:
-            logger.warning("Button not found in section '%s' for text '%s'", section_h6, target)
+            logger.warning(
+                "Button not found in section '%s' for text '%s'", section_h6, target
+            )
             return
 
         # skip if already selected (check element itself and parent)
         try:
-            cls = (chosen.get_attribute("class") or "")
+            cls = chosen.get_attribute("class") or ""
             if "-selected" not in cls:
-                parent_cls = chosen.evaluate("el => (el.parentElement && el.parentElement.className) || ''") or ""
+                parent_cls = (
+                    chosen.evaluate(
+                        "el => (el.parentElement && el.parentElement.className) || ''"
+                    )
+                    or ""
+                )
                 if "-selected" in parent_cls:
                     cls = parent_cls
             if "-selected" in cls:
-                logger.info("Box already selected in '%s' for '%s' (skip)", section_h6, target)
+                logger.info(
+                    "Box already selected in '%s' for '%s' (skip)", section_h6, target
+                )
                 return
         except Exception:
             pass
@@ -153,7 +172,6 @@ class FieldsMixin:
             except Exception:
                 pass
 
-
     def _click_section_toggle(self, root: Locator, section_h6: str) -> None:
         sec = self._section(root, section_h6)
         logger.info("Toggle section: %s", section_h6)
@@ -165,7 +183,6 @@ class FieldsMixin:
             except Exception:
                 pass
 
-
     # -------- inputs/selects --------
     def _fill_by_label(self, root: Locator, section: str, key: str, value: str) -> None:
         sec = self._section(root, section)
@@ -176,7 +193,12 @@ class FieldsMixin:
 
         ctrl = self._find_control_by_label(sec, label)
         if not ctrl:
-            logger.warning("Control not found for key=%s (label=%s) in section=%s", key, label, section)
+            logger.warning(
+                "Control not found for key=%s (label=%s) in section=%s",
+                key,
+                label,
+                section,
+            )
             return
 
         try:
@@ -222,14 +244,21 @@ class FieldsMixin:
         try:
             after = (ctrl.input_value() or "").strip()
             if after != desired:
-                logger.warning("Fill not confirmed %s/%s: desired='%s' current='%s'", section, key, desired, after)
+                logger.warning(
+                    "Fill not confirmed %s/%s: desired='%s' current='%s'",
+                    section,
+                    key,
+                    desired,
+                    after,
+                )
         except Exception:
             pass
 
         self._mark_touched(ctrl)
 
-
-    def _fill_select_or_text(self, root: Locator, section: str, key: str, value: str) -> None:
+    def _fill_select_or_text(
+        self, root: Locator, section: str, key: str, value: str
+    ) -> None:
         sec = self._section(root, section)
         label = self._expected_label(key) or key
         desired = ("" if value is None else str(value)).strip()
@@ -250,12 +279,19 @@ class FieldsMixin:
             if one_select.count():
                 ctrl = one_select
             else:
-                logger.warning("Select/text control not found for key=%s (label=%s) in section=%s", key, label, section)
+                logger.warning(
+                    "Select/text control not found for key=%s (label=%s) in section=%s",
+                    key,
+                    label,
+                    section,
+                )
                 return
 
         # unwrap to formcontrol/select button if possible
         try:
-            form = ctrl.locator("xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]").first
+            form = ctrl.locator(
+                "xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]"
+            ).first
         except Exception:
             form = sec.locator("css=div.MuiFormControl-root").first
 
@@ -264,7 +300,7 @@ class FieldsMixin:
         # ctrl itself could be the select button
         try:
             role = ctrl.get_attribute("role")
-            cls = (ctrl.get_attribute("class") or "")
+            cls = ctrl.get_attribute("class") or ""
             if role == "button" and "MuiSelect-select" in cls:
                 select_btn = ctrl
         except Exception:
@@ -365,7 +401,9 @@ class FieldsMixin:
                 logger.warning("Option '%s' not found for %s/%s", desired, section, key)
                 try:
                     texts = self._list_listbox_options(lb)
-                    logger.debug("Select available options for %s/%s: %s", section, key, texts)
+                    logger.debug(
+                        "Select available options for %s/%s: %s", section, key, texts
+                    )
                 except Exception:
                     pass
                 try:
@@ -390,8 +428,6 @@ class FieldsMixin:
         # ---------- Plain input / textarea ----------
         self._fill_by_label(root, section, key, desired)
 
-
-
     def _list_radio_options(self, form: Locator) -> list[str]:
         """Вернуть список всех доступных текстов радиокнопок внутри формы."""
         options = []
@@ -410,7 +446,9 @@ class FieldsMixin:
         logger.info("Radio options: %s", options)
         return options
 
-    def _try_fill_radio_group(self, form: Locator, section: str, key: str, value: str) -> bool:
+    def _try_fill_radio_group(
+        self, form: Locator, section: str, key: str, value: str
+    ) -> bool:
         desired = (value or "").strip()
         if not desired:
             return False
@@ -426,9 +464,12 @@ class FieldsMixin:
 
         # SKIP — уже выбран
         try:
-            already = form.locator(
-                f"xpath=.//*[(.//input[@type='radio' and @checked]) and contains(normalize-space(.), {lit})]"
-            ).count() > 0
+            already = (
+                form.locator(
+                    f"xpath=.//*[(.//input[@type='radio' and @checked]) and contains(normalize-space(.), {lit})]"
+                ).count()
+                > 0
+            )
         except Exception:
             already = False
 
@@ -449,7 +490,9 @@ class FieldsMixin:
                 logger.debug("Radio available texts for %s/%s: %s", section, key, texts)
             except Exception:
                 pass
-            logger.warning("Radio option not found for %s/%s desired='%s'", section, key, desired)
+            logger.warning(
+                "Radio option not found for %s/%s desired='%s'", section, key, desired
+            )
             self._mark_touched(form)
             return True
 
@@ -458,7 +501,9 @@ class FieldsMixin:
         return True
 
     # -------- checkbox rows --------
-    def _set_checkbox_by_label_if_present(self, root: Locator, section: str, key: str, value: bool) -> None:
+    def _set_checkbox_by_label_if_present(
+        self, root: Locator, section: str, key: str, value: bool
+    ) -> None:
         sec = self._section(root, section)
         label = self._expected_label(key) or key
 
@@ -471,7 +516,9 @@ class FieldsMixin:
         cb = row.locator("css=input[type='checkbox']").first
         if cb.count() == 0:
             if value:
-                logger.debug("Toggle row click (no checkbox input) for %s/%s", section, key)
+                logger.debug(
+                    "Toggle row click (no checkbox input) for %s/%s", section, key
+                )
                 row.click()
             return
 
@@ -503,7 +550,6 @@ class FieldsMixin:
         logger.warning("Listbox option not found: %s", desired)
         return self.page.locator("[role='listbox']").first
 
-
     def _list_listbox_options(self, listbox: Locator) -> list[str]:
         options = []
         try:
@@ -520,7 +566,9 @@ class FieldsMixin:
             pass
         return options
 
-    def _open_checklist_and_check(self, root: Locator, section: str, key: str, items: Sequence[str]) -> None:
+    def _open_checklist_and_check(
+        self, root: Locator, section: str, key: str, items: Sequence[str]
+    ) -> None:
         sec = self._section(root, section)
         label = self._expected_label(key) or key
 
@@ -578,7 +626,9 @@ class FieldsMixin:
         for item in items:
             node = self._find_option_in_listbox(lb, str(item))
             if not node:
-                logger.warning("Checklist option not found: %s/%s -> %s", section, key, str(item))
+                logger.warning(
+                    "Checklist option not found: %s/%s -> %s", section, key, str(item)
+                )
                 continue
 
             cb = node.locator("css=input[type='checkbox']").first
@@ -601,8 +651,9 @@ class FieldsMixin:
         except Exception:
             pass
 
-
-    def _set_multiselect_or_checklist(self, root: Locator, section: str, key: str, values: Sequence[str]) -> None:
+    def _set_multiselect_or_checklist(
+        self, root: Locator, section: str, key: str, values: Sequence[str]
+    ) -> None:
         sec = self._section(root, section)
         label = self._expected_label(key) or key
 
@@ -611,7 +662,11 @@ class FieldsMixin:
             logger.warning("Multi control not found for %s/%s", section, key)
             return
 
-        inp = ctrl.locator("css=input").first if ctrl.locator("css=input").count() else None
+        inp = (
+            ctrl.locator("css=input").first
+            if ctrl.locator("css=input").count()
+            else None
+        )
         if inp:
             # основной путь — autocomplete multi
             self._fill_autocomplete_multi(sec, key, values)

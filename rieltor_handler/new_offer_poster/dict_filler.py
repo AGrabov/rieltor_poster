@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 from typing import Any, Dict, List
 
 from playwright.sync_api import Page, Locator
@@ -25,10 +24,19 @@ logger = setup_logger(__name__)
 _PHOTO_BLOCK_KEY_ORDER = ("apartment", "interior", "layout", "yard", "infrastructure")
 
 # Keys in offer_data that are handled specially (not schema fields)
-_SPECIAL_KEYS = frozenset({
-    "offer_type", "property_type", "article", "advertising",
-    "photo_download_link", "personal_notes", "address",
-})
+_SPECIAL_KEYS = frozenset(
+    {
+        "offer_type",
+        "property_type",
+        "article",
+        "advertising",
+        "photo_download_link",
+        "personal_notes",
+        "address",
+        "public_link",
+        "responsible_person",
+    }
+)
 
 
 class DictOfferFormFiller(
@@ -75,7 +83,9 @@ class DictOfferFormFiller(
 
         # Build photo block key → section title mapping from navigation
         self._photo_block_sections: Dict[str, str] = {}
-        block_sections = [n for n in self._schema["navigation"] if n.startswith("Блок ")]
+        block_sections = [
+            n for n in self._schema["navigation"] if n.startswith("Блок ")
+        ]
         for i, section_name in enumerate(block_sections):
             if i < len(_PHOTO_BLOCK_KEY_ORDER):
                 self._photo_block_sections[_PHOTO_BLOCK_KEY_ORDER[i]] = section_name
@@ -114,24 +124,28 @@ class DictOfferFormFiller(
         logger.info("Start filling offer draft (dict-based, schema-driven)")
 
         state = {
-            'address_filled': False,
-            'additional_opened': False,
-            'photos_filled': False,
+            "address_filled": False,
+            "additional_opened": False,
+            "photos_filled": False,
         }
 
         # ── Phase 1: offer_type → property_type → address (strict order) ──
         if not self._is_empty_value(offer_data.get("offer_type")):
-            self._click_box_button_in_section(root, "Тип угоди", deal_text(offer_data["offer_type"]))
+            self._click_box_button_in_section(
+                root, "Тип угоди", deal_text(offer_data["offer_type"])
+            )
 
         if not self._is_empty_value(offer_data.get("property_type")):
             self._click_box_button_in_section(
-                root, "Тип нерухомості", self._to_text(offer_data["property_type"]).lower()
+                root,
+                "Тип нерухомості",
+                self._to_text(offer_data["property_type"]).lower(),
             )
 
         address_data = offer_data.get("address")
         if isinstance(address_data, dict) and not self._is_empty_value(address_data):
             self._fill_address_from_dict(root, address_data)
-            state['address_filled'] = True
+            state["address_filled"] = True
 
         # ── Phase 2: all remaining fields ──
         for key, value in offer_data.items():
@@ -144,9 +158,9 @@ class DictOfferFormFiller(
 
             # ── Special: photo blocks ──
             if key in self._photo_block_sections:
-                if not state['photos_filled']:
+                if not state["photos_filled"]:
                     self._fill_photos_from_dict(root, offer_data)
-                    state['photos_filled'] = True
+                    state["photos_filled"] = True
                 continue
 
             # ── Special: personal_notes ──
@@ -166,25 +180,32 @@ class DictOfferFormFiller(
                 continue
 
             section = self._schema["label_to_section"].get(label_lower, "")
-            widget = self._schema["label_to_widget"].get(label_lower, field_info.get("widget", "text"))
+            widget = self._schema["label_to_widget"].get(
+                label_lower, field_info.get("widget", "text")
+            )
 
             # Open "Додаткові параметри" if needed (lazy, once)
-            if not state['additional_opened'] and "Додаткові параметри" in self._schema["navigation"]:
+            if (
+                not state["additional_opened"]
+                and "Додаткові параметри" in self._schema["navigation"]
+            ):
                 if self._is_additional_param(field_info):
                     self._click_section_toggle(root, "Додаткові параметри")
-                    state['additional_opened'] = True
+                    state["additional_opened"] = True
 
             self._fill_field_from_dict(root, section, key, value, widget)
 
         # Map error handling (only if address was filled)
-        if state['address_filled'] and self._map_error_visible():
-            self._handle_map_error(root, offer_data.get('address', {}))
+        if state["address_filled"] and self._map_error_visible():
+            self._handle_map_error(root, offer_data.get("address", {}))
 
         # If commission field is not in data, set it to "Немає" to avoid
         # the site's default "Є" which requires filling child fields
         _COMMISSION_LABEL = "Комісія з покупця/орендатора"
         if _COMMISSION_LABEL not in offer_data:
-            commission_field = self._schema["label_to_field"].get(_COMMISSION_LABEL.lower().strip())
+            commission_field = self._schema["label_to_field"].get(
+                _COMMISSION_LABEL.lower().strip()
+            )
             if commission_field:
                 self._set_commission_no(root, _COMMISSION_LABEL)
 
@@ -233,7 +254,9 @@ class DictOfferFormFiller(
     ) -> None:
         """Fill single field using widget-specific handler."""
         if widget == "box_select":
-            self._click_box_button_in_section(root, section, self._to_text(value).lower())
+            self._click_box_button_in_section(
+                root, section, self._to_text(value).lower()
+            )
             return
 
         if widget == "text_autocomplete":
@@ -326,7 +349,11 @@ class DictOfferFormFiller(
 
         logger.info(
             "Fill address: city=%s, condo=%s, district=%s, street=%s, house=%s",
-            city, condo, district, street, house,
+            city,
+            condo,
+            district,
+            street,
+            house,
         )
 
         # 1) CITY
@@ -381,7 +408,9 @@ class DictOfferFormFiller(
 
     def _handle_map_error(self, root: Locator, address_data: dict) -> None:
         """Handle map pin error — try to snap pin by reselecting house number."""
-        logger.warning("Map pin error is visible — trying to snap pin by reselecting house number")
+        logger.warning(
+            "Map pin error is visible — trying to snap pin by reselecting house number"
+        )
 
         if not address_data:
             return
@@ -396,7 +425,9 @@ class DictOfferFormFiller(
             sec_addr = self._section(root, "Адреса об'єкта")
             house = _get("Будинок")
             if house:
-                self._force_reselect_house_number(sec_addr, str(house), house_label="Будинок")
+                self._force_reselect_house_number(
+                    sec_addr, str(house), house_label="Будинок"
+                )
         except Exception:
             pass
 
@@ -470,7 +501,9 @@ class DictOfferFormFiller(
         try:
             sec = self._section(root, "Основні параметри")
         except Exception:
-            logger.warning("Cannot find 'Основні параметри' section for commission radio")
+            logger.warning(
+                "Cannot find 'Основні параметри' section for commission radio"
+            )
             return
 
         lit = self._xpath_literal(label)
@@ -485,12 +518,16 @@ class DictOfferFormFiller(
             logger.warning("Commission radio wrapper not found for '%s'", label)
             return
 
-        nemaye = wrapper.locator("xpath=.//label[contains(normalize-space(.), 'Немає')]").first
+        nemaye = wrapper.locator(
+            "xpath=.//label[contains(normalize-space(.), 'Немає')]"
+        ).first
         if nemaye.count():
             nemaye.click()
             logger.info("Set '%s' to 'Немає' (no commission data provided)", label)
         else:
-            logger.warning("'Немає' option not found in commission radio for '%s'", label)
+            logger.warning(
+                "'Немає' option not found in commission radio for '%s'", label
+            )
 
     # ── Photos ──
 
@@ -575,7 +612,9 @@ class DictOfferFormFiller(
         try:
             root_pre = self._new_offer_root()
             for e in self.collect_validation_report(root_pre):
-                pre_errors.add((e.get("section", ""), e.get("field", ""), e.get("message", "")))
+                pre_errors.add(
+                    (e.get("section", ""), e.get("field", ""), e.get("message", ""))
+                )
         except Exception:
             pass
 
@@ -602,15 +641,19 @@ class DictOfferFormFiller(
         root_check = self._new_offer_root()
         all_errors = self.collect_validation_report(root_check)
         new_errors = [
-            e for e in all_errors
-            if (e.get("section", ""), e.get("field", ""), e.get("message", "")) not in pre_errors
+            e
+            for e in all_errors
+            if (e.get("section", ""), e.get("field", ""), e.get("message", ""))
+            not in pre_errors
         ]
         if new_errors:
             logger.warning("Client-side validation errors after %s:", action)
             for err in new_errors:
                 logger.error(
                     "  Validation error: [%s] %s — %s",
-                    err.get("section", ""), err.get("field", ""), err.get("message", ""),
+                    err.get("section", ""),
+                    err.get("field", ""),
+                    err.get("message", ""),
                 )
             if raise_on_errors:
                 raise FormValidationError(new_errors)
@@ -656,12 +699,17 @@ class DictOfferFormFiller(
             for err in report:
                 logger.error(
                     "  [%s] %s — %s",
-                    err.get("section", ""), err.get("field", ""), err.get("message", ""),
+                    err.get("section", ""),
+                    err.get("field", ""),
+                    err.get("message", ""),
                 )
             if raise_on_errors:
                 raise FormValidationError(report)
         else:
-            logger.warning("%s finished without redirect and without visible validation errors", action)
+            logger.warning(
+                "%s finished without redirect and without visible validation errors",
+                action,
+            )
 
         return report
 
@@ -671,17 +719,23 @@ class DictOfferFormFiller(
         self._submit_and_get_report(publish_immediately=False, raise_on_errors=True)
 
     def save_and_get_report(self, publish_immediately: bool = False) -> List[dict]:
-        return self._submit_and_get_report(publish_immediately=publish_immediately, raise_on_errors=False)
+        return self._submit_and_get_report(
+            publish_immediately=publish_immediately, raise_on_errors=False
+        )
 
     def publish(self) -> None:
         self._submit_and_get_report(publish_immediately=True, raise_on_errors=True)
 
     def publish_and_get_report(self) -> List[dict]:
-        return self._submit_and_get_report(publish_immediately=True, raise_on_errors=False)
+        return self._submit_and_get_report(
+            publish_immediately=True, raise_on_errors=False
+        )
 
     # ── Helpers ──
 
-    def _upload_file_in_section(self, root: Locator, section: str, key: str, value: Any) -> None:
+    def _upload_file_in_section(
+        self, root: Locator, section: str, key: str, value: Any
+    ) -> None:
         """Upload file(s) in a section."""
         files: List[str] = []
         if isinstance(value, str):
@@ -697,7 +751,11 @@ class DictOfferFormFiller(
         label = key  # key IS the label
         lit = self._xpath_literal(label)
         form = sec.locator(f"xpath=.//*[contains(normalize-space(.), {lit})]").first
-        inp = form.locator("css=input[type='file']").first if form.count() else sec.locator("css=input[type='file']").first
+        inp = (
+            form.locator("css=input[type='file']").first
+            if form.count()
+            else sec.locator("css=input[type='file']").first
+        )
 
         if inp.count() == 0:
             logger.warning("File input not found for %s/%s", section, key)

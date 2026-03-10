@@ -15,7 +15,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_playwright
+from playwright.sync_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    Playwright,
+    sync_playwright,
+)
 
 from setup_logger import setup_logger
 
@@ -38,8 +44,8 @@ class CrmSession:
       - navigate with error checking
     """
 
-    BASE_URL = "https://crm-primes.realtsoft.net"
-    LOGIN_URL = "https://crm-primes.realtsoft.net/login"
+    BASE_URL = "https://crm-capital.realtsoft.net"
+    LOGIN_URL = "https://crm-capital.realtsoft.net/login"
 
     def __init__(
         self,
@@ -66,7 +72,8 @@ class CrmSession:
     def __enter__(self) -> "CrmSession":
         self._p = sync_playwright().start()
         self._browser = self._p.chromium.launch(
-            headless=self.headless, slow_mo=self.slow_mo_ms,
+            headless=self.headless,
+            slow_mo=self.slow_mo_ms,
         )
         self._context = self._browser.new_context()
         self.page = self._context.new_page()

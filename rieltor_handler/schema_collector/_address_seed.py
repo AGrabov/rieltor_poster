@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import List, Optional
 
 from playwright.sync_api import Locator
 
@@ -31,7 +31,9 @@ class _AddressSeedMixin:
             logger.debug("Failed to save HTML context: %s", e)
 
     # ---------------- find forms ----------------
-    def _find_form_by_label_contains(self, scope: Locator, needles: List[str]) -> Optional[Locator]:
+    def _find_form_by_label_contains(
+        self, scope: Locator, needles: List[str]
+    ) -> Optional[Locator]:
         needles_cf = [_cf(x) for x in needles if _norm(x)]
         forms = scope.locator(
             "xpath=.//div[contains(@class,'MuiFormControl-root') or contains(@class,'MuiTextField-root')]"
@@ -68,7 +70,9 @@ class _AddressSeedMixin:
         return out
 
     # ---------------- autocomplete (GLOBAL dropdown / tooltip popper) ----------------
-    def _wait_autocomplete_options(self, anchor: Locator, timeout_s: float = 6.0, *, debug_label: str = "") -> int:
+    def _wait_autocomplete_options(
+        self, anchor: Locator, timeout_s: float = 6.0, *, debug_label: str = ""
+    ) -> int:
         """Wait until any visible autocomplete option appears anywhere in DOM (portal)."""
         deadline = time.time() + float(timeout_s)
         last = 0
@@ -175,11 +179,20 @@ class _AddressSeedMixin:
 
                     logger.debug(
                         "%s: Found %d visible options (total nodes: %d, selectors matched: %d)",
-                        debug_label, cnt, total_nodes, len(found_selectors)
+                        debug_label,
+                        cnt,
+                        total_nodes,
+                        len(found_selectors),
                     )
                     if found_selectors:
-                        for sel_info in found_selectors[:3]:  # Log first 3 matching selectors
-                            logger.debug("  Selector '%s': %d nodes", sel_info["sel"], sel_info["count"])
+                        for sel_info in found_selectors[
+                            :3
+                        ]:  # Log first 3 matching selectors
+                            logger.debug(
+                                "  Selector '%s': %d nodes",
+                                sel_info["sel"],
+                                sel_info["count"],
+                            )
                     if visible_texts:
                         logger.debug("  Sample options: %s", visible_texts[:3])
 
@@ -192,7 +205,14 @@ class _AddressSeedMixin:
             self.page.wait_for_timeout(120)
         return last
 
-    def _click_autocomplete_option_contains(self, anchor: Locator, needle: str, *, allow_first_fallback: bool = True, debug_label: str = "") -> tuple[bool, str]:
+    def _click_autocomplete_option_contains(
+        self,
+        anchor: Locator,
+        needle: str,
+        *,
+        allow_first_fallback: bool = True,
+        debug_label: str = "",
+    ) -> tuple[bool, str]:
         """Click visible option that contains needle (case-insensitive). Returns (success, clicked_text)."""
         needle_cf = (needle or "").strip().casefold()
 
@@ -313,14 +333,20 @@ class _AddressSeedMixin:
                   };
                 }
                 """,
-                {"input": anchor, "needle": needle_cf, "allowFirst": bool(allow_first_fallback)},
+                {
+                    "input": anchor,
+                    "needle": needle_cf,
+                    "allowFirst": bool(allow_first_fallback),
+                },
             )
 
             success = result.get("success", False)
             if not success:
                 if debug_label:
                     reason = result.get("reason", "unknown")
-                    logger.debug("%s: Selection failed - reason: %s", debug_label, reason)
+                    logger.debug(
+                        "%s: Selection failed - reason: %s", debug_label, reason
+                    )
                 return (False, "")
 
             clicked_text = result.get("clicked_text", "")
@@ -333,19 +359,23 @@ class _AddressSeedMixin:
                     debug_label,
                     clicked_text,
                     result.get("total_options", 0),
-                    match_type
+                    match_type,
                 )
 
             # Click the marked element using Playwright (more reliable than JS events)
             if marker_id:
                 try:
-                    target_locator = self.page.locator(f"[data-playwright-target='{marker_id}']").first
+                    target_locator = self.page.locator(
+                        f"[data-playwright-target='{marker_id}']"
+                    ).first
                     if target_locator.count() > 0:
                         target_locator.click(timeout=2000)
                         self.page.wait_for_timeout(self.ui_delay_ms)
                         # Clean up the marker
                         try:
-                            self.page.evaluate(f"document.querySelector('[data-playwright-target=\"{marker_id}\"]')?.removeAttribute('data-playwright-target')")
+                            self.page.evaluate(
+                                f"document.querySelector('[data-playwright-target=\"{marker_id}\"]')?.removeAttribute('data-playwright-target')"
+                            )
                         except Exception:
                             pass
                         if debug_label:
@@ -366,7 +396,14 @@ class _AddressSeedMixin:
                 logger.debug("%s: Exception clicking autocomplete: %s", debug_label, e)
             return False
 
-    def _autocomplete_pick(self, form: Locator, desired_text: str, *, query: str | None = None, save_html: bool = False) -> bool:
+    def _autocomplete_pick(
+        self,
+        form: Locator,
+        desired_text: str,
+        *,
+        query: str | None = None,
+        save_html: bool = False,
+    ) -> bool:
         """Type query and click option containing desired_text (dropdown rendered via portal/tooltip)."""
         inp = form.locator("css=input").first
         if not inp.count():
@@ -433,8 +470,15 @@ class _AddressSeedMixin:
         if save_html:
             self._save_html_context(f"after_type_{q.replace(' ', '_')}_before_wait")
 
-        visible_cnt = self._wait_autocomplete_options(inp, timeout_s=6.0, debug_label=debug_label)
-        logger.debug("Autocomplete options visible=%d for query='%s' (desired='%s')", visible_cnt, q, desired)
+        visible_cnt = self._wait_autocomplete_options(
+            inp, timeout_s=6.0, debug_label=debug_label
+        )
+        logger.debug(
+            "Autocomplete options visible=%d for query='%s' (desired='%s')",
+            visible_cnt,
+            q,
+            desired,
+        )
 
         if visible_cnt <= 0:
             logger.debug("No autocomplete options appeared for query='%s'", q)
@@ -446,7 +490,9 @@ class _AddressSeedMixin:
             try:
                 inp.press("ArrowDown")
                 self.page.wait_for_timeout(self.ui_delay_ms + 300)
-                visible_cnt = self._wait_autocomplete_options(inp, timeout_s=2.0, debug_label=f"{debug_label}_retry")
+                visible_cnt = self._wait_autocomplete_options(
+                    inp, timeout_s=2.0, debug_label=f"{debug_label}_retry"
+                )
                 if visible_cnt <= 0:
                     return False
                 logger.debug("Second attempt found %d options", visible_cnt)
@@ -457,7 +503,9 @@ class _AddressSeedMixin:
             self._save_html_context(f"options_visible_{q.replace(' ', '_')}")
 
         # try click matching desired (contains), then fallback to first
-        click_ok, clicked_text = self._click_autocomplete_option_contains(inp, desired, allow_first_fallback=True, debug_label=debug_label)
+        click_ok, clicked_text = self._click_autocomplete_option_contains(
+            inp, desired, allow_first_fallback=True, debug_label=debug_label
+        )
         if not click_ok:
             logger.debug("Failed to click autocomplete option (desired='%s')", desired)
             if save_html:
@@ -471,14 +519,25 @@ class _AddressSeedMixin:
         try:
             final_value = inp.input_value() or ""
             if final_value.strip():
-                logger.debug("Autocomplete selection successful: input='%s' (clicked='%s')", final_value, clicked_text)
+                logger.debug(
+                    "Autocomplete selection successful: input='%s' (clicked='%s')",
+                    final_value,
+                    clicked_text,
+                )
                 # Verify the selection matches what we wanted
                 if desired and desired.lower() not in final_value.lower():
-                    logger.warning("Autocomplete mismatch! Wanted '%s', got '%s' (clicked '%s')", desired, final_value, clicked_text)
+                    logger.warning(
+                        "Autocomplete mismatch! Wanted '%s', got '%s' (clicked '%s')",
+                        desired,
+                        final_value,
+                        clicked_text,
+                    )
                     if save_html:
                         self._save_html_context(f"mismatch_{q.replace(' ', '_')}")
             else:
-                logger.warning("Autocomplete input still empty after clicking '%s'", clicked_text)
+                logger.warning(
+                    "Autocomplete input still empty after clicking '%s'", clicked_text
+                )
                 if save_html:
                     self._save_html_context(f"empty_after_click_{q.replace(' ', '_')}")
         except Exception as e:
@@ -564,7 +623,9 @@ class _AddressSeedMixin:
         autos = self._list_autocomplete_forms(scope)
 
         # CITY form
-        city_form = self._find_form_by_label_contains(scope, ["Місто", "Населений", "Населений пункт", "Город"])
+        city_form = self._find_form_by_label_contains(
+            scope, ["Місто", "Населений", "Населений пункт", "Город"]
+        )
         if not city_form and autos:
             city_form = autos[0]
 
@@ -598,10 +659,16 @@ class _AddressSeedMixin:
                 pass
 
         # Try RESIDENTIAL COMPLEX/NEW BUILDING first - auto-fills street, house, subway, etc.
-        complex_form = self._find_form_by_label_contains(scope, [
-            "Новобудова",  # New building (primary field on this site)
-            "Житловий комплекс", "ЖК", "Жилой комплекс", "Котеджне містечко"
-        ])
+        complex_form = self._find_form_by_label_contains(
+            scope,
+            [
+                "Новобудова",  # New building (primary field on this site)
+                "Житловий комплекс",
+                "ЖК",
+                "Жилой комплекс",
+                "Котеджне містечко",
+            ],
+        )
 
         # If not found by label, try second autocomplete (often complex is between city and street)
         if not complex_form and len(autos) >= 2:
@@ -613,7 +680,9 @@ class _AddressSeedMixin:
             ok = False
             # Try triggering autocomplete with generic query first to see any options
             for query in ["а", " ", ""]:
-                if self._autocomplete_pick(complex_form, "", query=query if query else "а", save_html=False):
+                if self._autocomplete_pick(
+                    complex_form, "", query=query if query else "а", save_html=False
+                ):
                     ok = True
                     logger.info("Residential complex filled (generic query)")
                     break
@@ -621,8 +690,13 @@ class _AddressSeedMixin:
             # If generic didn't work, try specific complex names
             if not ok:
                 for complex_name in ["Comfort", "Paradise", "Riverside"]:
-                    for q in [complex_name, complex_name[:3] if len(complex_name) > 3 else complex_name]:
-                        if self._autocomplete_pick(complex_form, complex_name, query=q, save_html=False):
+                    for q in [
+                        complex_name,
+                        complex_name[:3] if len(complex_name) > 3 else complex_name,
+                    ]:
+                        if self._autocomplete_pick(
+                            complex_form, complex_name, query=q, save_html=False
+                        ):
                             ok = True
                             logger.info("Residential complex filled: %s", complex_name)
                             break
@@ -635,10 +709,14 @@ class _AddressSeedMixin:
                 logger.info("Seed fill address done (via residential complex)")
                 return
             else:
-                logger.debug("Residential complex field found but no options selected, falling back to street")
+                logger.debug(
+                    "Residential complex field found but no options selected, falling back to street"
+                )
 
         # Fallback: STREET form (if no complex or complex failed)
-        street_form = self._find_form_by_label_contains(scope, ["Вулиця", "Вул", "Улица", "Street"])
+        street_form = self._find_form_by_label_contains(
+            scope, ["Вулиця", "Вул", "Улица", "Street"]
+        )
         if not street_form:
             # often second autocomplete after city
             if len(autos) >= 2:
@@ -648,15 +726,23 @@ class _AddressSeedMixin:
 
         if street_form:
             ok = False
-            for desired, q in [("Хрещатик", "Хрещатик"), ("Хрещатик", "Хр"), ("Хрещатик", "а")]:
-                if self._autocomplete_pick(street_form, desired, query=q, save_html=False):
+            for desired, q in [
+                ("Хрещатик", "Хрещатик"),
+                ("Хрещатик", "Хр"),
+                ("Хрещатик", "а"),
+            ]:
+                if self._autocomplete_pick(
+                    street_form, desired, query=q, save_html=False
+                ):
                     ok = True
                     break
             if not ok:
                 logger.warning("Street autocomplete failed")
             self.page.wait_for_timeout(self.ui_delay_ms + 700)
         else:
-            logger.debug("Street form not found (may be auto-filled by complex or not required)")
+            logger.debug(
+                "Street form not found (may be auto-filled by complex or not required)"
+            )
 
         # refresh again: house field may appear only after street
         scope = self._find_nav_scope("Адреса об'єкта") or scope
@@ -667,13 +753,17 @@ class _AddressSeedMixin:
         deadline = time.time() + 14.0
         house_form: Optional[Locator] = None
         while time.time() < deadline:
-            house_form = self._find_form_by_label_contains(scope, ["Номер будинку", "Будинок", "House"])
+            house_form = self._find_form_by_label_contains(
+                scope, ["Номер будинку", "Будинок", "House"]
+            )
             if house_form:
                 break
             self.page.wait_for_timeout(250)
 
         if not house_form:
-            logger.debug("House number form not found (may be auto-filled by complex or not required)")
+            logger.debug(
+                "House number form not found (may be auto-filled by complex or not required)"
+            )
             logger.info("Seed fill address done")
             return
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from setup_logger import setup_logger
-logger = setup_logger(__name__)
-
 from .helpers import _cf, _norm
+
+from setup_logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class _ParkingTypeMixin:
@@ -40,7 +41,9 @@ class _ParkingTypeMixin:
 
         for i in range(rgs.count()):
             rg = rgs.nth(i)
-            labels = rg.locator("xpath=.//label[contains(@class,'MuiFormControlLabel-root')]")
+            labels = rg.locator(
+                "xpath=.//label[contains(@class,'MuiFormControlLabel-root')]"
+            )
 
             # Check if this radiogroup has both "Гараж" and "Паркомісце" options
             has_garage = False
@@ -50,7 +53,10 @@ class _ParkingTypeMixin:
             for j in range(labels.count()):
                 lab = labels.nth(j)
                 try:
-                    txt = _norm(lab.locator("css=span.MuiFormControlLabel-label").inner_text() or "")
+                    txt = _norm(
+                        lab.locator("css=span.MuiFormControlLabel-label").inner_text()
+                        or ""
+                    )
                 except Exception:
                     txt = ""
 
@@ -69,7 +75,9 @@ class _ParkingTypeMixin:
 
                 # Click the target option
                 try:
-                    span = target_label.locator("css=span.MuiFormControlLabel-label").first
+                    span = target_label.locator(
+                        "css=span.MuiFormControlLabel-label"
+                    ).first
                     if span.count():
                         self._click_best_effort(span)
                     else:
@@ -101,7 +109,9 @@ class _ParkingTypeMixin:
 
         for i in range(rgs.count()):
             rg = rgs.nth(i)
-            labels = rg.locator("xpath=.//label[contains(@class,'MuiFormControlLabel-root')]")
+            labels = rg.locator(
+                "xpath=.//label[contains(@class,'MuiFormControlLabel-root')]"
+            )
 
             # Check if this is the parking type radiogroup
             has_garage = False
@@ -110,7 +120,10 @@ class _ParkingTypeMixin:
             for j in range(labels.count()):
                 lab = labels.nth(j)
                 try:
-                    txt = _norm(lab.locator("css=span.MuiFormControlLabel-label").inner_text() or "")
+                    txt = _norm(
+                        lab.locator("css=span.MuiFormControlLabel-label").inner_text()
+                        or ""
+                    )
                 except Exception:
                     txt = ""
 
@@ -127,7 +140,12 @@ class _ParkingTypeMixin:
                     try:
                         inp = lab.locator("css=input[type='radio']").first
                         if inp.count() and inp.is_checked():
-                            return _norm(lab.locator("css=span.MuiFormControlLabel-label").inner_text() or "")
+                            return _norm(
+                                lab.locator(
+                                    "css=span.MuiFormControlLabel-label"
+                                ).inner_text()
+                                or ""
+                            )
                     except Exception:
                         continue
 

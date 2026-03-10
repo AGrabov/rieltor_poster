@@ -1,30 +1,52 @@
 from __future__ import annotations
 
+try:
+    from .schema_collector.collector import OfferCreateSchemaCollector
+    from .schema_collector.helpers import _slug, _key4, _sig3
+    from .rieltor_session import RieltorCredentials, RieltorSession
+except ImportError:
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from rieltor_handler.schema_collector.collector import OfferCreateSchemaCollector
+    from rieltor_handler.schema_collector.helpers import _slug, _key4, _sig3
+    from rieltor_handler.rieltor_session import RieltorCredentials, RieltorSession
+
 import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List
 
 from setup_logger import init_logging
-logger = init_logging(level=str(os.environ.get("LOG_LEVEL", "DEBUG")).upper(), filename="logs/schema_collector.log")
 
-
-from .schema_collector.collector import OfferCreateSchemaCollector
-from .schema_collector.helpers import (_slug, _key4, _sig3)
-
-from .rieltor_session import RieltorCredentials, RieltorSession
-
+logger = init_logging(
+    level=str(os.environ.get("LOG_LEVEL", "DEBUG")).upper(),
+    filename="logs/schema_collector.log",
+)
 
 
 def _attach_field_keys(schema: Dict[str, Any]) -> None:
     for f in schema.get("fields") or []:
         meta = f.get("meta") or {}
-        meta.setdefault("field_key", _key4(f.get("nav", ""), f.get("section", ""), f.get("label", ""), f.get("widget", "")))
-        meta.setdefault("sig", _sig3(f.get("section", ""), f.get("label", ""), f.get("widget", "")))
+        meta.setdefault(
+            "field_key",
+            _key4(
+                f.get("nav", ""),
+                f.get("section", ""),
+                f.get("label", ""),
+                f.get("widget", ""),
+            ),
+        )
+        meta.setdefault(
+            "sig", _sig3(f.get("section", ""), f.get("label", ""), f.get("widget", ""))
+        )
         f["meta"] = meta
 
 
-def _inject_conditionals_into_meta(schema: Dict[str, Any], cond: List[Dict[str, Any]]) -> None:
+def _inject_conditionals_into_meta(
+    schema: Dict[str, Any], cond: List[Dict[str, Any]]
+) -> None:
     """Put visible_when rules into meta of affected fields, and ensure conditional-only fields exist in schema."""
     fields = schema.get("fields") or []
 
@@ -32,17 +54,19 @@ def _inject_conditionals_into_meta(schema: Dict[str, Any], cond: List[Dict[str, 
     by_sig: Dict[str, Dict[str, Any]] = {}
     for f in fields:
         meta = f.get("meta") or {}
-        sig = meta.get("sig") or _sig3(f.get("section", ""), f.get("label", ""), f.get("widget", ""))
+        sig = meta.get("sig") or _sig3(
+            f.get("section", ""), f.get("label", ""), f.get("widget", "")
+        )
         by_sig[sig] = f
 
     # ensure added fields exist
     added_inserted = 0
-    for g in (cond or []):
+    for g in cond or []:
         nav = g.get("nav") or ""
-        for opt in (g.get("options") or []):
+        for opt in g.get("options") or []:
             if opt.get("select_failed"):
                 continue
-            for a in (opt.get("added") or []):
+            for a in opt.get("added") or []:
                 sec = a.get("section") or g.get("section") or nav
                 lab = a.get("label") or ""
                 wid = a.get("widget") or ""
@@ -73,20 +97,23 @@ def _inject_conditionals_into_meta(schema: Dict[str, Any], cond: List[Dict[str, 
 
     # build visible_when rules
     merged_rules = 0
-    for g in (cond or []):
+    for g in cond or []:
         controller = {
             "nav": g.get("nav", ""),
             "section": g.get("section", ""),
             "label": g.get("label", ""),
             "widget": g.get("widget", "radio") or "radio",
-            "field_key": g.get("controller_field_key") or _key4(g.get("nav", ""), g.get("section", ""), g.get("label", ""), "radio"),
+            "field_key": g.get("controller_field_key")
+            or _key4(
+                g.get("nav", ""), g.get("section", ""), g.get("label", ""), "radio"
+            ),
             "ord": g.get("controller_ord"),
         }
-        for opt in (g.get("options") or []):
+        for opt in g.get("options") or []:
             if opt.get("select_failed"):
                 continue
             val = opt.get("value")
-            for a in (opt.get("added") or []):
+            for a in opt.get("added") or []:
                 sec = a.get("section") or g.get("section") or ""
                 lab = a.get("label") or ""
                 wid = a.get("widget") or ""
@@ -100,7 +127,9 @@ def _inject_conditionals_into_meta(schema: Dict[str, Any], cond: List[Dict[str, 
                 vw = meta.get("visible_when") or []
                 rule = {"controller": controller, "value": val, "source": "radio_probe"}
                 js = json.dumps(rule, ensure_ascii=False, sort_keys=True)
-                seen = set(json.dumps(x, ensure_ascii=False, sort_keys=True) for x in vw)
+                seen = set(
+                    json.dumps(x, ensure_ascii=False, sort_keys=True) for x in vw
+                )
                 if js not in seen:
                     vw.append(rule)
                     meta["visible_when"] = vw
@@ -173,7 +202,9 @@ def run_collection(
 
     dump: Dict[str, Any] = {}
 
-    with RieltorSession(creds=creds, headless=headless, slow_mo_ms=slow_mo_ms, debug=debug) as sess:
+    with RieltorSession(
+        creds=creds, headless=headless, slow_mo_ms=slow_mo_ms, debug=debug
+    ) as sess:
         logger.info("Login")
         sess.login()
         page = sess.page
@@ -195,7 +226,9 @@ def run_collection(
             folder_name = deal_type_folders.get(deal_type.lower(), deal_type.lower())
             deal_type_ui = "Продаж" if folder_name == "sell" else "Оренда"
 
-            logger.info("========== DEAL TYPE: %s (%s) ==========", deal_type_ui, folder_name)
+            logger.info(
+                "========== DEAL TYPE: %s (%s) ==========", deal_type_ui, folder_name
+            )
 
             # Create subfolder for this deal type
             out_dir = base_out_dir / folder_name
@@ -255,7 +288,9 @@ def run_collection(
                     filename = f"{_slug(property_type)}.json"
 
                 pt_path = out_dir / filename
-                pt_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                pt_path.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
                 logger.info("Saved schema: %s/%s -> %s", folder_name, filename, pt_path)
 
                 return payload
@@ -283,7 +318,9 @@ def run_collection(
                     page.wait_for_timeout(ui_delay_ms)
 
     combined_path.parent.mkdir(parents=True, exist_ok=True)
-    combined_path.write_text(json.dumps(dump, ensure_ascii=False, indent=2), encoding="utf-8")
+    combined_path.write_text(
+        json.dumps(dump, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     logger.info("Saved combined schema dump: %s", combined_path)
     logger.info("Per-type schemas directory: %s", base_out_dir)
     return str(combined_path)
@@ -292,6 +329,7 @@ def run_collection(
 if __name__ == "__main__":
     try:
         from dotenv import load_dotenv
+
         load_dotenv()
     except Exception:
         pass
@@ -310,7 +348,7 @@ if __name__ == "__main__":
             "Будинок",
             "Комерційна",
             "Ділянка",
-            "Паркомісце"
+            "Паркомісце",
         ],
         deal_types=["sell", "lease"],  # Продаж and Оренда
         headless=False,

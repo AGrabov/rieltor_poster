@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
-from setup_logger import setup_logger
-logger = setup_logger(__name__)
-
 from playwright.sync_api import Locator
 
 from .helpers import _norm, _cf
+
+from setup_logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class _NavigationMixin:
@@ -23,7 +24,9 @@ class _NavigationMixin:
         for i in range(h6s.count()):
             h = h6s.nth(i)
             try:
-                if h.locator("xpath=ancestor::*[@role='dialog' or @role='listbox'][1]").count():
+                if h.locator(
+                    "xpath=ancestor::*[@role='dialog' or @role='listbox'][1]"
+                ).count():
                     continue
             except Exception:
                 pass
@@ -85,7 +88,9 @@ class _NavigationMixin:
 
         box = h6.locator("xpath=ancestor::div[contains(@class,'MuiBox-root')][2]").first
         if not box.count():
-            box = h6.locator("xpath=ancestor::div[contains(@class,'MuiBox-root')][1]").first
+            box = h6.locator(
+                "xpath=ancestor::div[contains(@class,'MuiBox-root')][1]"
+            ).first
         if not box.count():
             return None
 

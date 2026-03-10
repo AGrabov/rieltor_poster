@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+from playwright.sync_api import Locator
+from .helpers import _norm, _cf
 
 from setup_logger import setup_logger
-logger = setup_logger(__name__)
 
-from playwright.sync_api import Locator
-from .helpers import (_norm, _cf)
+logger = setup_logger(__name__)
 
 
 class _CoreMixin:
@@ -32,11 +32,15 @@ class _CoreMixin:
             "xpath=//h5[normalize-space(.)='Нове оголошення' or .//*[normalize-space(.)='Нове оголошення']]"
         ).first
         if h5.count():
-            return h5.locator("xpath=ancestor::div[contains(@class,'MuiBox-root')][1]").first
+            return h5.locator(
+                "xpath=ancestor::div[contains(@class,'MuiBox-root')][1]"
+            ).first
 
         h6 = self.page.locator("h6", has_text="Тип угоди").first
         if h6.count():
-            return h6.locator("xpath=ancestor::div[contains(@class,'MuiBox-root')][4]").first
+            return h6.locator(
+                "xpath=ancestor::div[contains(@class,'MuiBox-root')][4]"
+            ).first
 
         return self.page.locator("css=body")
 
@@ -64,14 +68,18 @@ class _CoreMixin:
         try:
             # Check for blocking overlays, but exclude autocomplete poppers
             dialogs = self.page.locator("css=[role='dialog']:visible").count()
-            listboxes = self.page.locator("css=[role='listbox']:visible:not(#autocomplete-popper *)").count()
+            listboxes = self.page.locator(
+                "css=[role='listbox']:visible:not(#autocomplete-popper *)"
+            ).count()
             ui_overlays = dialogs + listboxes
 
             # Skip overlay check if we're clicking inside a listbox (intentional select operation)
             if ui_overlays and listboxes > 0:
                 try:
                     # Check if the element is inside a listbox (we're intentionally clicking it)
-                    is_inside_listbox = el.locator("xpath=ancestor::*[@role='listbox']").count() > 0
+                    is_inside_listbox = (
+                        el.locator("xpath=ancestor::*[@role='listbox']").count() > 0
+                    )
                     if is_inside_listbox:
                         # Don't close the listbox if we're clicking an element inside it
                         ui_overlays = dialogs  # Only count dialogs as blocking
@@ -79,7 +87,12 @@ class _CoreMixin:
                     pass
 
             if ui_overlays:
-                logger.debug("%d UI overlay visible (dialogs=%d, listboxes=%d): closing with Escape", ui_overlays, dialogs, listboxes)
+                logger.debug(
+                    "%d UI overlay visible (dialogs=%d, listboxes=%d): closing with Escape",
+                    ui_overlays,
+                    dialogs,
+                    listboxes,
+                )
                 try:
                     self.page.keyboard.press("Escape")
                 except Exception:

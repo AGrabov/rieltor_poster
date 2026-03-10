@@ -17,18 +17,18 @@ Usage:
 
 from __future__ import annotations
 
+from setup_logger import init_logging, setup_logger
+
 import argparse
 import json
 import os
 import sys
 from pathlib import Path
 from typing import Optional
-
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from setup_logger import init_logging, setup_logger
 
 init_logging(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -56,6 +56,7 @@ def _normalize_deal_type(value: str) -> Optional[str]:
 
 # ── Phase 1: CRM collection ─────────────────────────────────────────
 
+
 def phase1_collect(
     max_pages: Optional[int] = None,
     max_count: Optional[int] = None,
@@ -69,7 +70,13 @@ def phase1_collect(
     Returns:
         Number of new offers saved.
     """
-    from crm_data_parser import CrmSession, CrmCredentials, EstateListCollector, HTMLOfferParser, download_estate_photos
+    from crm_data_parser import (
+        CrmSession,
+        CrmCredentials,
+        EstateListCollector,
+        HTMLOfferParser,
+        download_estate_photos,
+    )
     from offer_db import OfferDB
 
     crm_email = os.environ.get("CRM_EMAIL", "").strip()
@@ -100,12 +107,24 @@ def phase1_collect(
         if deal_type:
             normalized = _normalize_deal_type(deal_type)
             if normalized:
-                items = [i for i in items if i.deal_type and i.deal_type.lower() == normalized.lower()]
-                logger.info("Filtered by deal_type=%s: %d items", normalized, len(items))
+                items = [
+                    i
+                    for i in items
+                    if i.deal_type and i.deal_type.lower() == normalized.lower()
+                ]
+                logger.info(
+                    "Filtered by deal_type=%s: %d items", normalized, len(items)
+                )
 
         if property_type:
-            items = [i for i in items if i.property_type and i.property_type.lower() == property_type.lower()]
-            logger.info("Filtered by property_type=%s: %d items", property_type, len(items))
+            items = [
+                i
+                for i in items
+                if i.property_type and i.property_type.lower() == property_type.lower()
+            ]
+            logger.info(
+                "Filtered by property_type=%s: %d items", property_type, len(items)
+            )
 
         if max_count:
             items = items[:max_count]
@@ -113,7 +132,12 @@ def phase1_collect(
 
         for idx, item in enumerate(items, 1):
             if db.estate_exists(item.estate_id):
-                logger.info("[%d/%d] Estate %d already in DB, skipping", idx, len(items), item.estate_id)
+                logger.info(
+                    "[%d/%d] Estate %d already in DB, skipping",
+                    idx,
+                    len(items),
+                    item.estate_id,
+                )
                 continue
 
             try:
@@ -127,13 +151,19 @@ def phase1_collect(
                         title=item.title,
                         status="skipped",
                     )
-                    logger.warning("[%d/%d] Estate %d closed, skipped", idx, len(items), item.estate_id)
+                    logger.warning(
+                        "[%d/%d] Estate %d closed, skipped",
+                        idx,
+                        len(items),
+                        item.estate_id,
+                    )
                     continue
 
                 parser = HTMLOfferParser(html, debug=debug)
                 offer_data = parser.parse()
 
                 collector.enrich_with_commission(offer_data, item)
+                collector.enrich_with_responsible_contacts(offer_data)
 
                 # Download photos while CRM session is active
                 article = offer_data.get("article", str(item.estate_id))
@@ -155,11 +185,19 @@ def phase1_collect(
                 saved += 1
                 logger.info(
                     "[%d/%d] Saved estate %d (article=%s)",
-                    idx, len(items), item.estate_id, article,
+                    idx,
+                    len(items),
+                    item.estate_id,
+                    article,
                 )
 
             except Exception:
-                logger.exception("[%d/%d] Failed to process estate %d", idx, len(items), item.estate_id)
+                logger.exception(
+                    "[%d/%d] Failed to process estate %d",
+                    idx,
+                    len(items),
+                    item.estate_id,
+                )
                 db.insert_offer(
                     estate_id=item.estate_id,
                     offer_data={},
@@ -174,6 +212,7 @@ def phase1_collect(
 
 
 # ── Phase 2: Rieltor posting ────────────────────────────────────────
+
 
 def phase2_post(
     publish: bool = False,
@@ -190,7 +229,10 @@ def phase2_post(
     """
     from rieltor_handler import RieltorOfferPoster
     from rieltor_handler.rieltor_session import RieltorErrorPageException
-    from rieltor_handler.new_offer_poster import DictOfferFormFiller, FormValidationError
+    from rieltor_handler.new_offer_poster import (
+        DictOfferFormFiller,
+        FormValidationError,
+    )
     from offer_db import OfferDB
     from crm_data_parser import cleanup_photos
 
@@ -233,7 +275,12 @@ def phase2_post(
 
                     logger.info(
                         "[%d/%d] Posting estate %d (article=%s, %s/%s)...",
-                        idx, len(offers), offer.estate_id, offer.article, dt, pt,
+                        idx,
+                        len(offers),
+                        offer.estate_id,
+                        offer.article,
+                        dt,
+                        pt,
                     )
 
                     # Reconfigure filler for this offer's types
@@ -258,7 +305,8 @@ def phase2_post(
                     if report:
                         logger.warning(
                             "Estate %d posted with validation issues: %s",
-                            offer.estate_id, report,
+                            offer.estate_id,
+                            report,
                         )
                         db.mark_failed(offer.estate_id, report)
                     else:
@@ -270,15 +318,21 @@ def phase2_post(
                     posted += 1
 
                 except FormValidationError as e:
-                    logger.error("Validation error for estate %d: %s", offer.estate_id, e)
+                    logger.error(
+                        "Validation error for estate %d: %s", offer.estate_id, e
+                    )
                     db.mark_failed(offer.estate_id, e.errors)
 
                 except RieltorErrorPageException as e:
-                    logger.error("Rieltor error page for estate %d: %s", offer.estate_id, e)
+                    logger.error(
+                        "Rieltor error page for estate %d: %s", offer.estate_id, e
+                    )
                     db.mark_failed(offer.estate_id, [{"error": str(e)}])
 
                 except Exception:
-                    logger.exception("Unexpected error posting estate %d", offer.estate_id)
+                    logger.exception(
+                        "Unexpected error posting estate %d", offer.estate_id
+                    )
                     db.mark_failed(offer.estate_id, [{"error": "unexpected error"}])
 
     logger.info("Phase 2 complete: %d offers posted", posted)
@@ -286,6 +340,7 @@ def phase2_post(
 
 
 # ── post-one: single offer from JSON ────────────────────────────────
+
 
 def post_single_offer(
     offer_source: str,
@@ -340,12 +395,15 @@ def post_single_offer(
 
 # ── CLI ──────────────────────────────────────────────────────────────
 
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Rieltor offer automation: CRM → parse → post",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("--no-headless", action="store_true", help="Show browser window")
+    parser.add_argument(
+        "--no-headless", action="store_true", help="Show browser window"
+    )
 
     sub = parser.add_subparsers(dest="command")
 
@@ -358,7 +416,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # post
     p_post = sub.add_parser("post", help="Phase 2: post from DB to Rieltor")
-    p_post.add_argument("--publish", action="store_true", help="Publish instead of draft")
+    p_post.add_argument(
+        "--publish", action="store_true", help="Publish instead of draft"
+    )
     p_post.add_argument("--max-count", type=int, help="Max offers to post")
     p_post.add_argument("--deal-type", help="Filter: sell or lease")
     p_post.add_argument("--property-type", help="Filter: Квартира, Будинок, etc.")
@@ -366,7 +426,9 @@ def build_parser() -> argparse.ArgumentParser:
     # post-one
     p_one = sub.add_parser("post-one", help="Post a single offer from JSON")
     p_one.add_argument("source", help="JSON string or path to .json file")
-    p_one.add_argument("--publish", action="store_true", help="Publish instead of draft")
+    p_one.add_argument(
+        "--publish", action="store_true", help="Publish instead of draft"
+    )
 
     return parser
 
@@ -418,6 +480,7 @@ def main() -> None:
 
         # Print summary
         from offer_db import OfferDB
+
         with OfferDB() as db:
             summary = db.summary()
         if summary:

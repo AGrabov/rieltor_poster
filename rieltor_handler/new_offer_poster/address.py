@@ -22,7 +22,9 @@ class AddressMixin:
         """
         mapbox = self.page.locator("css=.mapboxgl-map").first
         if mapbox.count() == 0:
-            return self.page.locator("css=.MuiFormHelperText-root.Mui-error", has_text=self.MAP_ERR_SUBSTR).first
+            return self.page.locator(
+                "css=.MuiFormHelperText-root.Mui-error", has_text=self.MAP_ERR_SUBSTR
+            ).first
 
         container = mapbox.locator(
             "xpath=ancestor::div[contains(@class,'MuiBox-root') and "
@@ -31,9 +33,13 @@ class AddressMixin:
 
         # если почему-то не нашли такой ancestor — fallback на просто внешний MuiBox-root
         if container.count() == 0:
-            container = mapbox.locator("xpath=ancestor::div[contains(@class,'MuiBox-root')][1]").first
+            container = mapbox.locator(
+                "xpath=ancestor::div[contains(@class,'MuiBox-root')][1]"
+            ).first
 
-        return container.locator("css=.MuiFormHelperText-root.Mui-error", has_text=self.MAP_ERR_SUBSTR).first
+        return container.locator(
+            "css=.MuiFormHelperText-root.Mui-error", has_text=self.MAP_ERR_SUBSTR
+        ).first
 
     def _map_error_visible(self) -> bool:
         try:
@@ -47,7 +53,9 @@ class AddressMixin:
         except Exception:
             return False
 
-    def _wait_map_error_state(self, *, want_visible: bool, timeout_ms: int = 5000) -> bool:
+    def _wait_map_error_state(
+        self, *, want_visible: bool, timeout_ms: int = 5000
+    ) -> bool:
         deadline = time.time() + timeout_ms / 1000.0
         while time.time() < deadline:
             vis = self._map_error_visible()
@@ -73,7 +81,11 @@ class AddressMixin:
             try:
                 ctrl = self._find_control_by_label(sec, house_label)
                 if ctrl:
-                    inp = ctrl.locator("css=input").first if ctrl.locator("css=input").count() else ctrl
+                    inp = (
+                        ctrl.locator("css=input").first
+                        if ctrl.locator("css=input").count()
+                        else ctrl
+                    )
                     house = (inp.input_value() or "").strip()
             except Exception:
                 house = ""
@@ -83,7 +95,11 @@ class AddressMixin:
             return
 
         for attempt in range(1, 4):
-            logger.warning("Reselect house_number='%s' to snap map pin to a building (attempt %s/3)", house, attempt)
+            logger.warning(
+                "Reselect house_number='%s' to snap map pin to a building (attempt %s/3)",
+                house,
+                attempt,
+            )
 
             self._fill_autocomplete(sec, house_label, house, force=True)
 
@@ -92,7 +108,9 @@ class AddressMixin:
 
             # иногда помогает клик по маркеру/карте, чтобы пересчитать здание
             try:
-                marker = self.page.locator("css=.mapboxgl-marker[aria-label='Map marker'], .mapboxgl-marker").first
+                marker = self.page.locator(
+                    "css=.mapboxgl-marker[aria-label='Map marker'], .mapboxgl-marker"
+                ).first
                 if marker.count():
                     marker.click(force=True)
             except Exception:
@@ -106,5 +124,3 @@ class AddressMixin:
                 self.page.wait_for_timeout(400)
             except Exception:
                 time.sleep(0.4)
-
-

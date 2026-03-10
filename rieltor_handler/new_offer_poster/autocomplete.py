@@ -22,10 +22,14 @@ class AutocompleteMixin:
         except Exception:
             tag = ""
         if tag in ("input", "textarea"):
-            root = ctrl.locator("xpath=ancestor::*[contains(@class,'MuiAutocomplete-root')][1]").first
+            root = ctrl.locator(
+                "xpath=ancestor::*[contains(@class,'MuiAutocomplete-root')][1]"
+            ).first
             if root.count():
                 return root
-            root = ctrl.locator("xpath=ancestor::*[contains(@class,'MuiFormControl-root')][1]").first
+            root = ctrl.locator(
+                "xpath=ancestor::*[contains(@class,'MuiFormControl-root')][1]"
+            ).first
             if root.count():
                 return root
         return ctrl
@@ -55,7 +59,9 @@ class AutocompleteMixin:
         try:
             input_root = ctrl.locator(".MuiAutocomplete-inputRoot").first
             if input_root.count():
-                txt = " ".join(t.strip() for t in input_root.all_inner_texts() if t.strip()).strip()
+                txt = " ".join(
+                    t.strip() for t in input_root.all_inner_texts() if t.strip()
+                ).strip()
                 if txt:
                     try:
                         label_txt = ""
@@ -217,7 +223,13 @@ class AutocompleteMixin:
                   tick();
                 });
             }""",
-            {"desired": desired, "timeoutMs": timeout_ms, "allowSingle": allow_single_option, "anchor": anchor_box, "isHouse": is_house},
+            {
+                "desired": desired,
+                "timeoutMs": timeout_ms,
+                "allowSingle": allow_single_option,
+                "anchor": anchor_box,
+                "isHouse": is_house,
+            },
         )
 
         if not res or not res.get("ok"):
@@ -264,11 +276,15 @@ class AutocompleteMixin:
         except Exception:
             return False
 
-    def _wait_next_field_visible(self, section: Locator, next_key: str, timeout_ms: int = 5000) -> bool:
+    def _wait_next_field_visible(
+        self, section: Locator, next_key: str, timeout_ms: int = 5000
+    ) -> bool:
         next_label = self._expected_label(next_key) or next_key
         lit = self._xpath_literal(next_label)
         try:
-            section.locator(f"xpath=.//label[contains(normalize-space(.), {lit})]").first.wait_for(
+            section.locator(
+                f"xpath=.//label[contains(normalize-space(.), {lit})]"
+            ).first.wait_for(
                 state="visible",
                 timeout=timeout_ms,
             )
@@ -317,7 +333,11 @@ class AutocompleteMixin:
                 except Exception:
                     cur = ""
                 if cur:
-                    logger.debug("Autocomplete accepted as free-text. desired='%s' current='%s'", desired, cur)
+                    logger.debug(
+                        "Autocomplete accepted as free-text. desired='%s' current='%s'",
+                        desired,
+                        cur,
+                    )
                     return True
             return False
 
@@ -347,10 +367,19 @@ class AutocompleteMixin:
                 return True
 
         if allow_free_text and closed:
-            logger.debug("Autocomplete treated as success by dropdown close (free-text). desired='%s' current='%s'", desired, cur)
+            logger.debug(
+                "Autocomplete treated as success by dropdown close (free-text). desired='%s' current='%s'",
+                desired,
+                cur,
+            )
             return True
 
-        logger.warning("Autocomplete: not confirmed. closed=%s desired='%s' current='%s'", closed, desired, cur)
+        logger.warning(
+            "Autocomplete: not confirmed. closed=%s desired='%s' current='%s'",
+            closed,
+            desired,
+            cur,
+        )
         return False
 
     # -------- fill wrappers --------
@@ -366,10 +395,16 @@ class AutocompleteMixin:
         label = self._expected_label(key) or str(value)
         ctrl = self._find_control_by_label(section, label)
         if not ctrl:
-            logger.warning("Autocomplete control not found for key='%s' label='%s'", key, label)
+            logger.warning(
+                "Autocomplete control not found for key='%s' label='%s'", key, label
+            )
             return
 
-        inp = ctrl.locator("css=input").first if ctrl.locator("css=input").count() else ctrl
+        inp = (
+            ctrl.locator("css=input").first
+            if ctrl.locator("css=input").count()
+            else ctrl
+        )
         desired = ("" if value is None else str(value)).strip()
         if not desired:
             logger.info("Autocomplete skip '%s': empty desired value", key)
@@ -389,6 +424,7 @@ class AutocompleteMixin:
 
             if is_house:
                 import re
+
                 cd = re.sub(r"\D+", "", c)
                 dd = re.sub(r"\D+", "", d)
                 if dd and cd.startswith(dd):
@@ -408,21 +444,26 @@ class AutocompleteMixin:
 
         # SKIP только если НЕ force и текущее значение совпадает с desired
         if (not force) and cur_input and _matches(cur_input):
-            if not next_key or self._wait_next_field_visible(section, next_key, timeout_ms=1200):
+            if not next_key or self._wait_next_field_visible(
+                section, next_key, timeout_ms=1200
+            ):
                 logger.info("Autocomplete skip '%s': already '%s'", key, cur_input)
                 return
 
-        logger.info("Autocomplete fill '%s' = '%s'%s", key, desired, " (force)" if force else "")
+        logger.info(
+            "Autocomplete fill '%s' = '%s'%s", key, desired, " (force)" if force else ""
+        )
 
         # Split house number into digit prefix and the rest (e.g. "20а" → "20", "а")
         import re as _re
+
         _house_digit_prefix = ""
         _house_rest = desired
         if is_house:
-            _m = _re.match(r'\d+', desired)
+            _m = _re.match(r"\d+", desired)
             if _m:
                 _house_digit_prefix = _m.group(0)
-                _house_rest = desired[len(_house_digit_prefix):]
+                _house_rest = desired[len(_house_digit_prefix) :]
 
         def _clear_and_type(text: str | None = None) -> None:
             """Clear input and type text. If text is None, uses full desired value."""
@@ -473,7 +514,9 @@ class AutocompleteMixin:
             try:
                 cur = (inp.input_value() or "").strip()
                 if not cur:
-                    logger.warning("Input empty after typing '%s', retrying with fill()", to_type)
+                    logger.warning(
+                        "Input empty after typing '%s', retrying with fill()", to_type
+                    )
                     try:
                         inp.fill(to_type)
                     except Exception:
@@ -502,13 +545,17 @@ class AutocompleteMixin:
 
         # For house: if digits-only didn't match, type full value and retry
         if is_house and _house_rest:
-            logger.debug("House: digits-only didn't match, typing full value '%s'", desired)
+            logger.debug(
+                "House: digits-only didn't match, typing full value '%s'", desired
+            )
             _clear_and_type(desired)
             if _try_pick():
                 self._mark_touched(inp)
                 return
 
-        logger.debug("Retry autocomplete selection (mouse) for '%s' = '%s'", key, desired)
+        logger.debug(
+            "Retry autocomplete selection (mouse) for '%s' = '%s'", key, desired
+        )
         try:
             inp.press("End")
             inp.type(" ")
@@ -535,12 +582,17 @@ class AutocompleteMixin:
             cur,
         )
 
-
-    def _fill_autocomplete_multi(self, section: Locator, key: str, values: Sequence[str]) -> None:
+    def _fill_autocomplete_multi(
+        self, section: Locator, key: str, values: Sequence[str]
+    ) -> None:
         label = self._expected_label(key) or key
         ctrl = self._find_control_by_label(section, label)
         if not ctrl:
-            logger.warning("Autocomplete(multi) control not found for key=%s (label=%s)", key, label)
+            logger.warning(
+                "Autocomplete(multi) control not found for key=%s (label=%s)",
+                key,
+                label,
+            )
             return
 
         existing: set[str] = set()
@@ -564,10 +616,16 @@ class AutocompleteMixin:
             desired.append(s)
 
         if not desired:
-            logger.info("Autocomplete multi skip %s: nothing to add (already filled)", key)
+            logger.info(
+                "Autocomplete multi skip %s: nothing to add (already filled)", key
+            )
             return
 
-        inp = ctrl.locator("css=input").first if ctrl.locator("css=input").count() else ctrl
+        inp = (
+            ctrl.locator("css=input").first
+            if ctrl.locator("css=input").count()
+            else ctrl
+        )
 
         for v in desired:
             logger.debug("Autocomplete multi add %s -> %s", key, v)

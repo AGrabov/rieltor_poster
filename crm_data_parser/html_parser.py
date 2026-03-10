@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Union
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup
 from crm_data_parser.description_analyzer import DescriptionAnalyzer
 from schemas import load_offer_schema, ADDRESS_LABELS
 
@@ -22,67 +22,75 @@ logger = setup_logger(__name__)
 
 # CRM "Тип угоди" → subfolder inside schemas/schema_dump/
 DEAL_TYPE_TO_FOLDER = {
-    'продаж': 'sell',
-    'оренда': 'lease',
+    "продаж": "sell",
+    "оренда": "lease",
 }
 
 # CRM "Категорія" → schema filename (takes priority over Тип)
 CRM_CATEGORY_TO_SCHEMA = {
-    'комерційна нерухомість': 'Комерційна',
+    "комерційна нерухомість": "Комерційна",
 }
 
 # CRM "Тип" → schema filename (used when category doesn't resolve)
 CRM_TYPE_TO_SCHEMA = {
     # Житлова нерухомість
-    'квартира': 'Квартира',
-    'кімната': 'Кімната',
-    'будинок': 'Будинок',
-    'дім': 'Будинок',
+    "квартира": "Квартира",
+    "кімната": "Кімната",
+    "будинок": "Будинок",
+    "дім": "Будинок",
     # Земля
-    'ділянка': 'Ділянка',
-    'земельна ділянка': 'Ділянка',
+    "ділянка": "Ділянка",
+    "земельна ділянка": "Ділянка",
     # Паркомісце subtypes
-    'гараж': 'Паркомісце_garage',
-    'паркомісце': 'Паркомісце_parking',
-    'паркінг': 'Паркомісце_parking',
+    "гараж": "Паркомісце_garage",
+    "паркомісце": "Паркомісце_parking",
+    "паркінг": "Паркомісце_parking",
     # Комерційна subtypes (fallback if category not matched)
-    'офіс': 'Комерційна',
-    'торговельне': 'Комерційна',
-    'склад': 'Комерційна',
-    'виробництво': 'Комерційна',
+    "офіс": "Комерційна",
+    "торговельне": "Комерційна",
+    "склад": "Комерційна",
+    "виробництво": "Комерційна",
 }
 
 # Fields handled by dedicated extraction methods — skip in generic characteristics loop
-_SKIP_LABELS = frozenset({
-    'категорія', 'тип', 'тип угоди', 'реклама',
-    'посилання на відео',
-})
+_SKIP_LABELS = frozenset(
+    {
+        "категорія",
+        "тип",
+        "тип угоди",
+        "реклама",
+        "закритий/відкритий продаж",
+        "посилання на відео",
+    }
+)
 
 # CRM-internal fields that must NOT end up in the offer dict
-_INTERNAL_LABELS = frozenset({
-    'тип об\'єкту (екс, макл, власник)',
-    'чи платить комісію',
-    'вигрузка на сайт',
-    'ключі',
-    'дата актуалізації',
-    'район (сайт)',
-    'додав співробітник',
-    'відповідальний',
-    'комісія',
-    'джерело',
-    'доданий',
-    'змінений',
-    'активність',
-})
+_INTERNAL_LABELS = frozenset(
+    {
+        "тип об'єкту (екс, макл, власник)",
+        "чи платить комісію",
+        "вигрузка на сайт",
+        "ключі",
+        "дата актуалізації",
+        "район (сайт)",
+        "додав співробітник",
+        "відповідальний",
+        "комісія",
+        "джерело",
+        "доданий",
+        "змінений",
+        "активність",
+    }
+)
 
 # CRM infrastructure title → schema "Поруч є" option mapping
 _INFRA_TO_NEARBY = {
-    'школи': 'Школа',
-    'дитячі садочки': 'Дитсадок',
-    'магазини': 'Супермаркет',
-    'трц': 'Супермаркет',
-    'відпочинок, розваги': 'Розважальні заклади',
-    'фітнес-центри': 'Розважальні заклади',
+    "школи": "Школа",
+    "дитячі садочки": "Дитсадок",
+    "магазини": "Супермаркет",
+    "трц": "Супермаркет",
+    "відпочинок, розваги": "Розважальні заклади",
+    "фітнес-центри": "Розважальні заклади",
 }
 
 
@@ -119,36 +127,40 @@ class HTMLOfferParser:
             path = Path(html_content)
             if path.exists() and path.is_file():
                 logger.info(f"Loading HTML from file: {path}")
-                with open(path, 'r', encoding='utf-8') as f:
+                with open(path, "r", encoding="utf-8") as f:
                     html_str = f.read()
             else:
                 html_str = str(html_content)
         else:
             html_str = str(html_content)
 
-        self.full_soup = BeautifulSoup(html_str, 'html.parser')
-        logger.debug(f"Parsed HTML, title: {self.full_soup.title.string if self.full_soup.title else 'No title'}")
+        self.full_soup = BeautifulSoup(html_str, "html.parser")
+        logger.debug(
+            f"Parsed HTML, title: {self.full_soup.title.string if self.full_soup.title else 'No title'}"
+        )
 
         # Scope to .page-content to ignore navbars, footers, summary-tags, etc.
-        page_content = self.full_soup.select_one('.page-content')
+        page_content = self.full_soup.select_one(".page-content")
         self.soup = page_content if page_content else self.full_soup
 
         # Auto-detect deal type and property type from HTML
         self.deal_type = self._detect_deal_type()
         self.property_type = self._detect_property_type()
-        logger.info(f"Detected deal_type={self.deal_type}, property_type={self.property_type}")
+        logger.info(
+            f"Detected deal_type={self.deal_type}, property_type={self.property_type}"
+        )
 
         # Load schema based on detected types (uses centralized loader)
         self._schema_data = load_offer_schema(self.deal_type, self.property_type)
         self.schema = {
-            'fields': self._schema_data['fields'],
-            'navigation': self._schema_data['navigation'],
+            "fields": self._schema_data["fields"],
+            "navigation": self._schema_data["navigation"],
         }
-        self.label_to_field = self._schema_data['label_to_field']
+        self.label_to_field = self._schema_data["label_to_field"]
         self.required_fields = self._get_required_fields()
 
         # Initialize description analyzer
-        self.analyzer = DescriptionAnalyzer(self.schema['fields'], debug=debug)
+        self.analyzer = DescriptionAnalyzer(self.schema["fields"], debug=debug)
 
         logger.info(
             f"Initialized parser: deal_type={self.deal_type}, "
@@ -165,9 +177,9 @@ class HTMLOfferParser:
             Dict mapping lowercase label → raw value text.
         """
         pairs: Dict[str, str] = {}
-        for table in self.soup.select('table.detail-view'):
-            for row in table.select('tr'):
-                cells = row.select('th, td')
+        for table in self.soup.select("table.detail-view"):
+            for row in table.select("tr"):
+                cells = row.select("th, td")
                 if len(cells) >= 2:
                     label = cells[0].get_text(strip=True).lower()
                     value = cells[1].get_text(strip=True)
@@ -189,19 +201,19 @@ class HTMLOfferParser:
             ValueError: If deal type cannot be determined.
         """
         chars = self._read_characteristics_table()
-        raw = chars.get('тип угоди', '').strip()
+        raw = chars.get("тип угоди", "").strip()
         if raw:
             logger.debug(f"Detected deal_type from table: {raw}")
             return raw
 
         # Fallback: summary title
-        title_elem = self.soup.select_one('.summary-estate-data h4')
+        title_elem = self.soup.select_one(".summary-estate-data h4")
         if title_elem:
             title_text = title_elem.get_text(strip=True).lower()
-            if 'продаж' in title_text:
-                return 'Продаж'
-            if 'оренда' in title_text:
-                return 'Оренда'
+            if "продаж" in title_text:
+                return "Продаж"
+            if "оренда" in title_text:
+                return "Оренда"
 
         raise ValueError(
             "Cannot detect deal type (Тип угоди) from HTML. "
@@ -226,21 +238,21 @@ class HTMLOfferParser:
         chars = self._read_characteristics_table()
 
         # 1. Try category first
-        category = chars.get('категорія', '').lower().strip()
+        category = chars.get("категорія", "").lower().strip()
         if category in CRM_CATEGORY_TO_SCHEMA:
             result = CRM_CATEGORY_TO_SCHEMA[category]
             logger.debug(f"Detected property_type from category '{category}': {result}")
             return result
 
         # 2. Try "Тип" field
-        crm_type = chars.get('тип', '').lower().strip()
+        crm_type = chars.get("тип", "").lower().strip()
         if crm_type in CRM_TYPE_TO_SCHEMA:
             result = CRM_TYPE_TO_SCHEMA[crm_type]
             logger.debug(f"Detected property_type from type '{crm_type}': {result}")
             return result
 
         # 3. Fallback: summary title
-        title_elem = self.soup.select_one('.summary-estate-data h4')
+        title_elem = self.soup.select_one(".summary-estate-data h4")
         if title_elem:
             title_lower = title_elem.get_text(strip=True).lower()
             for crm_name, schema_name in CRM_TYPE_TO_SCHEMA.items():
@@ -262,7 +274,7 @@ class HTMLOfferParser:
         Returns:
             List of required field definitions
         """
-        required = [f for f in self.schema['fields'] if f.get('required', False)]
+        required = [f for f in self.schema["fields"] if f.get("required", False)]
         logger.debug(f"Required fields: {[f['label'] for f in required]}")
         return required
 
@@ -282,10 +294,18 @@ class HTMLOfferParser:
         result["offer_type"] = self.deal_type
         result["property_type"] = self.property_type
 
-        # Extra fields (article, advertising, photo download link)
+        # Extra fields (article, advertising, photo download link, public link, responsible)
         article = self._extract_article()
         if article is not None:
             result["article"] = article
+
+        public_link = self._extract_public_link()
+        if public_link is not None:
+            result["public_link"] = public_link
+
+        responsible = self._extract_responsible_person()
+        if responsible is not None:
+            result["responsible_person"] = responsible
 
         advertising = self._extract_advertising()
         if advertising is not None:
@@ -341,9 +361,22 @@ class HTMLOfferParser:
                 result["apartment"] = {}
             result["apartment"]["description"] = description
 
-        # Estate note → personal_notes (private "Особисті нотатки")
+        # Estate note + extra info → personal_notes (private "Особисті нотатки")
+        notes_parts: list[str] = []
+        if result.get("article"):
+            notes_parts.append(f"Артикул: #{result['article']}")
+        if result.get("public_link"):
+            notes_parts.append(f"CRM: {result['public_link']}")
+        if result.get("responsible_person"):
+            rp = result["responsible_person"]
+            rp_text = f"Відповідальний: {rp['name']}"
+            if rp.get("contacts"):
+                rp_text += f" ({rp['contacts']})"
+            notes_parts.append(rp_text)
         if note:
-            result["personal_notes"] = note
+            notes_parts.append(note)
+        if notes_parts:
+            result["personal_notes"] = "\n".join(notes_parts)
 
         # Analyze description for additional fields
         if description or note:
@@ -360,7 +393,15 @@ class HTMLOfferParser:
 
         missing = self._validate_required_fields(result)
         if missing:
-            logger.warning(f"Missing required fields: {missing}")
+            missing_with_opts = []
+            for label in missing:
+                field = self.label_to_field.get(label.lower().strip())
+                opts = field.get("options", []) if field else []
+                if opts:
+                    missing_with_opts.append(f"{label} (options: {opts})")
+                else:
+                    missing_with_opts.append(label)
+            logger.warning(f"Missing required fields: {missing_with_opts}")
 
         logger.info(f"Parse complete: extracted {len(result)} top-level fields")
         return result
@@ -375,7 +416,7 @@ class HTMLOfferParser:
         """
         result = {}
 
-        price_elem = self.soup.select_one('.price-per-object')
+        price_elem = self.soup.select_one(".price-per-object")
         if price_elem:
             price_text = price_elem.get_text(strip=True)
             amount, currency = self._parse_price(price_text)
@@ -398,13 +439,13 @@ class HTMLOfferParser:
         """
         result = {}
 
-        tables = self.soup.select('table.detail-view')
+        tables = self.soup.select("table.detail-view")
         logger.debug(f"Found {len(tables)} characteristic tables")
 
         for table in tables:
-            rows = table.select('tr')
+            rows = table.select("tr")
             for row in rows:
-                cells = row.select('th, td')
+                cells = row.select("th, td")
                 if len(cells) >= 2:
                     label_text = cells[0].get_text(strip=True)
                     value_text = cells[1].get_text(strip=True)
@@ -422,20 +463,31 @@ class HTMLOfferParser:
                     if label_lower in _INTERNAL_LABELS:
                         continue
 
+                    # Special: "Наявність генератору або інвертору: Так" →
+                    # "Працює без світла": "Резервне живлення квартири (акумулятори)"
+                    if label_lower == "наявність генератору або інвертору":
+                        if value_text.lower() == "так":
+                            result["Працює без світла"] = (
+                                "Резервне живлення квартири (акумулятори)"
+                            )
+                        continue
+
                     # Look up field in schema by HTML label
                     field_info = self._look_up_field_by_html_label(label_text)
 
                     if field_info:
                         # Skip address fields (handled separately)
-                        if field_info['label'].lower().strip() in ADDRESS_LABELS:
+                        if field_info["label"].lower().strip() in ADDRESS_LABELS:
                             continue
 
                         # Use schema label as key
-                        schema_label = field_info['label']
+                        schema_label = field_info["label"]
                         normalized_value = self._normalize_value(field_info, value_text)
                         if normalized_value is not None:
                             result[schema_label] = normalized_value
-                            logger.debug(f"Extracted '{schema_label}'={normalized_value} from HTML label '{label_text}'")
+                            logger.debug(
+                                f"Extracted '{schema_label}'={normalized_value} from HTML label '{label_text}'"
+                            )
                     else:
                         logger.debug(f"No schema match for label: '{label_text}'")
 
@@ -449,12 +501,12 @@ class HTMLOfferParser:
         """
         address = {}
 
-        tables = self.soup.select('table.detail-view')
+        tables = self.soup.select("table.detail-view")
 
         for table in tables:
-            rows = table.select('tr')
+            rows = table.select("tr")
             for row in rows:
-                cells = row.select('th, td')
+                cells = row.select("th, td")
                 if len(cells) >= 2:
                     label_text = cells[0].get_text(strip=True)
                     value_text = cells[1].get_text(strip=True)
@@ -465,35 +517,40 @@ class HTMLOfferParser:
                     # Check if this is an address field
                     field_info = self._look_up_field_by_html_label(label_text)
 
-                    if field_info and field_info['label'].lower().strip() in ADDRESS_LABELS:
-                        schema_label = field_info['label']
+                    if (
+                        field_info
+                        and field_info["label"].lower().strip() in ADDRESS_LABELS
+                    ):
+                        schema_label = field_info["label"]
                         value = value_text
 
                         # Clean up prefixes
                         label_lower = schema_label.lower().strip()
-                        if label_lower == 'вулиця' and value.startswith('вул.'):
-                            value = value.replace('вул.', '').strip()
-                        elif label_lower == 'новобудова' and value.startswith('ЖК '):
-                            value = value.replace('ЖК ', '').strip()
+                        if label_lower == "вулиця" and value.startswith("вул."):
+                            value = value.replace("вул.", "").strip()
+                        elif label_lower == "новобудова" and value.startswith("ЖК "):
+                            value = value.replace("ЖК ", "").strip()
 
                         # Метро and Орієнтир are multi-value
-                        if label_lower in ('метро', 'орієнтир'):
+                        if label_lower in ("метро", "орієнтир"):
                             address[schema_label] = [value]
                         else:
                             address[schema_label] = value
                         logger.debug(f"Extracted address.{schema_label}={value}")
 
         # Fallback: try to extract house number from "Номер будинку" (CRM label)
-        if 'Будинок' not in address:
+        if "Будинок" not in address:
             for table in tables:
-                for row in table.select('tr'):
-                    cells = row.select('th, td')
+                for row in table.select("tr"):
+                    cells = row.select("th, td")
                     if len(cells) >= 2:
                         lbl = cells[0].get_text(strip=True).lower()
                         val = cells[1].get_text(strip=True)
-                        if 'номер будинку' in lbl and val:
-                            address['Будинок'] = val
-                            logger.debug(f"Extracted address.Будинок={val} (from 'Номер будинку')")
+                        if "номер будинку" in lbl and val:
+                            address["Будинок"] = val
+                            logger.debug(
+                                f"Extracted address.Будинок={val} (from 'Номер будинку')"
+                            )
                             break
 
         return address if address else {}
@@ -506,32 +563,32 @@ class HTMLOfferParser:
         """
         result = {}
 
-        property_values = self.soup.select('.summary-property-value')
+        property_values = self.soup.select(".summary-property-value")
 
         if len(property_values) >= 3:
             # First value: rooms
             rooms_text = property_values[0].get_text(strip=True)
             if rooms_text.isdigit():
-                rooms_field = self.label_to_field.get('число кімнат')
+                rooms_field = self.label_to_field.get("число кімнат")
                 if rooms_field:
-                    result['Число кімнат'] = self._normalize_rooms(
-                        rooms_text, rooms_field.get('options', [])
+                    result["Число кімнат"] = self._normalize_rooms(
+                        rooms_text, rooms_field.get("options", [])
                     )
 
             # Second value: floor / total floors
             floor_text = property_values[1].get_text(strip=True)
-            match = re.match(r'(\d+)\s*/\s*(\d+)', floor_text)
+            match = re.match(r"(\d+)\s*/\s*(\d+)", floor_text)
             if match:
-                result['Поверх'] = match.group(1)
-                result['Поверховість'] = match.group(2)
+                result["Поверх"] = match.group(1)
+                result["Поверховість"] = match.group(2)
 
             # Third value: areas (total / living / kitchen)
             area_text = property_values[2].get_text(strip=True)
-            match = re.match(r'([\d.]+)\s*/\s*([\d.]+)\s*/\s*([\d.]+)', area_text)
+            match = re.match(r"([\d.]+)\s*/\s*([\d.]+)\s*/\s*([\d.]+)", area_text)
             if match:
-                result['Загальна площа, м²'] = match.group(1)
-                result['Житлова площа, м²'] = match.group(2)
-                result['Площа кухні, м²'] = match.group(3)
+                result["Загальна площа, м²"] = match.group(1)
+                result["Житлова площа, м²"] = match.group(2)
+                result["Площа кухні, м²"] = match.group(3)
 
             logger.debug(f"Extracted summary stats: {result}")
 
@@ -546,20 +603,16 @@ class HTMLOfferParser:
         photos = []
 
         # Find all photo links
-        photo_links = self.soup.select('.slider-item.fancybox')
+        photo_links = self.soup.select(".slider-item.fancybox")
         for link in photo_links:
-            href = link.get('href')
+            href = link.get("href")
             if href:
                 photos.append(href)
 
         logger.debug(f"Extracted {len(photos)} photos")
 
         if photos:
-            return {
-                "apartment": {
-                    "photos": photos
-                }
-            }
+            return {"apartment": {"photos": photos}}
         return {}
 
     def _extract_description(self) -> str:
@@ -569,10 +622,10 @@ class HTMLOfferParser:
             Description text or empty string
         """
         # Look for "Додаткова інформація" section
-        for elem in self.soup.find_all(['h3', 'h4']):
-            if 'додаткова інформація' in elem.get_text(strip=True).lower():
+        for elem in self.soup.find_all(["h3", "h4"]):
+            if "додаткова інформація" in elem.get_text(strip=True).lower():
                 # Get next paragraph or div
-                next_elem = elem.find_next('p')
+                next_elem = elem.find_next("p")
                 if next_elem:
                     text = next_elem.get_text(strip=True)
                     logger.debug(f"Extracted description: {len(text)} chars")
@@ -586,7 +639,7 @@ class HTMLOfferParser:
         Returns:
             Note text or empty string
         """
-        note_elem = self.soup.select_one('.estate-note span')
+        note_elem = self.soup.select_one(".estate-note span")
         if note_elem:
             text = note_elem.get_text(strip=True)
             logger.debug(f"Extracted estate note: {text}")
@@ -599,21 +652,72 @@ class HTMLOfferParser:
         Returns:
             Article number string (without '#') or None.
         """
-        elem = self.soup.select_one('.article-label')
+        elem = self.soup.select_one(".article-label")
         if elem:
-            text = elem.get_text(strip=True).lstrip('#')
+            text = elem.get_text(strip=True).lstrip("#")
             logger.debug(f"Extracted article: {text}")
             return text
+        return None
+
+    def _extract_public_link(self) -> Optional[str]:
+        """Extract public link from input#public-view.
+
+        Returns:
+            Public URL string or None.
+        """
+        inp = self.soup.select_one("input#public-view")
+        if inp:
+            value = inp.get("value", "").strip()
+            if value:
+                logger.debug(f"Extracted public link: {value}")
+                return value
+        return None
+
+    def _extract_responsible_person(self) -> Optional[Dict[str, str]]:
+        """Extract responsible person name and profile link from 'Службова інформація'.
+
+        Returns:
+            Dict with 'name' and 'profile_url' keys, or None.
+        """
+        # Find the "Службова інформація" section
+        for h3 in self.soup.find_all("h3", class_="item-relation-header"):
+            if "службова інформація" in h3.get_text(strip=True).lower():
+                section = h3.find_parent("div", class_="item-relation")
+                if not section:
+                    continue
+                # Look for "Відповідальний" row
+                for row in section.select("table.detail-view tr"):
+                    th = row.select_one("th")
+                    td = row.select_one("td")
+                    if (
+                        th
+                        and td
+                        and "відповідальний" in th.get_text(strip=True).lower()
+                    ):
+                        link = td.select_one("a")
+                        if link:
+                            name = link.get_text(strip=True)
+                            href = link.get("href", "")
+                            logger.debug(f"Extracted responsible: {name} ({href})")
+                            return {"name": name, "profile_url": href}
+                        else:
+                            name = td.get_text(strip=True)
+                            if name:
+                                logger.debug(f"Extracted responsible (no link): {name}")
+                                return {"name": name, "profile_url": ""}
         return None
 
     def _extract_advertising(self) -> Optional[str]:
         """Extract advertising permission from characteristics table.
 
+        Checks both the new CRM label "Закритий/відкритий продаж"
+        and the legacy label "Реклама".
+
         Returns:
-            Advertising text (e.g. "Можна рекламувати") or None.
+            Advertising text (e.g. "Відкритий продаж можна рекламувати") or None.
         """
         chars = self._read_characteristics_table()
-        value = chars.get('реклама')
+        value = chars.get("закритий/відкритий продаж") or chars.get("реклама")
         if value:
             logger.debug(f"Extracted advertising: {value}")
         return value
@@ -626,7 +730,7 @@ class HTMLOfferParser:
         """
         link = self.soup.select_one('a[href*="download-all-watermark-images"]')
         if link:
-            href = link.get('href')
+            href = link.get("href")
             logger.debug(f"Extracted photo download link: {href}")
             return href
         return None
@@ -637,21 +741,21 @@ class HTMLOfferParser:
         Returns:
             Video URL string or None.
         """
-        for table in self.soup.select('table.detail-view'):
-            for row in table.select('tr'):
-                cells = row.select('th, td')
+        for table in self.soup.select("table.detail-view"):
+            for row in table.select("tr"):
+                cells = row.select("th, td")
                 if len(cells) >= 2:
                     label = cells[0].get_text(strip=True).lower().strip()
-                    if label == 'посилання на відео':
-                        link = cells[1].select_one('a')
+                    if label == "посилання на відео":
+                        link = cells[1].select_one("a")
                         if link:
-                            href = link.get('href', '').strip()
+                            href = link.get("href", "").strip()
                             if href:
                                 logger.debug(f"Extracted video URL: {href}")
                                 return href
                         # Fallback: plain text URL
                         text = cells[1].get_text(strip=True)
-                        if text.startswith('http'):
+                        if text.startswith("http"):
                             logger.debug(f"Extracted video URL (text): {text}")
                             return text
         return None
@@ -662,14 +766,14 @@ class HTMLOfferParser:
         Returns:
             List of matched schema option values, or None.
         """
-        infra_div = self.soup.select_one('.infrastructures.clearfix')
+        infra_div = self.soup.select_one(".infrastructures.clearfix")
         if not infra_div:
             return None
 
         # Collect unique infrastructure titles
         titles: set = set()
-        for item in infra_div.select('.infrastructure'):
-            title_elem = item.select_one('.infrastructure-title')
+        for item in infra_div.select(".infrastructure"):
+            title_elem = item.select_one(".infrastructure-title")
             if title_elem:
                 titles.add(title_elem.get_text(strip=True).lower())
 
@@ -684,9 +788,9 @@ class HTMLOfferParser:
                 matched.append(option)
 
         # Also check schema options directly (e.g. "Парк" in title)
-        field_info = self.label_to_field.get('поруч є')
+        field_info = self.label_to_field.get("поруч є")
         if field_info:
-            schema_options = field_info.get('options', [])
+            schema_options = field_info.get("options", [])
             for option in schema_options:
                 if option in matched:
                     continue
@@ -713,27 +817,27 @@ class HTMLOfferParser:
         Returns:
             Normalized value appropriate for the field type
         """
-        widget = field_info.get('widget', '')
-        options = field_info.get('options', [])
+        widget = field_info.get("widget", "")
+        options = field_info.get("options", [])
 
         # Handle select/radio - match against options
-        if widget in ['select', 'radio'] and options:
+        if widget in ["select", "radio"] and options:
             matched = self._normalize_select_option(raw_value, options)
             return matched
 
         # Handle checkbox
-        if widget == 'checkbox':
-            return raw_value.lower() in ['так', 'yes', 'є', 'true', '1']
+        if widget == "checkbox":
+            return raw_value.lower() in ["так", "yes", "є", "true", "1"]
 
         # Handle numeric text
-        if widget == 'text':
-            input_type = field_info.get('meta', {}).get('input_type', '')
-            if input_type == 'number':
+        if widget == "text":
+            input_type = field_info.get("meta", {}).get("input_type", "")
+            if input_type == "number":
                 # Try to parse as number
                 try:
-                    if '.' in raw_value:
-                        return float(raw_value.replace(',', '.'))
-                    return int(raw_value.replace(' ', '').replace(',', ''))
+                    if "." in raw_value:
+                        return float(raw_value.replace(",", "."))
+                    return int(raw_value.replace(" ", "").replace(",", ""))
                 except ValueError:
                     pass
 
@@ -763,10 +867,21 @@ class HTMLOfferParser:
                 return option
 
         # Special handling for condition field
-        if any(word in text_lower for word in ['дизайн', 'євроремонт', 'ремонт']):
-            for option in options:
-                if 'з ремонтом' in option.lower():
-                    return option
+        import re as _re
+
+        if any(word in text_lower for word in ["дизайн", "євроремонт", "ремонт"]):
+            if _re.search(r"без\s*ремонт", text_lower):
+                for option in options:
+                    if "без ремонт" in option.lower():
+                        return option
+            elif "частков" in text_lower:
+                for option in options:
+                    if "частков" in option.lower():
+                        return option
+            else:
+                for option in options:
+                    if "з ремонтом" in option.lower():
+                        return option
 
         # No match found, return original
         return text
@@ -786,7 +901,7 @@ class HTMLOfferParser:
             num = int(text)
         except ValueError:
             # Try to extract number from text
-            match = re.search(r'\d+', text)
+            match = re.search(r"\d+", text)
             if match:
                 num = int(match.group())
             else:
@@ -794,7 +909,9 @@ class HTMLOfferParser:
 
         # Match against options
         for option in options:
-            if str(num) in option and ('кімнат' in option or 'кімнати' in option or 'кімната' in option):
+            if str(num) in option and (
+                "кімнат" in option or "кімнати" in option or "кімната" in option
+            ):
                 return option
 
         # Fallback: generate standard format
@@ -815,10 +932,10 @@ class HTMLOfferParser:
             Tuple of (amount, currency_text)
         """
         # Remove spaces and find number
-        text_clean = text.replace(' ', '').replace(',', '')
+        text_clean = text.replace(" ", "").replace(",", "")
 
         # Extract number
-        match = re.search(r'([\d.]+)', text_clean)
+        match = re.search(r"([\d.]+)", text_clean)
         if not match:
             return None, None
 
@@ -829,12 +946,12 @@ class HTMLOfferParser:
 
         # Detect currency
         currency = None
-        if '$' in text or 'dollar' in text.lower():
-            currency = 'доларів'
-        elif '€' in text or 'euro' in text.lower():
-            currency = 'євро'
-        elif 'грн' in text or '₴' in text or 'uah' in text.lower():
-            currency = 'гривень'
+        if "$" in text or "dollar" in text.lower():
+            currency = "доларів"
+        elif "€" in text or "euro" in text.lower():
+            currency = "євро"
+        elif "грн" in text or "₴" in text or "uah" in text.lower():
+            currency = "гривень"
 
         return amount, currency
 
@@ -854,13 +971,14 @@ class HTMLOfferParser:
 
         # HTML label → Schema label mapping
         html_to_schema = {
-            'ремонт': 'загальний стан',
-            'площа загальна,м²': 'загальна площа, м²',
-            'площа житлова,м²': 'житлова площа, м²',
-            'площа кухні,м²': 'площа кухні, м²',
-            'кіл. кімнат': 'число кімнат',
-            'номер будинку': 'будинок',
-            'жилий комплекс': 'новобудова',
+            "ремонт": "загальний стан",
+            "площа загальна,м²": "загальна площа, м²",
+            "площа житлова,м²": "житлова площа, м²",
+            "площа кухні,м²": "площа кухні, м²",
+            "кіл. кімнат": "число кімнат",
+            "номер будинку": "будинок",
+            "жилий комплекс": "новобудова",
+            "є оселя": "власник погоджується продати по програмі єоселя",
         }
 
         # Try direct lookup first
@@ -889,7 +1007,7 @@ class HTMLOfferParser:
         missing = []
 
         for field in self.required_fields:
-            label = field['label']
+            label = field["label"]
             label_lower = label.lower().strip()
 
             # Check if label key exists in data
@@ -898,7 +1016,11 @@ class HTMLOfferParser:
 
             # Check in nested address (for address fields)
             if label_lower in ADDRESS_LABELS:
-                if 'address' in data and label in data['address'] and data['address'][label]:
+                if (
+                    "address" in data
+                    and label in data["address"]
+                    and data["address"][label]
+                ):
                     continue
 
             missing.append(label)
@@ -915,25 +1037,27 @@ class HTMLOfferParser:
             Data with defaults filled
         """
         # Ensure address dict exists
-        if 'address' not in data:
-            data['address'] = {}
+        if "address" not in data:
+            data["address"] = {}
 
         # Default currency if price exists but currency doesn't
-        if 'Ціна' in data and not data.get('Валюта'):
-            data['Валюта'] = 'доларів'
+        if "Ціна" in data and not data.get("Валюта"):
+            data["Валюта"] = "доларів"
             logger.debug("Defaulted Валюта to 'доларів'")
 
         # Fallback: living area ≈ total area - (1.4 × kitchen area)
         # The multiplier accounts for corridors, hallways, bathrooms, etc.
-        if not data.get('Житлова площа, м²'):
-            total = data.get('Загальна площа, м²')
-            kitchen = data.get('Площа кухні, м²')
+        if not data.get("Житлова площа, м²"):
+            total = data.get("Загальна площа, м²")
+            kitchen = data.get("Площа кухні, м²")
             if total and kitchen:
                 try:
                     living = round(float(total) - 1.4 * float(kitchen), 1)
                     if living > 0:
-                        data['Житлова площа, м²'] = str(living)
-                        logger.debug(f"Calculated Житлова площа: {total} - 1.4*{kitchen} = {living}")
+                        data["Житлова площа, м²"] = str(living)
+                        logger.debug(
+                            f"Calculated Житлова площа: {total} - 1.4*{kitchen} = {living}"
+                        )
                 except (ValueError, TypeError):
                     pass
 

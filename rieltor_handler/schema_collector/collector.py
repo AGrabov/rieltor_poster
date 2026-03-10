@@ -13,7 +13,6 @@ from ._widget import _WidgetMixin
 from ._collector_base import _CollectorBase
 
 
-
 class OfferCreateSchemaCollector(
     _CollectorBase,
     _CoreMixin,

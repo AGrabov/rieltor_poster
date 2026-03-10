@@ -21,6 +21,7 @@ DB_PATH = Path(__file__).parent / "offers.db"
 @dataclass
 class OfferRecord:
     """Single offer row from the database."""
+
     id: int
     estate_id: int
     article: Optional[str]
@@ -169,7 +170,9 @@ class OfferDB:
             (rieltor_offer_id, estate_id),
         )
         self.conn.commit()
-        logger.info("Marked estate %d as posted (rieltor_id=%s)", estate_id, rieltor_offer_id)
+        logger.info(
+            "Marked estate %d as posted (rieltor_id=%s)", estate_id, rieltor_offer_id
+        )
 
     def mark_failed(self, estate_id: int, errors: Any) -> None:
         self.conn.execute(

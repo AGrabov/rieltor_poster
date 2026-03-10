@@ -1,18 +1,22 @@
 from __future__ import annotations
 
-from setup_logger import setup_logger
-logger = setup_logger(__name__)
 
 from playwright.sync_api import Locator
 
 from .helpers import _norm, _cf
+
+from setup_logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class _LabelMixin:
     # ---------------- labels / required ----------------
     def _nearest_h6_title(self, node: Locator) -> str:
         try:
-            sec = node.locator("xpath=ancestor::div[contains(@class,'MuiBox-root')][.//h6][1]").first
+            sec = node.locator(
+                "xpath=ancestor::div[contains(@class,'MuiBox-root')][.//h6][1]"
+            ).first
             h6 = sec.locator("css=h6").first
             if h6.count():
                 return _norm(h6.inner_text() or "")
@@ -32,7 +36,9 @@ class _LabelMixin:
     def _radiogroup_title_from_rg(self, rg: Locator) -> str:
         # 1) label.MuiFormLabel-root near radiogroup
         try:
-            wrap = rg.locator("xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]").first
+            wrap = rg.locator(
+                "xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]"
+            ).first
             if wrap.count():
                 lab = wrap.locator("css=label.MuiFormLabel-root").first
                 if lab.count():
@@ -89,7 +95,9 @@ class _LabelMixin:
                 return t
 
         try:
-            lab = form.locator("css=label.MuiInputLabel-root, label.MuiFormLabel-root").first
+            lab = form.locator(
+                "css=label.MuiInputLabel-root, label.MuiFormLabel-root"
+            ).first
             if lab.count():
                 t = _norm(lab.inner_text() or "").replace("*", "").strip()
                 if t:
@@ -101,7 +109,7 @@ class _LabelMixin:
             labs = form.locator("css=label")
             for i in range(labs.count()):
                 lab = labs.nth(i)
-                cls = (lab.get_attribute("class") or "")
+                cls = lab.get_attribute("class") or ""
                 if "MuiFormControlLabel-root" in cls:
                     continue
                 t = _norm(lab.inner_text() or "").replace("*", "").strip()
@@ -114,7 +122,10 @@ class _LabelMixin:
 
     def _label_text_labelcontrol(self, label_el: Locator) -> str:
         try:
-            t = _norm(label_el.locator("css=span.MuiFormControlLabel-label").inner_text() or "")
+            t = _norm(
+                label_el.locator("css=span.MuiFormControlLabel-label").inner_text()
+                or ""
+            )
             if t:
                 return t
         except Exception:

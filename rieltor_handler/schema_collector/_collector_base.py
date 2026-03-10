@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
-import logging
-
-from setup_logger import setup_logger
-logger = setup_logger(__name__)
+from typing import Dict, List
 
 from playwright.sync_api import Page
 
+from setup_logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class _CollectorBase:

@@ -18,9 +18,17 @@ class FieldExtractor:
 
     # Options that are too generic to match without context
     AMBIGUOUS_OPTIONS = {
-        "є", "немає", "так", "ні",
-        "1", "2", "3", "4", "5",
-        "нормальний", "нові",
+        "є",
+        "немає",
+        "так",
+        "ні",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "нормальний",
+        "нові",
     }
 
     # Specific field extraction patterns with context
@@ -56,7 +64,10 @@ class FieldExtractor:
             (r"блочн\w+", "Блочна"),
         ],
         "загальний стан": [
-            (r"(?:з\s+)?ремонт(?:ом|у)|після\s+ремонту|авторськ\w+\s+ремонт", "З ремонтом"),
+            (
+                r"(?:з\s+)?ремонт(?:ом|у)|після\s+ремонту|авторськ\w+\s+ремонт",
+                "З ремонтом",
+            ),
             (r"без\s+ремонту", "Без ремонту"),
             (r"частков\w+\s+ремонт", "Частковий ремонт"),
         ],
@@ -190,11 +201,17 @@ class FieldExtractor:
         # Area patterns - handle various formats
         # Format: "Загальна площа 45 м.кв." or "45 м²"
         area_patterns = [
-            (r"загальн\w*\s+площ\w*[:\s-]*(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?|кв\.?\s*м)", "загальна площа, м²"),
+            (
+                r"загальн\w*\s+площ\w*[:\s-]*(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?|кв\.?\s*м)",
+                "загальна площа, м²",
+            ),
             (r"(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?)\s*загальн", "загальна площа, м²"),
             (r"житлов\w*\s+площ\w*[:\s-]*(\d+[.,]?\d*)", "житлова площа, м²"),
             (r"площ\w*\s+кухн\w*[:\s-]*(\d+[.,]?\d*)", "площа кухні, м²"),
-            (r"кухн\w*[:\s-]*(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?|кв\.?\s*м)?", "площа кухні, м²"),
+            (
+                r"кухн\w*[:\s-]*(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?|кв\.?\s*м)?",
+                "площа кухні, м²",
+            ),
         ]
 
         for pattern, field_name in area_patterns:
@@ -239,8 +256,12 @@ class FieldExtractor:
                     if match:
                         num = match.group(1)
                         room_map = {
-                            "1": "1 кімната", "2": "2 кімнати", "3": "3 кімнати",
-                            "4": "4 кімнати", "5": "5 кімнат", "6": "6 кімнат і більше"
+                            "1": "1 кімната",
+                            "2": "2 кімнати",
+                            "3": "3 кімнати",
+                            "4": "4 кімнати",
+                            "5": "5 кімнат",
+                            "6": "6 кімнат і більше",
                         }
                         extracted["число кімнат"] = room_map.get(num, f"{num} кімнат")
                 elif re.search(pattern, text_lower):
@@ -329,14 +350,26 @@ class FieldExtractor:
                 break
 
         # City - common Ukrainian cities
-        cities = ["київ", "харків", "одеса", "дніпро", "львів", "запоріжжя", "кривий ріг"]
+        cities = [
+            "київ",
+            "харків",
+            "одеса",
+            "дніпро",
+            "львів",
+            "запоріжжя",
+            "кривий ріг",
+        ]
         for city in cities:
             if city in text_lower:
                 extracted["місто"] = city.capitalize()
                 break
 
         # Metro station - capture only the station name (one or two words, stop at punctuation or conjunctions)
-        metro_match = re.search(r"метро\s+([А-ЯІЇЄҐа-яіїєґ']+(?:[-\s][А-ЯІЇЄҐа-яіїєґ']+)?)", text, re.IGNORECASE)
+        metro_match = re.search(
+            r"метро\s+([А-ЯІЇЄҐа-яіїєґ']+(?:[-\s][А-ЯІЇЄҐа-яіїєґ']+)?)",
+            text,
+            re.IGNORECASE,
+        )
         if metro_match:
             metro = metro_match.group(1).strip()
             # Remove trailing conjunctions
@@ -346,12 +379,18 @@ class FieldExtractor:
         # Residential complex (ЖК) - capture only the name, stop at common words
         jk_match = re.search(
             r"(?:жк|житлов\w+\s+комплекс)\s+[«\"']?([A-Za-zА-ЯІЇЄҐа-яіїєґ]+(?:\s+[A-Za-zА-ЯІЇЄҐа-яіїєґ]+)?)[»\"']?",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if jk_match:
             jk_name = jk_match.group(1).strip()
             # Remove trailing common words
-            jk_name = re.sub(r"\s+(є|це|має|знаходиться|розташован).*$", "", jk_name, flags=re.IGNORECASE)
+            jk_name = re.sub(
+                r"\s+(є|це|має|знаходиться|розташован).*$",
+                "",
+                jk_name,
+                flags=re.IGNORECASE,
+            )
             if jk_name and jk_name.lower() not in {"є", "це", "має"}:
                 extracted["новобудова"] = jk_name
 
@@ -405,7 +444,8 @@ class FieldExtractor:
 if __name__ == "__main__":
     import sys
     import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
     # Example usage
     extractor = FieldExtractor("Квартира")

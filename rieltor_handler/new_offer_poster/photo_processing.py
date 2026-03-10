@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import tempfile
-import shutil
 import logging
 from typing import List
 
@@ -51,7 +50,7 @@ def prepare_photos(paths: List[str]) -> List[str]:
 
 
 def _prepare_single_photo(src: str) -> str | None:
-    ext = os.path.splitext(src)[1].lower()
+    # ext = os.path.splitext(src)[1].lower()
 
     # Открываем изображение
     with Image.open(src) as img:
@@ -62,7 +61,11 @@ def _prepare_single_photo(src: str) -> str | None:
         if width < MIN_WIDTH or height < MIN_HEIGHT:
             logger.info(
                 "Resizing photo %s from %sx%s to minimum %sx%s",
-                src, width, height, MIN_WIDTH, MIN_HEIGHT
+                src,
+                width,
+                height,
+                MIN_WIDTH,
+                MIN_HEIGHT,
             )
             img = _resize_to_minimum(img)
 
@@ -74,11 +77,7 @@ def _prepare_single_photo(src: str) -> str | None:
         _save_with_size_limit(img, out_path)
 
         size = os.path.getsize(out_path)
-        logger.info(
-            "Prepared photo: %s (%.2f MB)",
-            out_path,
-            size / 1024 / 1024
-        )
+        logger.info("Prepared photo: %s (%.2f MB)", out_path, size / 1024 / 1024)
 
         return out_path
 
@@ -111,14 +110,10 @@ def _save_with_size_limit(img: Image.Image, path: str) -> None:
 
     # Последняя попытка — сохраняем как есть
     img.save(path, format="JPEG", quality=60, optimize=True)
-    logger.warning(
-        "Photo saved with minimal quality but still large: %s",
-        path
-    )
+    logger.warning("Photo saved with minimal quality but still large: %s", path)
 
 
 def _output_name(src: str) -> str:
     base = os.path.basename(src)
     name, _ = os.path.splitext(base)
     return f"{name}.jpg"
-

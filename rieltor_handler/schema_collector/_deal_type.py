@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from setup_logger import setup_logger
-logger = setup_logger(__name__)
-
 from .helpers import _cf
+from setup_logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class _DealTypeMixin:
@@ -40,7 +40,9 @@ class _DealTypeMixin:
 
         # Find all deal type options (divs with span inside)
         target = _cf(ui_text)
-        options = sec.locator("xpath=.//div[contains(@class,'MuiBox-root')]//span[normalize-space()]")
+        options = sec.locator(
+            "xpath=.//div[contains(@class,'MuiBox-root')]//span[normalize-space()]"
+        )
 
         chosen = None
         for i in range(options.count()):
@@ -76,7 +78,9 @@ class _DealTypeMixin:
                 "xpath=.//h6[normalize-space(.)='Тип угоди']/ancestor::div[contains(@class,'MuiBox-root')][2]"
             ).first
             # Find selected option (has '-selected' class)
-            selected = sec.locator("xpath=.//div[contains(@class,'-selected')]//span[normalize-space()]").first
+            selected = sec.locator(
+                "xpath=.//div[contains(@class,'-selected')]//span[normalize-space()]"
+            ).first
             if selected.count():
                 return selected.inner_text().strip()
         except Exception:

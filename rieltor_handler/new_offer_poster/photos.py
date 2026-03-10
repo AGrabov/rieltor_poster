@@ -73,14 +73,18 @@ class PhotosMixin:
 
         return False
 
-    def _fill_text_in_photo_section(self, sec: Locator, ui_label: str, value: str) -> None:
+    def _fill_text_in_photo_section(
+        self, sec: Locator, ui_label: str, value: str
+    ) -> None:
         value = (value or "").strip()
         if not value:
             return
 
         ctrl = self._find_control_by_label(sec, ui_label)
         if not ctrl:
-            logger.debug("PhotoBlock: control not found for label='%s' (skip)", ui_label)
+            logger.debug(
+                "PhotoBlock: control not found for label='%s' (skip)", ui_label
+            )
             return
 
         # если это wrapper — берём input/textarea
@@ -140,7 +144,9 @@ class PhotosMixin:
             return imgs
 
         try:
-            bg = sec.locator("xpath=.//*[@style and contains(@style,'background-image')]").count()
+            bg = sec.locator(
+                "xpath=.//*[@style and contains(@style,'background-image')]"
+            ).count()
         except Exception:
             bg = 0
 
@@ -227,7 +233,9 @@ class PhotosMixin:
             expected_added,
         )
 
-    def _upload_photos_in_photo_section(self, sec: Locator, photo_paths: List[str]) -> None:
+    def _upload_photos_in_photo_section(
+        self, sec: Locator, photo_paths: List[str]
+    ) -> None:
         paths = [str(p).strip() for p in (photo_paths or []) if str(p).strip()]
         if not paths:
             return
@@ -247,7 +255,9 @@ class PhotosMixin:
 
         before = self._count_photo_previews(sec)
 
-        logger.info("PhotoBlock: uploading %d photos (before=%d)", len(prepared), before)
+        logger.info(
+            "PhotoBlock: uploading %d photos (before=%d)", len(prepared), before
+        )
         try:
             file_input.set_input_files(prepared)
 
@@ -257,7 +267,9 @@ class PhotosMixin:
                 pass
 
             # ждём, пока появятся превью и пропадут прогрессы
-            self._wait_photos_uploaded(sec, before_count=before, expected_added=len(prepared))
+            self._wait_photos_uploaded(
+                sec, before_count=before, expected_added=len(prepared)
+            )
 
         except Exception:
             logger.exception("PhotoBlock: failed uploading photos")

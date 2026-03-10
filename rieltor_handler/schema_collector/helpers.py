@@ -20,9 +20,16 @@ def _xpath_literal(s: str) -> str:
     if '"' not in s:
         return f'"{s}"'
     parts = s.split("'")
-    return "concat(" + ", ".join(
-        [f"'{p}'" if i == len(parts) - 1 else f"'{p}', \"'\"" for i, p in enumerate(parts)]
-    ) + ")"
+    return (
+        "concat("
+        + ", ".join(
+            [
+                f"'{p}'" if i == len(parts) - 1 else f"'{p}', \"'\""
+                for i, p in enumerate(parts)
+            ]
+        )
+        + ")"
+    )
 
 
 def _key4(nav: str, section: str, label: str, widget: str) -> str:

@@ -52,13 +52,22 @@ def download_estate_photos(
                 filepath = dest_dir / filename
                 filepath.write_bytes(response.body())
                 local_paths.append(str(filepath))
-                logger.debug("Downloaded photo %d/%d: %s", i + 1, len(photo_urls), filename)
+                logger.debug(
+                    "Downloaded photo %d/%d: %s", i + 1, len(photo_urls), filename
+                )
             else:
-                logger.warning("Failed to download %s: HTTP %d", full_url, response.status)
+                logger.warning(
+                    "Failed to download %s: HTTP %d", full_url, response.status
+                )
         except Exception:
             logger.exception("Error downloading photo: %s", full_url)
 
-    logger.info("Downloaded %d/%d photos for article %s", len(local_paths), len(photo_urls), article)
+    logger.info(
+        "Downloaded %d/%d photos for article %s",
+        len(local_paths),
+        len(photo_urls),
+        article,
+    )
     return local_paths
 
 

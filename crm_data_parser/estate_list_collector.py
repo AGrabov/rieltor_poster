@@ -29,7 +29,7 @@ from setup_logger import setup_logger
 
 logger = setup_logger(__name__)
 
-CRM_BASE_URL = "https://crm-primes.realtsoft.net"
+CRM_BASE_URL = "https://crm-capital.realtsoft.net"
 
 # Default commission settings (value + unit)
 # Unit options from schema: "%", "гривнях", "долларах"
@@ -38,9 +38,11 @@ COMMISSION_SALE_UNIT = os.getenv("COMMISSION_SALE_UNIT", "%")
 COMMISSION_RENT = os.getenv("COMMISSION_RENT", "50")
 COMMISSION_RENT_UNIT = os.getenv("COMMISSION_RENT_UNIT", "%")
 
+
 @dataclass
 class EstateListItem:
     """Single estate card from the CRM list page."""
+
     estate_id: int
     title: str
     url: str
@@ -62,8 +64,8 @@ class EstateListCollector:
     """
 
     ESTATE_LIST_PATH = "/estate/index"
-    # CRM filter: "Реклама" = "Можна рекламувати" (value=2)
-    ADVERTISABLE_FILTER = "property_17[]=2"
+    # CRM filter: "Закритий/відкритий продаж" = "Відкритий продаж можна рекламувати" (value=2)
+    ADVERTISABLE_FILTER = "property_69[]=2"
     PER_PAGE = 50
 
     def __init__(
@@ -83,7 +85,9 @@ class EstateListCollector:
         if debug:
             logger.setLevel("DEBUG")
 
-    def collect_advertisable(self, max_pages: Optional[int] = None) -> List[EstateListItem]:
+    def collect_advertisable(
+        self, max_pages: Optional[int] = None
+    ) -> List[EstateListItem]:
         """Collect all advertisable estates from the filtered CRM list.
 
         Opens the estate list with the "Можна рекламувати" filter applied,
@@ -113,12 +117,20 @@ class EstateListCollector:
         while True:
             logger.info("Parsing page %d...", page_num)
             items = self.collect_page()
-            active = [i for i in items if not i.is_closed]
-            skipped = len(items) - len(active)
+            active = [i for i in items if not i.is_closed and i.can_advertise]
+            skipped_closed = sum(1 for i in items if i.is_closed)
+            skipped_no_ads = sum(
+                1 for i in items if not i.is_closed and not i.can_advertise
+            )
             all_items.extend(active)
             logger.info(
-                "Page %d: %d items (%d active, %d closed), total: %d",
-                page_num, len(items), len(active), skipped, len(all_items),
+                "Page %d: %d items (%d active, %d closed, %d not advertisable), total: %d",
+                page_num,
+                len(items),
+                len(active),
+                skipped_closed,
+                skipped_no_ads,
+                len(all_items),
             )
 
             if max_pages and page_num >= max_pages:
@@ -174,26 +186,24 @@ class EstateListCollector:
         html = self.page.content()
 
         if self._html_has_closure_alert(html):
-            logger.warning("Estate %d is closed (closure alert found), skipping", estate_id)
+            logger.warning(
+                "Estate %d is closed (closure alert found), skipping", estate_id
+            )
             return None
 
         return html
 
     def enrich_with_commission(self, offer_data: dict, item: EstateListItem) -> None:
-        """Add commission fields to offer_data based on list item tags.
+        """Add commission fields to offer_data unconditionally.
 
-        If seller/landlord does NOT pay commission (buyer_pays_commission=True),
-        sets "Комісія з покупця/орендатора": "Є" and commission size/unit.
-        Otherwise does nothing (field defaults to "Немає" on the form).
+        Always sets "Комісія з покупця/орендатора": "Є" with commission
+        size/unit so the field is filled on the website regardless of
+        whether the seller pays commission or not.
 
         Args:
             offer_data: Dict being built for DictOfferFormFiller (modified in place).
             item: EstateListItem with parsed tag info.
         """
-        if not item.buyer_pays_commission:
-            logger.debug("Estate %d: seller pays commission, skipping commission fields", item.estate_id)
-            return
-
         offer_data["Комісія з покупця/орендатора"] = "Є"
 
         # Determine rate and unit based on deal type
@@ -209,9 +219,87 @@ class EstateListCollector:
         offer_data["Комісія у"] = unit
 
         logger.info(
-            "Estate %d: buyer pays commission → %s %s",
-            item.estate_id, rate, unit,
+            "Estate %d: commission → %s %s",
+            item.estate_id,
+            rate,
+            unit,
         )
+
+    def enrich_with_responsible_contacts(self, offer_data: dict) -> None:
+        """Fetch responsible person's contacts from their CRM profile page.
+
+        If offer_data contains a 'responsible_person' dict with a 'profile_url',
+        navigates to that URL, extracts phone/email, and adds them as 'contacts'
+        to the responsible_person dict. Also updates personal_notes accordingly.
+
+        Args:
+            offer_data: Dict being built for DictOfferFormFiller (modified in place).
+        """
+        rp = offer_data.get("responsible_person")
+        if not rp or not rp.get("profile_url"):
+            return
+
+        profile_url = rp["profile_url"]
+        if not profile_url.startswith("http"):
+            profile_url = f"{CRM_BASE_URL}{profile_url}"
+
+        try:
+            logger.info("Fetching responsible person profile: %s", profile_url)
+            self.page.goto(profile_url, wait_until="domcontentloaded")
+            self.page.wait_for_selector(".page-content", timeout=15_000)
+            html = self.page.content()
+            contacts = self._parse_user_contacts(html)
+            if contacts:
+                rp["contacts"] = contacts
+                logger.info("Responsible person contacts: %s", contacts)
+                # Update personal_notes with contacts
+                self._update_notes_with_contacts(offer_data)
+        except Exception:
+            logger.exception("Failed to fetch responsible person contacts")
+
+    def _parse_user_contacts(self, html: str) -> str:
+        """Parse phone and email from a CRM user profile page.
+
+        Args:
+            html: Full HTML of the user profile page.
+
+        Returns:
+            Contacts string like "тел: +380..., email: user@example.com" or empty string.
+        """
+        soup = BeautifulSoup(html, "html.parser")
+        parts: list[str] = []
+
+        # Look for phone/email in the user profile detail table
+        for table in soup.select("table.detail-view"):
+            for row in table.select("tr"):
+                th = row.select_one("th")
+                td = row.select_one("td")
+                if not th or not td:
+                    continue
+                label = th.get_text(strip=True).lower()
+                value = td.get_text(strip=True)
+                if not value:
+                    continue
+                if "телефон" in label or "phone" in label or "моб" in label:
+                    parts.append(f"тел: {value}")
+                elif "email" in label or "пошта" in label or "e-mail" in label:
+                    parts.append(f"email: {value}")
+
+        return ", ".join(parts)
+
+    @staticmethod
+    def _update_notes_with_contacts(offer_data: dict) -> None:
+        """Update personal_notes to include responsible person contacts."""
+        rp = offer_data.get("responsible_person", {})
+        if not rp.get("contacts"):
+            return
+
+        notes = offer_data.get("personal_notes", "")
+        # Replace the "Відповідальний: Name" line with "Відповідальний: Name (contacts)"
+        old_line = f"Відповідальний: {rp['name']}"
+        new_line = f"Відповідальний: {rp['name']} ({rp['contacts']})"
+        if old_line in notes and rp["contacts"] not in notes:
+            offer_data["personal_notes"] = notes.replace(old_line, new_line)
 
     # ── Internal ──
 
@@ -225,7 +313,9 @@ class EstateListCollector:
 
         # Title from .estate-title a
         title_elem = elem.select_one(".estate-title a")
-        title = title_elem.get_text(strip=True) if title_elem else f"Estate #{estate_id}"
+        title = (
+            title_elem.get_text(strip=True) if title_elem else f"Estate #{estate_id}"
+        )
 
         # URL
         url = f"{CRM_BASE_URL}/estate/{estate_id}"
@@ -246,8 +336,13 @@ class EstateListCollector:
 
         tags_lower = [t.lower() for t in tags]
 
-        # Can advertise
-        can_advertise = any("реклам" in t for t in tags_lower)
+        # Can advertise: blocked only if an explicit non-advertising tag is present.
+        # Items fetched via ADVERTISABLE_FILTER are presumed advertisable by default —
+        # no positive "реклам" tag is required.
+        not_advertisable = any(
+            "не реклам" in t or ("закрит" in t and "продаж" in t) for t in tags_lower
+        )
+        can_advertise = not not_advertisable
 
         # Commission: "не платит" / "не платить" → seller does NOT pay → buyer pays
         buyer_pays = any(

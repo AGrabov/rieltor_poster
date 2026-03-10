@@ -8,26 +8,37 @@ import os
 
 APP_NAME = os.environ.get("APP_NAME", "")
 
+
 class FlushFileHandler(RotatingFileHandler):
     def emit(self, record):
         super().emit(record)
         self.flush()
 
+
 def _has_file_handler(logger: Logger, filename: str) -> bool:
     target = str(Path(filename))
     for h in logger.handlers:
-        if isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", None) == target:
+        if (
+            isinstance(h, RotatingFileHandler)
+            and getattr(h, "baseFilename", None) == target
+        ):
             return True
     return False
+
 
 def _has_console_handler(logger: Logger) -> bool:
     # StreamHandler, но не FileHandler
     for h in logger.handlers:
-        if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+        if isinstance(h, logging.StreamHandler) and not isinstance(
+            h, logging.FileHandler
+        ):
             return True
     return False
 
-def init_logging(level=os.environ.get("LOG_LEVEL", "INFO"), filename: str | None = None) -> Logger:
+
+def init_logging(
+    level=os.environ.get("LOG_LEVEL", "INFO"), filename: str | None = None
+) -> Logger:
     """
     Вызывай один раз в entrypoint. Повторный вызов безопасен.
     """
@@ -41,12 +52,20 @@ def init_logging(level=os.environ.get("LOG_LEVEL", "INFO"), filename: str | None
         path = Path(filename)
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        fh = FlushFileHandler(str(path), mode="a", maxBytes=5*1024*1024, backupCount=2, encoding="utf-8")
+        fh = FlushFileHandler(
+            str(path),
+            mode="a",
+            maxBytes=5 * 1024 * 1024,
+            backupCount=2,
+            encoding="utf-8",
+        )
         fh.setLevel(log_lvl)
-        fh.setFormatter(logging.Formatter(
-            "%(asctime)s [%(name)s] -%(levelname)s- %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
-        ))
+        fh.setFormatter(
+            logging.Formatter(
+                "%(asctime)s [%(name)s] -%(levelname)s- %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
         base.addHandler(fh)
 
     # ---- console handler (один общий) ----
@@ -91,6 +110,7 @@ def init_logging(level=os.environ.get("LOG_LEVEL", "INFO"), filename: str | None
         base.addHandler(sh)
 
     return base
+
 
 def setup_logger(name=__name__) -> Logger:
     """

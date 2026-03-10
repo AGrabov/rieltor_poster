@@ -2,13 +2,11 @@ from __future__ import annotations
 
 
 from setup_logger import setup_logger
-logger = setup_logger(__name__)
-
 from playwright.sync_api import Locator
 
 from .helpers import _norm
 
-
+logger = setup_logger(__name__)
 
 class _CollapseMixin:
     # ---------------- collapse detection ----------------
@@ -17,15 +15,21 @@ class _CollapseMixin:
 
     def _collapse_container_for_toggle_button(self, btn: Locator) -> Locator:
         for lvl in range(1, 11):
-            wrap = btn.locator(f"xpath=ancestor::div[contains(@class,'MuiBox-root')][{lvl}]").first
+            wrap = btn.locator(
+                f"xpath=ancestor::div[contains(@class,'MuiBox-root')][{lvl}]"
+            ).first
             if not wrap.count():
                 break
-            sib = wrap.locator("xpath=following-sibling::div[contains(@class,'MuiCollapse-container')][1]").first
+            sib = wrap.locator(
+                "xpath=following-sibling::div[contains(@class,'MuiCollapse-container')][1]"
+            ).first
             if sib.count():
                 return sib
 
         parent = btn.locator("xpath=parent::*").first
-        sib = parent.locator("xpath=following-sibling::div[contains(@class,'MuiCollapse-container')][1]").first
+        sib = parent.locator(
+            "xpath=following-sibling::div[contains(@class,'MuiCollapse-container')][1]"
+        ).first
         if sib.count():
             return sib
 
@@ -89,7 +93,9 @@ class _CollapseMixin:
         return clicked
 
     # ---------------- expand all blocks (open-only) ----------------
-    def expand_all_collapsibles(self, scope: Locator | None = None, *, max_rounds: int = 12) -> None:
+    def expand_all_collapsibles(
+        self, scope: Locator | None = None, *, max_rounds: int = 12
+    ) -> None:
         scope = scope or self._root()
 
         total_opened = 0

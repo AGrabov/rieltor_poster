@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 
-from setup_logger import setup_logger
-logger = setup_logger(__name__)
-
 from playwright.sync_api import Locator
 
-from .helpers import (FieldInfo, _norm, _sig3, _key4)
+from .helpers import FieldInfo, _norm, _sig3, _key4
+
+from setup_logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class _FieldCollectMixin:
@@ -27,7 +28,9 @@ class _FieldCollectMixin:
             out.append(n)
         return out
 
-    def _collect_label_controls_in_scope(self, scope: Locator, nav_title: str) -> List[FieldInfo]:
+    def _collect_label_controls_in_scope(
+        self, scope: Locator, nav_title: str
+    ) -> List[FieldInfo]:
         """Collect standalone checkboxes and radios (not inside radiogroups)."""
         out: List[FieldInfo] = []
 
@@ -36,7 +39,9 @@ class _FieldCollectMixin:
             "xpath=.//label[contains(@class,'MuiFormControlLabel-root')][.//input[@type='checkbox' or @type='radio']]"
         )
         label_count = labels.count()
-        logger.debug("Found %d MuiFormControlLabel-root labels in %s", label_count, nav_title)
+        logger.debug(
+            "Found %d MuiFormControlLabel-root labels in %s", label_count, nav_title
+        )
 
         for i in range(label_count):
             lab = labels.nth(i)
@@ -75,7 +80,12 @@ class _FieldCollectMixin:
             if aria_label:
                 meta["aria_label"] = aria_label
 
-            logger.debug("Found standalone %s: '%s' (section=%s)", widget, txt, self._nearest_h6_title(lab) or nav_title)
+            logger.debug(
+                "Found standalone %s: '%s' (section=%s)",
+                widget,
+                txt,
+                self._nearest_h6_title(lab) or nav_title,
+            )
 
             out.append(
                 FieldInfo(
@@ -94,7 +104,9 @@ class _FieldCollectMixin:
             "xpath=.//label[contains(@class,'MuiFormControlLabel-root')][.//span[contains(@class,'MuiCheckbox-root')]]"
         )
         checkbox_count = checkboxes.count()
-        logger.debug("Found %d MuiCheckbox-root labels in %s", checkbox_count, nav_title)
+        logger.debug(
+            "Found %d MuiCheckbox-root labels in %s", checkbox_count, nav_title
+        )
 
         already_found = {f.label.casefold() for f in out}
 
@@ -115,7 +127,9 @@ class _FieldCollectMixin:
                 continue
 
             # Check if it's actually a checkbox (not radio)
-            checkbox_span = lab.locator("xpath=.//span[contains(@class,'MuiCheckbox-root')]").first
+            checkbox_span = lab.locator(
+                "xpath=.//span[contains(@class,'MuiCheckbox-root')]"
+            ).first
             if not checkbox_span.count():
                 continue
 
@@ -131,7 +145,11 @@ class _FieldCollectMixin:
             if checked:
                 meta["checked"] = True
 
-            logger.debug("Found MuiCheckbox standalone: '%s' (section=%s)", txt, self._nearest_h6_title(lab) or nav_title)
+            logger.debug(
+                "Found MuiCheckbox standalone: '%s' (section=%s)",
+                txt,
+                self._nearest_h6_title(lab) or nav_title,
+            )
 
             out.append(
                 FieldInfo(
@@ -148,7 +166,9 @@ class _FieldCollectMixin:
         logger.debug("Total standalone controls in %s: %d", nav_title, len(out))
         return out
 
-    def _collect_fields_in_scope(self, scope: Locator, nav_title: str) -> List[FieldInfo]:
+    def _collect_fields_in_scope(
+        self, scope: Locator, nav_title: str
+    ) -> List[FieldInfo]:
         out: List[FieldInfo] = []
 
         logger.debug("Collect fields in scope: %s", nav_title)
@@ -327,7 +347,11 @@ class _FieldCollectMixin:
                         options = self._collect_autocomplete_options(form)
                         self._select_options_cache[cache_key] = options
                     except Exception as e:
-                        logger.warning("Failed to collect autocomplete options for %s: %s", label, e)
+                        logger.warning(
+                            "Failed to collect autocomplete options for %s: %s",
+                            label,
+                            e,
+                        )
                         options = []
 
             out.append(
@@ -396,7 +420,12 @@ class _FieldCollectMixin:
         merged_dups4 = 0
 
         for f in all_fields:
-            k4 = (f.nav.casefold(), f.section.casefold(), f.label.casefold(), f.widget.casefold())
+            k4 = (
+                f.nav.casefold(),
+                f.section.casefold(),
+                f.label.casefold(),
+                f.widget.casefold(),
+            )
             ex = by_key4.get(k4)
             if ex is None:
                 by_key4[k4] = f
@@ -410,7 +439,9 @@ class _FieldCollectMixin:
                 ex.meta.setdefault(mk, mv)
 
         uniq4 = [by_key4[k] for k in order4]
-        logger.info("Fields unique by key4=%d (merged_dups=%d)", len(uniq4), merged_dups4)
+        logger.info(
+            "Fields unique by key4=%d (merged_dups=%d)", len(uniq4), merged_dups4
+        )
 
         # 2) cross-nav merge by sig3
         by_sig: Dict[str, FieldInfo] = {}
@@ -440,10 +471,16 @@ class _FieldCollectMixin:
             ex.meta["navs"] = navs
 
         uniq = [by_sig[s] for s in order_sig]
-        logger.info("Fields unique by sig3=%d (merged_cross_nav=%d)", len(uniq), merged_cross_nav)
+        logger.info(
+            "Fields unique by sig3=%d (merged_cross_nav=%d)",
+            len(uniq),
+            merged_cross_nav,
+        )
 
         return {
-            "navigation": [t for (t, _) in nav_items if t not in self._NAV_EXCLUDE_FROM_LIST],
+            "navigation": [
+                t for (t, _) in nav_items if t not in self._NAV_EXCLUDE_FROM_LIST
+            ],
             "fields": [
                 {
                     "nav": f.nav,
