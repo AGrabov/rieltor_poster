@@ -1,0 +1,21 @@
+# Direct project dependencies (used by uv pip compile to generate uv.lock)
+# Run: uv pip compile requirements.in -o requirements.txt
+
+# Web scraping & browser automation
+playwright
+selenium
+beautifulsoup4
+fake-useragent
+requests
+
+# Data & utilities
+python-dotenv
+pillow
+colorlog
+
+# NLP
+spacy>=3.8
+
+# Dev / notebooks (optional, comment out for production)
+ipykernel
+ipython

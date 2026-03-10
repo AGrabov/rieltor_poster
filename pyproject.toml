@@ -1,0 +1,54 @@
+[project]
+name = "rieltor"
+version = "0.1.0"
+description = "Automation tool: collect real estate listings from a CRM and publish them on Rieltor.ua via browser automation."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "AGrabov" }]
+keywords = ["rieltor", "crm", "real-estate", "automation", "playwright", "selenium"]
+
+dependencies = [
+    # Browser automation
+    "playwright>=1.57",
+    "selenium>=4.39",
+
+    # HTML parsing
+    "beautifulsoup4>=4.14",
+    "fake-useragent>=2.2",
+
+    # HTTP
+    "requests>=2.32",
+
+    # Config & env
+    "python-dotenv>=1.2",
+
+    # Images
+    "pillow>=12.1",
+
+    # Logging
+    "colorlog>=6.10",
+
+    # NLP
+    "spacy>=3.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ipykernel>=7.1",
+    "ipython>=9.9",
+]
+
+[project.scripts]
+rieltor = "main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

@@ -159,3 +159,7 @@ DICT_FILLER_README.md
 example_dict_filler_usage.py
 example_html_parser_usage.py
 test_html_parser.py
+
+
+# Claude
+.claude/
