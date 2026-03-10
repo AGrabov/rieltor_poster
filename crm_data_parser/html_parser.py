@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from bs4 import BeautifulSoup
-from crm_data_parser.description_analyzer import DescriptionAnalyzer
-from schemas import load_offer_schema, ADDRESS_LABELS
 
+from crm_data_parser.description_analyzer import DescriptionAnalyzer
+from schemas import ADDRESS_LABELS, load_offer_schema
 from setup_logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -108,7 +108,7 @@ class HTMLOfferParser:
 
     def __init__(
         self,
-        html_content: Union[str, Path],
+        html_content: str | Path,
         debug: bool = False,
     ):
         """Initialize HTML parser.
@@ -127,7 +127,7 @@ class HTMLOfferParser:
             path = Path(html_content)
             if path.exists() and path.is_file():
                 logger.info(f"Loading HTML from file: {path}")
-                with open(path, "r", encoding="utf-8") as f:
+                with open(path, encoding="utf-8") as f:
                     html_str = f.read()
             else:
                 html_str = str(html_content)
@@ -136,7 +136,8 @@ class HTMLOfferParser:
 
         self.full_soup = BeautifulSoup(html_str, "html.parser")
         logger.debug(
-            f"Parsed HTML, title: {self.full_soup.title.string if self.full_soup.title else 'No title'}"
+            f"Parsed HTML, title: \
+                {self.full_soup.title.string if self.full_soup.title else 'No title'}"
         )
 
         # Scope to .page-content to ignore navbars, footers, summary-tags, etc.
@@ -170,13 +171,13 @@ class HTMLOfferParser:
 
     # ==================== Auto-detection ====================
 
-    def _read_characteristics_table(self) -> Dict[str, str]:
+    def _read_characteristics_table(self) -> dict[str, str]:
         """Read all label→value pairs from the first characteristics detail-view table.
 
         Returns:
             Dict mapping lowercase label → raw value text.
         """
-        pairs: Dict[str, str] = {}
+        pairs: dict[str, str] = {}
         for table in self.soup.select("table.detail-view"):
             for row in table.select("tr"):
                 cells = row.select("th, td")
@@ -268,7 +269,7 @@ class HTMLOfferParser:
 
     # ==================== Schema helpers ====================
 
-    def _get_required_fields(self) -> List[dict]:
+    def _get_required_fields(self) -> list[dict]:
         """Extract required fields from schema.
 
         Returns:
@@ -486,7 +487,8 @@ class HTMLOfferParser:
                         if normalized_value is not None:
                             result[schema_label] = normalized_value
                             logger.debug(
-                                f"Extracted '{schema_label}'={normalized_value} from HTML label '{label_text}'"
+                                f"Extracted '{schema_label}'={normalized_value} \
+                                    from HTML label '{label_text}'"
                             )
                     else:
                         logger.debug(f"No schema match for label: '{label_text}'")
@@ -646,7 +648,7 @@ class HTMLOfferParser:
             return text
         return ""
 
-    def _extract_article(self) -> Optional[str]:
+    def _extract_article(self) -> str | None:
         """Extract article number from .article-label element.
 
         Returns:
@@ -659,7 +661,7 @@ class HTMLOfferParser:
             return text
         return None
 
-    def _extract_public_link(self) -> Optional[str]:
+    def _extract_public_link(self) -> str | None:
         """Extract public link from input#public-view.
 
         Returns:
@@ -673,7 +675,7 @@ class HTMLOfferParser:
                 return value
         return None
 
-    def _extract_responsible_person(self) -> Optional[Dict[str, str]]:
+    def _extract_responsible_person(self) -> dict[str, str] | None:
         """Extract responsible person name and profile link from 'Службова інформація'.
 
         Returns:
@@ -707,7 +709,7 @@ class HTMLOfferParser:
                                 return {"name": name, "profile_url": ""}
         return None
 
-    def _extract_advertising(self) -> Optional[str]:
+    def _extract_advertising(self) -> str | None:
         """Extract advertising permission from characteristics table.
 
         Checks both the new CRM label "Закритий/відкритий продаж"
@@ -722,7 +724,7 @@ class HTMLOfferParser:
             logger.debug(f"Extracted advertising: {value}")
         return value
 
-    def _extract_photo_download_link(self) -> Optional[str]:
+    def _extract_photo_download_link(self) -> str | None:
         """Extract bulk photo download URL.
 
         Returns:
@@ -735,7 +737,7 @@ class HTMLOfferParser:
             return href
         return None
 
-    def _extract_video_url(self) -> Optional[str]:
+    def _extract_video_url(self) -> str | None:
         """Extract video tour URL from characteristics table.
 
         Returns:
@@ -760,7 +762,7 @@ class HTMLOfferParser:
                             return text
         return None
 
-    def _extract_infrastructure(self) -> Optional[List[str]]:
+    def _extract_infrastructure(self) -> list[str] | None:
         """Extract nearby infrastructure and map to schema 'Поруч є' options.
 
         Returns:
@@ -781,7 +783,7 @@ class HTMLOfferParser:
             return None
 
         # Map to schema options
-        matched: List[str] = []
+        matched: list[str] = []
         for title in titles:
             option = _INFRA_TO_NEARBY.get(title)
             if option and option not in matched:
@@ -844,7 +846,7 @@ class HTMLOfferParser:
         # Default: return as-is
         return raw_value
 
-    def _normalize_select_option(self, text: str, options: List[str]) -> str:
+    def _normalize_select_option(self, text: str, options: list[str]) -> str:
         """Fuzzy match text against schema options.
 
         Args:
@@ -886,7 +888,7 @@ class HTMLOfferParser:
         # No match found, return original
         return text
 
-    def _normalize_rooms(self, text: str, options: List[str]) -> str:
+    def _normalize_rooms(self, text: str, options: list[str]) -> str:
         """Normalize room count to schema format.
 
         Args:
@@ -922,7 +924,7 @@ class HTMLOfferParser:
         else:
             return f"{num} кімнат"
 
-    def _parse_price(self, text: str) -> tuple[Optional[int], Optional[str]]:
+    def _parse_price(self, text: str) -> tuple[int | None, str | None]:
         """Parse price text to amount and currency.
 
         Args:
@@ -955,7 +957,7 @@ class HTMLOfferParser:
 
         return amount, currency
 
-    def _look_up_field_by_html_label(self, html_label: str) -> Optional[dict]:
+    def _look_up_field_by_html_label(self, html_label: str) -> dict | None:
         """Look up field info by HTML table label (not schema label).
 
         Some HTML tables use different labels than the schema.
@@ -995,7 +997,7 @@ class HTMLOfferParser:
 
     # ==================== Validation ====================
 
-    def _validate_required_fields(self, data: dict) -> List[str]:
+    def _validate_required_fields(self, data: dict) -> list[str]:
         """Validate that all required fields are present.
 
         Args:

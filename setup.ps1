@@ -3,7 +3,7 @@
 # ============================================================
 # Что делает:
 #   1. Устанавливает uv (если не установлен)
-#   2. Устанавливает Python 3.12 через uv
+#   2. Устанавливает Python 3.14 через uv
 #   3. Клонирует репозиторий (если запущен вне него)
 #   4. Создаёт venv и устанавливает зависимости
 #   5. Устанавливает браузер Chromium для Playwright
@@ -17,7 +17,7 @@
 param(
     [string]$RepoDir  = "$PSScriptRoot",
     [string]$RepoUrl  = "https://github.com/AGrabov/rieltor_poster.git",
-    [string]$PyVer    = "3.12"
+    [string]$PyVer    = "3.14"
 )
 
 $ErrorActionPreference = "Stop"

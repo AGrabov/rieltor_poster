@@ -18,7 +18,7 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/AGrabov/rieltor_poster.git"
-PY_VER="3.12"
+PY_VER="3.14"
 REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 
 # ── Параметры ────────────────────────────────────────────────────────
