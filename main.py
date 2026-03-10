@@ -17,15 +17,15 @@ Usage:
 
 from __future__ import annotations
 
-from setup_logger import init_logging, setup_logger
-
 import argparse
 import json
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+
 from dotenv import load_dotenv
+
+from setup_logger import init_logging, setup_logger
 
 load_dotenv()
 
@@ -48,7 +48,7 @@ _DEAL_TYPE_NORMALIZE = {
 }
 
 
-def _normalize_deal_type(value: str) -> Optional[str]:
+def _normalize_deal_type(value: str) -> str | None:
     if not value:
         return None
     return _DEAL_TYPE_NORMALIZE.get(value.lower().strip())
@@ -58,10 +58,10 @@ def _normalize_deal_type(value: str) -> Optional[str]:
 
 
 def phase1_collect(
-    max_pages: Optional[int] = None,
-    max_count: Optional[int] = None,
-    deal_type: Optional[str] = None,
-    property_type: Optional[str] = None,
+    max_pages: int | None = None,
+    max_count: int | None = None,
+    deal_type: str | None = None,
+    property_type: str | None = None,
     headless: bool = True,
     debug: bool = False,
 ) -> int:
@@ -71,8 +71,8 @@ def phase1_collect(
         Number of new offers saved.
     """
     from crm_data_parser import (
-        CrmSession,
         CrmCredentials,
+        CrmSession,
         EstateListCollector,
         HTMLOfferParser,
         download_estate_photos,
@@ -216,9 +216,9 @@ def phase1_collect(
 
 def phase2_post(
     publish: bool = False,
-    deal_type: Optional[str] = None,
-    property_type: Optional[str] = None,
-    max_count: Optional[int] = None,
+    deal_type: str | None = None,
+    property_type: str | None = None,
+    max_count: int | None = None,
     headless: bool = True,
     debug: bool = False,
 ) -> int:
@@ -227,14 +227,14 @@ def phase2_post(
     Returns:
         Number of successfully posted offers.
     """
+    from crm_data_parser import cleanup_photos
+    from offer_db import OfferDB
     from rieltor_handler import RieltorOfferPoster
-    from rieltor_handler.rieltor_session import RieltorErrorPageException
     from rieltor_handler.new_offer_poster import (
         DictOfferFormFiller,
         FormValidationError,
     )
-    from offer_db import OfferDB
-    from crm_data_parser import cleanup_photos
+    from rieltor_handler.rieltor_session import RieltorErrorPageException
 
     phone = os.environ.get("PHONE", "").strip()
     password = os.environ.get("PASSWORD", "").strip()
