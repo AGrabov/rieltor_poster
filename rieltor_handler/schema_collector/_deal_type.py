@@ -7,17 +7,17 @@ logger = setup_logger(__name__)
 
 
 class _DealTypeMixin:
-    """Mixin for selecting deal type (Продаж/Оренда)."""
+    """Мікін для вибору типу угоди (Продаж/Оренда)."""
 
     DEAL_TYPE_SELL = "Продаж"
     DEAL_TYPE_LEASE = "Оренда"
 
     def select_deal_type(self, deal_type: str) -> None:
         """
-        Select deal type: 'Продаж' (sell) or 'Оренда' (lease).
+        Вибрати тип угоди: 'Продаж' або 'Оренда'.
 
         Args:
-            deal_type: Either 'Продаж'/'sell' or 'Оренда'/'lease'
+            deal_type: 'Продаж'/'sell' або 'Оренда'/'lease'
         """
         # Normalize deal type name
         deal_type_map = {
@@ -29,7 +29,7 @@ class _DealTypeMixin:
         }
         ui_text = deal_type_map.get(deal_type.lower(), deal_type)
 
-        logger.info("Select deal type: %s", ui_text)
+        logger.info("Вибір типу угоди: %s", ui_text)
         root = self._root()
 
         # Find the "Тип угоди" section
@@ -57,7 +57,7 @@ class _DealTypeMixin:
 
         # Click the option
         if not self._click_best_effort(chosen):
-            logger.warning("Failed to click deal type option: %s", ui_text)
+            logger.warning("Не вдалося клікнути на варіант типу угоди: %s", ui_text)
 
         self._wait_ready()
         try:
@@ -68,10 +68,10 @@ class _DealTypeMixin:
 
         self._epoch += 1
         self.open_all_blocks_sticky()
-        logger.info("Deal type selected: %s (epoch=%s)", ui_text, self._epoch)
+        logger.info("Тип угоди вибрано: %s (epoch=%s)", ui_text, self._epoch)
 
     def get_current_deal_type(self) -> str | None:
-        """Get currently selected deal type."""
+        """Отримати поточний вибраний тип угоди."""
         root = self._root()
         try:
             sec = root.locator(

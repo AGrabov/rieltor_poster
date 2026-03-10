@@ -7,7 +7,7 @@ class StructureMixin:
     ROOT_H5_TEXT = "Нове оголошення"
 
     def _new_offer_root(self) -> Locator:
-        """Return container with offer sections on create/edit page."""
+        """Повертає контейнер із секціями оголошення на сторінці створення/редагування."""
 
         h5 = self.page.locator("h5", has_text=self.ROOT_H5_TEXT).first
         if h5.count():
@@ -56,7 +56,7 @@ class StructureMixin:
 
     @staticmethod
     def _xpath_literal(s: str) -> str:
-        """Safely embed arbitrary string into XPath literal."""
+        """Безпечно вставляє довільний рядок у XPath-літерал."""
         s = "" if s is None else str(s)
         if "'" not in s:
             return f"'{s}'"

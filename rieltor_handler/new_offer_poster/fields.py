@@ -12,10 +12,11 @@ logger = setup_logger(__name__)
 class FieldsMixin:
     # -------- internal helpers --------
     def _active_listbox(self, *, prefer_menu_id: str | None = None) -> Locator | None:
-        """Return the currently opened MUI listbox.
+        """Повертає поточний відкритий MUI listbox.
 
-        MUI Popover/Select renders the listbox outside the form.
-        We try to scope it via aria-controls menu id (best), otherwise pick the last visible listbox.
+        MUI Popover/Select рендерить listbox поза формою.
+        Спочатку намагаємось прив'язатись через aria-controls menu id (найкраще),
+        інакше беремо останній видимий listbox.
         """
         try:
             if prefer_menu_id:
@@ -74,14 +75,14 @@ class FieldsMixin:
     def _click_box_button_in_section(
         self, root: Locator, section_h6: str, text: str
     ) -> None:
-        """Click card-like option in section (used for 'Тип угоди', 'Тип нерухомості', etc).
+        """Клікає по картці-опції у секції (для 'Тип угоди', 'Тип нерухомості' тощо).
 
-        Внутри секции есть вложенные MuiBox-root обёртки, которые тоже матчятся.
-        Поэтому кликаем только по "leaf" карточкам (которые не содержат внутри другую карточку).
+        Всередині секції є вкладені MuiBox-root обгортки, які також підходять під селектор.
+        Тому клікаємо лише по "листовим" карткам (що не містять всередині іншої картки).
         """
         sec = self._section(root, section_h6)
         target = (text or "").strip().casefold()
-        logger.info("Select button in '%s': %s", section_h6, target)
+        logger.info("Вибір кнопки у '%s': %s", section_h6, target)
 
         if not target:
             return
@@ -130,7 +131,7 @@ class FieldsMixin:
 
         if not chosen:
             logger.warning(
-                "Button not found in section '%s' for text '%s'", section_h6, target
+                "Кнопку не знайдено у секції '%s' для тексту '%s'", section_h6, target
             )
             return
 
@@ -148,7 +149,7 @@ class FieldsMixin:
                     cls = parent_cls
             if "-selected" in cls:
                 logger.info(
-                    "Box already selected in '%s' for '%s' (skip)", section_h6, target
+                    "Картку вже вибрано у '%s' для '%s' (пропуск)", section_h6, target
                 )
                 return
         except Exception:
@@ -174,7 +175,7 @@ class FieldsMixin:
 
     def _click_section_toggle(self, root: Locator, section_h6: str) -> None:
         sec = self._section(root, section_h6)
-        logger.info("Toggle section: %s", section_h6)
+        logger.info("Перемикання секції: %s", section_h6)
         try:
             sec.locator("xpath=.//h6").first.click()
         except Exception:
@@ -194,7 +195,7 @@ class FieldsMixin:
         ctrl = self._find_control_by_label(sec, label)
         if not ctrl:
             logger.warning(
-                "Control not found for key=%s (label=%s) in section=%s",
+                "Елемент керування не знайдено для key=%s (label=%s) у секції=%s",
                 key,
                 label,
                 section,
@@ -218,11 +219,11 @@ class FieldsMixin:
             cur = ""
 
         if cur == desired:
-            logger.info("Fill skip %s/%s: already '%s'", section, key, cur)
+            logger.info("Заповнення пропущено %s/%s: вже '%s'", section, key, cur)
             self._mark_touched(ctrl)
             return
 
-        logger.info("Fill %s/%s = %s (was='%s')", section, key, desired, cur)
+        logger.info("Заповнення %s/%s = %s (було='%s')", section, key, desired, cur)
 
         try:
             ctrl.click()
@@ -237,7 +238,7 @@ class FieldsMixin:
                 ctrl.press("Backspace")
                 ctrl.type(desired, delay=20)
             except Exception:
-                logger.exception("Failed to fill %s/%s", section, key)
+                logger.exception("Не вдалось заповнити %s/%s", section, key)
                 return
 
         # verify (best-effort)
@@ -245,7 +246,7 @@ class FieldsMixin:
             after = (ctrl.input_value() or "").strip()
             if after != desired:
                 logger.warning(
-                    "Fill not confirmed %s/%s: desired='%s' current='%s'",
+                    "Заповнення не підтверджено %s/%s: desired='%s' current='%s'",
                     section,
                     key,
                     desired,
@@ -266,7 +267,7 @@ class FieldsMixin:
         # 0) radio-group?
         form_rg = self._find_formcontrol_by_label(sec, label)
         if form_rg and self._try_fill_radio_group(form_rg, section, key, desired):
-            logger.debug("Fill radio-group %s/%s = %s", section, key, desired)
+            logger.debug("Заповнення radio-group %s/%s = %s", section, key, desired)
             return
 
         # 1) locate control by label
@@ -280,7 +281,7 @@ class FieldsMixin:
                 ctrl = one_select
             else:
                 logger.warning(
-                    "Select/text control not found for key=%s (label=%s) in section=%s",
+                    "Елемент Select/text не знайдено для key=%s (label=%s) у секції=%s",
                     key,
                     label,
                     section,
@@ -312,7 +313,7 @@ class FieldsMixin:
         # ---------- MUI Select ----------
         if select_btn and select_btn.count():
             if not desired:
-                logger.info("Select skip %s/%s: empty value", section, key)
+                logger.info("Select пропуск %s/%s: порожнє значення", section, key)
                 return
 
             try:
@@ -321,7 +322,7 @@ class FieldsMixin:
                 cur = ""
 
             if cur == desired:
-                logger.info("Select skip %s/%s: already '%s'", section, key, cur)
+                logger.info("Select пропуск %s/%s: вже '%s'", section, key, cur)
                 try:
                     self._mark_touched(form)
                 except Exception:
@@ -393,16 +394,16 @@ class FieldsMixin:
 
             lb = opened_lb or self._active_listbox(prefer_menu_id=menu_id)
             if not lb:
-                logger.warning("Select listbox not opened for %s/%s", section, key)
+                logger.warning("Listbox Select не відкрився для %s/%s", section, key)
                 return
 
             opt = self._find_option_in_listbox(lb, desired)
             if not opt:
-                logger.warning("Option '%s' not found for %s/%s", desired, section, key)
+                logger.warning("Опцію '%s' не знайдено для %s/%s", desired, section, key)
                 try:
                     texts = self._list_listbox_options(lb)
                     logger.debug(
-                        "Select available options for %s/%s: %s", section, key, texts
+                        "Доступні опції Select для %s/%s: %s", section, key, texts
                     )
                 except Exception:
                     pass
@@ -429,7 +430,7 @@ class FieldsMixin:
         self._fill_by_label(root, section, key, desired)
 
     def _list_radio_options(self, form: Locator) -> list[str]:
-        """Вернуть список всех доступных текстов радиокнопок внутри формы."""
+        """Повертає список усіх доступних текстів радіокнопок всередині форми."""
         options = []
         try:
             # Ищем все label'ы внутри формы
@@ -443,7 +444,7 @@ class FieldsMixin:
                     continue
         except Exception:
             pass
-        logger.info("Radio options: %s", options)
+        logger.info("Опції радіокнопок: %s", options)
         return options
 
     def _try_fill_radio_group(
@@ -474,7 +475,7 @@ class FieldsMixin:
             already = False
 
         if already:
-            logger.info("Radio skip %s/%s: already '%s'", section, key, desired)
+            logger.info("Radio пропуск %s/%s: вже '%s'", section, key, desired)
             self._mark_touched(form)
             return True
 
@@ -487,11 +488,11 @@ class FieldsMixin:
         if opt.count() == 0:
             try:
                 texts = [t.strip() for t in form.all_inner_texts() if t.strip()]
-                logger.debug("Radio available texts for %s/%s: %s", section, key, texts)
+                logger.debug("Доступні тексти Radio для %s/%s: %s", section, key, texts)
             except Exception:
                 pass
             logger.warning(
-                "Radio option not found for %s/%s desired='%s'", section, key, desired
+                "Опцію Radio не знайдено для %s/%s desired='%s'", section, key, desired
             )
             self._mark_touched(form)
             return True
@@ -510,14 +511,14 @@ class FieldsMixin:
         lit = self._xpath_literal(label)
         row = sec.locator(f"xpath=.//*[contains(normalize-space(.), {lit})]").first
         if row.count() == 0:
-            logger.debug("Checkbox row not found: %s/%s", section, key)
+            logger.debug("Рядок з чекбоксом не знайдено: %s/%s", section, key)
             return
 
         cb = row.locator("css=input[type='checkbox']").first
         if cb.count() == 0:
             if value:
                 logger.debug(
-                    "Toggle row click (no checkbox input) for %s/%s", section, key
+                    "Клік по рядку-перемикачу (без input checkbox) для %s/%s", section, key
                 )
                 row.click()
             return
@@ -525,7 +526,7 @@ class FieldsMixin:
         try:
             checked = cb.is_checked()
             if checked != value:
-                logger.debug("Set checkbox %s/%s -> %s", section, key, value)
+                logger.debug("Встановлення checkbox %s/%s -> %s", section, key, value)
                 cb.check() if value else cb.uncheck()
         except Exception:
             pass
@@ -542,12 +543,12 @@ class FieldsMixin:
         for i in range(count):
             lb = listboxes.nth(i)
             options = self._list_listbox_options(lb)
-            logger.debug("Listbox options: %s -> %s", i, options)
+            logger.debug("Опції Listbox: %s -> %s", i, options)
             if desired in options:
-                logger.info("Select listbox option: %s", desired)
+                logger.info("Вибір опції listbox: %s", desired)
                 return lb
 
-        logger.warning("Listbox option not found: %s", desired)
+        logger.warning("Опцію listbox не знайдено: %s", desired)
         return self.page.locator("[role='listbox']").first
 
     def _list_listbox_options(self, listbox: Locator) -> list[str]:
@@ -572,7 +573,7 @@ class FieldsMixin:
         sec = self._section(root, section)
         label = self._expected_label(key) or key
 
-        logger.info("Open checklist %s/%s and check %d items", section, key, len(items))
+        logger.info("Відкриття чекліста %s/%s і позначення %d елементів", section, key, len(items))
 
         opener = None
 
@@ -594,7 +595,7 @@ class FieldsMixin:
                 opener = None
 
         if not opener:
-            logger.warning("Checklist opener not found for %s/%s", section, key)
+            logger.warning("Відкривач чекліста не знайдено для %s/%s", section, key)
             return
 
         # click to open listbox
@@ -620,14 +621,14 @@ class FieldsMixin:
 
         lb = self._active_listbox(prefer_menu_id=menu_id)
         if not lb:
-            logger.warning("Select listbox not opened for %s/%s", section, key)
+            logger.warning("Listbox Select не відкрився для %s/%s", section, key)
             return
 
         for item in items:
             node = self._find_option_in_listbox(lb, str(item))
             if not node:
                 logger.warning(
-                    "Checklist option not found: %s/%s -> %s", section, key, str(item)
+                    "Опцію чекліста не знайдено: %s/%s -> %s", section, key, str(item)
                 )
                 continue
 
@@ -659,7 +660,7 @@ class FieldsMixin:
 
         ctrl = self._find_control_by_label(sec, label)
         if not ctrl:
-            logger.warning("Multi control not found for %s/%s", section, key)
+            logger.warning("Елемент Multi не знайдено для %s/%s", section, key)
             return
 
         inp = (

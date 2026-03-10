@@ -261,35 +261,35 @@ class _RadioProbeMixin:
             if cached is not None:
                 a.setdefault("options", cached)
                 logger.debug(
-                    "Added-select cache hit: %s (opts=%d)", cache_key, len(cached)
+                    "Кеш added-select: влучання %s (opts=%d)", cache_key, len(cached)
                 )
                 continue
 
             form = self._find_select_form(local_scope, nav_title, sec_cf, lab_cf)
             if not form:
                 logger.debug(
-                    "Added-select form not found: nav=%s section=%s label=%s",
+                    "Форма added-select не знайдена: nav=%s section=%s label=%s",
                     nav_title,
                     sec_cf,
                     lab_cf,
                 )
                 continue
 
-            logger.debug("Added-select cache miss: %s", cache_key)
+            logger.debug("Кеш added-select: промах %s", cache_key)
             opts, select_meta = self._collect_select_options(form)
             self._select_options_cache[cache_key] = opts
             a.setdefault("options", opts)
             # Merge select metadata if needed
             if select_meta:
                 a.setdefault("meta", {}).update(select_meta)
-            logger.debug("Added-select cached: %s (opts=%d)", cache_key, len(opts))
+            logger.debug("Added-select збережено в кеш: %s (opts=%d)", cache_key, len(opts))
 
     def probe_radios_dynamic(self) -> List[Dict[str, Any]]:
         if not self.enable_radio_probe:
-            logger.info("Radio probe disabled")
+            logger.info("Зондування радіокнопок вимкнено")
             return []
 
-        logger.info("Radio probe start")
+        logger.info("Початок зондування радіокнопок")
         self.open_all_blocks_sticky()
         nav_items = self.list_navigation_items()
         results: List[Dict[str, Any]] = []
@@ -301,7 +301,7 @@ class _RadioProbeMixin:
             if scope is None:
                 continue
 
-            logger.debug("Radio probe nav: %s", title)
+            logger.debug("Зондування radio nav: %s", title)
             self.page.wait_for_timeout(self.ui_delay_ms)
             self.expand_all_collapsibles(scope, max_rounds=8)
             self.page.wait_for_timeout(self.ui_delay_ms)
@@ -309,7 +309,7 @@ class _RadioProbeMixin:
             # 1) baseline: set all radios to preferred (usually 'Немає')
             rgs = scope.locator("xpath=.//*[@role='radiogroup']")
             rg_count = rgs.count()
-            logger.debug("Radiogroups in '%s': %d", title, rg_count)
+            logger.debug("Radiogroups у '%s': %d", title, rg_count)
 
             for i in range(rg_count):
                 rg = rgs.nth(i)
@@ -338,7 +338,7 @@ class _RadioProbeMixin:
                 # Skip parking type selector radio (Гараж/Паркомісце) - handled by select_parking_type
                 values_cf = {_cf(v) for v in values}
                 if _cf("Гараж") in values_cf and _cf("Паркомісце") in values_cf:
-                    logger.debug("Skip parking type selector radiogroup")
+                    logger.debug("Пропускаємо radiogroup вибору типу паркінгу")
                     continue
 
                 label = self._radiogroup_title_from_rg(rg)
@@ -395,7 +395,7 @@ class _RadioProbeMixin:
 
                     ok = self._radio_set_by_value(rg, v)
                     if not ok:
-                        logger.debug("Radio set failed: %s=%s", label, v)
+                        logger.debug("Встановлення radio не вдалося: %s=%s", label, v)
                         group_info["options"].append(
                             {
                                 "value": v,
@@ -454,7 +454,7 @@ class _RadioProbeMixin:
                     try:
                         self._cache_select_options_for_added(local_scope, title, added)
                     except Exception as e:
-                        logger.debug("Cache select options for added failed: %s", e)
+                        logger.debug("Кешування варіантів select для added не вдалося: %s", e)
 
                     group_info["options"].append(
                         {
@@ -465,7 +465,7 @@ class _RadioProbeMixin:
                         }
                     )
                     logger.debug(
-                        "Radio diff: %s=%s added=%d removed=%d",
+                        "Radio diff: %s=%s додано=%d видалено=%d",
                         label,
                         v,
                         len(added),
@@ -483,5 +483,5 @@ class _RadioProbeMixin:
                 if any_change:
                     results.append(group_info)
 
-        logger.info("Radio probe done: groups=%d", len(results))
+        logger.info("Зондування радіокнопок завершено: груп=%d", len(results))
         return results

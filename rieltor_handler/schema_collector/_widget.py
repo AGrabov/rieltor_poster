@@ -95,7 +95,7 @@ class _WidgetMixin:
     def _collect_select_options(
         self, form: Locator
     ) -> Tuple[List[str], Dict[str, Any]]:
-        """Open listbox for a select in this form and return option texts and metadata."""
+        """Відкрити listbox для select у цій формі та повернути тексти варіантів і метадані."""
         select_btn = form.locator("css=div.MuiSelect-select[role='button']").first
         if not select_btn.count():
             return [], {}
@@ -108,7 +108,7 @@ class _WidgetMixin:
 
         lb = self._open_listbox(select_btn, menu_id)
         if not lb:
-            logger.debug("Listbox open failed")
+            logger.debug("Не вдалося відкрити listbox")
             return [], {}
 
         # Detect multiselect by checking for checkboxes
@@ -122,7 +122,7 @@ class _WidgetMixin:
 
         opts = self._list_listbox_options(lb)
         logger.debug(
-            "Collected select options: %d (multiselect=%s)",
+            "Зібрано варіантів select: %d (multiselect=%s)",
             len(opts),
             select_meta.get("is_multiselect", False),
         )
@@ -136,10 +136,10 @@ class _WidgetMixin:
     def _collect_autocomplete_options(
         self, form: Locator, query: str = "а"
     ) -> List[str]:
-        """Trigger autocomplete dropdown with a query and collect visible options."""
+        """Активувати випадаючий список autocomplete запитом і зібрати видимі варіанти."""
         inp = form.locator("css=input").first
         if not inp.count():
-            logger.debug("No input found in autocomplete form")
+            logger.debug("Поле введення у формі autocomplete не знайдено")
             return []
 
         # Save current value
@@ -156,7 +156,7 @@ class _WidgetMixin:
             try:
                 inp.click(force=True, timeout=2000)
             except Exception:
-                logger.debug("Failed to click autocomplete input")
+                logger.debug("Не вдалося клікнути на поле autocomplete")
                 return []
 
         self.page.wait_for_timeout(self.ui_delay_ms)
@@ -166,7 +166,7 @@ class _WidgetMixin:
             inp.fill("")
             inp.type(query, delay=35)
         except Exception:
-            logger.debug("Failed to type into autocomplete")
+            logger.debug("Не вдалося ввести текст у autocomplete")
             return []
 
         # Open dropdown
@@ -262,10 +262,10 @@ class _WidgetMixin:
                         inp,
                     )
                 )
-                logger.debug("Collected autocomplete options: %d", len(options))
+                logger.debug("Зібрано варіантів autocomplete: %d", len(options))
 
         except Exception as e:
-            logger.debug("Failed to collect autocomplete options: %s", e)
+            logger.debug("Не вдалося зібрати варіанти autocomplete: %s", e)
 
         # Cleanup: restore original value or clear
         try:

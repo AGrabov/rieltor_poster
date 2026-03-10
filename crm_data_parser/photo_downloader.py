@@ -1,7 +1,7 @@
-"""Photo download and cleanup utilities.
+"""Утиліти для завантаження та очищення фотографій.
 
-Downloads estate photos from CRM using the authenticated Playwright session
-and saves them locally for upload to Rieltor.
+Завантажує фотографії об'єктів з CRM через автентифіковану Playwright-сесію
+та зберігає їх локально для подальшого завантаження на Rieltor.
 """
 
 from __future__ import annotations
@@ -25,15 +25,15 @@ def download_estate_photos(
     photo_urls: List[str],
     article: str,
 ) -> List[str]:
-    """Download photos from CRM using the authenticated Playwright session.
+    """Завантажити фотографії з CRM через автентифіковану Playwright-сесію.
 
     Args:
-        page: Playwright Page with active CRM session (for cookies).
-        photo_urls: List of CRM photo URLs (relative or absolute).
-        article: Estate article number, used as subfolder name.
+        page: Playwright Page з активною CRM-сесією (для cookies).
+        photo_urls: Список URL фотографій CRM (відносних або абсолютних).
+        article: Номер артикула об'єкта, використовується як назва підпапки.
 
     Returns:
-        List of local file paths for successfully downloaded photos.
+        Список локальних шляхів до успішно завантажених фотографій.
     """
     if not photo_urls:
         return []
@@ -53,17 +53,17 @@ def download_estate_photos(
                 filepath.write_bytes(response.body())
                 local_paths.append(str(filepath))
                 logger.debug(
-                    "Downloaded photo %d/%d: %s", i + 1, len(photo_urls), filename
+                    "Завантажено фото %d/%d: %s", i + 1, len(photo_urls), filename
                 )
             else:
                 logger.warning(
-                    "Failed to download %s: HTTP %d", full_url, response.status
+                    "Не вдалося завантажити %s: HTTP %d", full_url, response.status
                 )
         except Exception:
-            logger.exception("Error downloading photo: %s", full_url)
+            logger.exception("Помилка завантаження фото: %s", full_url)
 
     logger.info(
-        "Downloaded %d/%d photos for article %s",
+        "Завантажено %d/%d фотографій для артикула %s",
         len(local_paths),
         len(photo_urls),
         article,
@@ -72,15 +72,15 @@ def download_estate_photos(
 
 
 def cleanup_photos(article: str) -> None:
-    """Remove the photo directory for a given article after successful upload."""
+    """Видалити папку з фотографіями для вказаного артикула після успішного завантаження."""
     dest_dir = PICS_DIR / str(article)
     if dest_dir.exists():
         shutil.rmtree(dest_dir)
-        logger.info("Cleaned up photos for article %s", article)
+        logger.info("Фотографії для артикула %s видалено", article)
 
 
 def _guess_extension(url: str, content_type: str) -> str:
-    """Guess file extension from URL path or Content-Type header."""
+    """Визначити розширення файлу за шляхом URL або заголовком Content-Type."""
     suffix = PurePosixPath(url.split("?")[0]).suffix.lower()
     if suffix in (".jpg", ".jpeg", ".png", ".webp"):
         return suffix

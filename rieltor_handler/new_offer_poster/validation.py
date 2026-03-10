@@ -14,11 +14,11 @@ class RequiredFieldError(RuntimeError):
 
 
 class FormValidationError(RuntimeError):
-    """Raised when the form contains validation errors after save/validation."""
+    """Виникає, коли форма містить помилки валідації після збереження/перевірки."""
 
     def __init__(self, errors: List[dict]):
         self.errors = errors
-        msg = "Form validation errors: " + "; ".join(
+        msg = "Помилки валідації форми: " + "; ".join(
             [
                 f"{e.get('section', '')} | {e.get('field', '')}: {e.get('message', '')}"
                 for e in errors
@@ -72,7 +72,7 @@ class ValidationMixin:
         return False
 
     def _filled_value_text(self, ctrl: Locator) -> str:
-        """Return non-empty string if control looks filled, else ''."""
+        """Повертає непорожній рядок, якщо елемент керування заповнений, інакше ''."""
         # 1) MUI Select button
         try:
             cls = ctrl.get_attribute("class") or ""
@@ -158,14 +158,14 @@ class ValidationMixin:
                 errors.append(label_txt or "<unknown required field>")
 
         if errors:
-            logger.error("Required fields not filled: %s", errors)
+            logger.error("Обов'язкові поля не заповнені: %s", errors)
             raise RequiredFieldError(
-                "Не заполнены обязательные поля: " + ", ".join(errors)
+                "Не заповнені обов'язкові поля: " + ", ".join(errors)
             )
 
     # -------- report from page after save --------
     def collect_validation_report(self, root: Locator) -> List[dict]:
-        """Collect MUI validation errors into a structured report."""
+        """Збирає помилки валідації MUI у структурований звіт."""
         errors: List[dict] = []
 
         # 1) Helper-text errors

@@ -110,10 +110,10 @@ CONTEXTUAL_PATTERNS: Dict[str, List[tuple]] = {
 
 
 class DescriptionAnalyzer:
-    """Analyzes description text to extract additional field values.
+    """Аналізує текст опису для вилучення додаткових значень полів.
 
-    Uses schema field options, contextual regex patterns, and numeric
-    pattern matching to mine information from unstructured description text.
+    Використовує варіанти полів схеми, контекстуальні regex-патерни та пошук
+    числових значень для видобування інформації з неструктурованого тексту опису.
     """
 
     def __init__(self, schema: List[dict], debug: bool = False):
@@ -122,7 +122,7 @@ class DescriptionAnalyzer:
         self.label_to_field = self._create_label_mapping()
 
     def _create_label_mapping(self) -> Dict[str, dict]:
-        """Create reverse mapping from label_lower to field info."""
+        """Створити зворотний маппінг від label_lower до інформації поля."""
         mapping = {}
         for field in self.schema:
             label = field.get("label", "").lower().strip()
@@ -131,9 +131,9 @@ class DescriptionAnalyzer:
         return mapping
 
     def analyze(self, description: str, existing_data: dict) -> dict:
-        """Analyze description text and extract additional field values.
+        """Проаналізувати текст опису та вилучити додаткові значення полів.
 
-        Only extracts fields that are NOT already in existing_data.
+        Вилучає лише поля, яких ще НЕМАЄ в existing_data.
         """
         if not description:
             return {}
@@ -161,14 +161,14 @@ class DescriptionAnalyzer:
 
         if self.debug and extracted:
             logger.debug(
-                f"DescriptionAnalyzer extracted {len(extracted)} fields: {list(extracted.keys())}"
+                f"DescriptionAnalyzer вилучив {len(extracted)} полів: {list(extracted.keys())}"
             )
 
         return extracted
 
     @staticmethod
     def _option_in_text(option_lower: str, text: str) -> bool:
-        """Check if option appears as a whole word in text (not as a substring of another word)."""
+        """Перевірити, чи варіант зустрічається як ціле слово в тексті (не як підрядок іншого слова)."""
         escaped = re.escape(option_lower)
         # For purely numeric options (e.g. "1", "2"), require digit boundaries
         # to avoid matching inside larger numbers like "#27274"
@@ -191,16 +191,16 @@ class DescriptionAnalyzer:
     )
 
     def _match_field_options(self, text: str, existing_data: dict) -> dict:
-        """Match description text against field options.
+        """Зіставити текст опису з варіантами полів.
 
-        For fields with options (select, radio, checklist), check if any
-        option value appears in the description text.
+        Для полів з варіантами (select, radio, checklist) перевіряє, чи
+        зустрічається будь-який варіант у тексті опису.
 
-        Skips:
-        - Так/Ні-only fields: too many false positives from Ukrainian word "так"
-          used as a connective ("...так і для...").
-        - Numeric-only count fields (балкони, спальні): handled by dedicated
-          extractors that require explicit context (e.g. "балкон" nearby).
+        Пропускає:
+        - Поля лише з Так/Ні: забагато хибних спрацьовувань через українське "так"
+          як сполучник ("...так і для...").
+        - Лічильні поля з суто числовими варіантами (балкони, спальні): обробляються
+          спеціальними вилучувачами, що вимагають явного контексту (напр. "балкон" поряд).
         """
         extracted = {}
 
@@ -234,7 +234,7 @@ class DescriptionAnalyzer:
                     if self._option_in_text(option_lower, text):
                         extracted[key] = option
                         if self.debug:
-                            logger.debug(f"Matched {key}={option} in description")
+                            logger.debug(f"Знайдено збіг {key}={option} в описі")
                         break
 
             elif widget == "checklist":
@@ -247,15 +247,15 @@ class DescriptionAnalyzer:
                 if matched_options:
                     extracted[key] = matched_options
                     if self.debug:
-                        logger.debug(f"Matched {key}={matched_options} in description")
+                        logger.debug(f"Знайдено збіг {key}={matched_options} в описі")
 
         return extracted
 
     def _extract_by_context(self, text: str, existing_data: dict) -> dict:
-        """Extract values using contextual regex patterns.
+        """Вилучити значення за контекстуальними regex-патернами.
 
-        Matches patterns from CONTEXTUAL_PATTERNS against the text,
-        resolving pattern keys to actual schema labels.
+        Зіставляє патерни з CONTEXTUAL_PATTERNS з текстом,
+        перетворюючи ключі патернів на реальні мітки схеми.
         """
         extracted = {}
 
@@ -301,13 +301,13 @@ class DescriptionAnalyzer:
 
             if self.debug:
                 logger.debug(
-                    f"Context matched {schema_label}={extracted[schema_label]}"
+                    f"Контекстний збіг {schema_label}={extracted[schema_label]}"
                 )
 
         return extracted
 
     def _extract_numeric_fields(self, text: str, existing_data: dict) -> dict:
-        """Extract numeric field values (areas, floors, rooms, price, year, ceiling)."""
+        """Вилучити числові значення полів (площі, поверхи, кімнати, ціна, рік, стеля)."""
         extracted = {}
 
         # --- Areas ---
@@ -449,7 +449,7 @@ class DescriptionAnalyzer:
                     if 1800 <= year <= 2100:
                         extracted["Рік будівництва"] = str(year)
                         if self.debug:
-                            logger.debug(f"Extracted Рік будівництва={year}")
+                            logger.debug(f"Вилучено Рік будівництва={year}")
                         break
 
         # --- Bathroom count ---
@@ -551,13 +551,13 @@ class DescriptionAnalyzer:
                     height = match.group(1).replace(",", ".")
                     extracted["Висота стель"] = height
                     if self.debug:
-                        logger.debug(f"Extracted Висота стель={height}")
+                        logger.debug(f"Вилучено Висота стель={height}")
                     break
 
         return extracted
 
     def _extract_keyword_patterns(self, text: str, existing_data: dict) -> dict:
-        """Extract simple keyword-based boolean fields."""
+        """Вилучити прості булеві поля за ключовими словами."""
         extracted = {}
 
         if "Опалення" not in existing_data:

@@ -40,7 +40,7 @@ def init_logging(
     level=os.environ.get("LOG_LEVEL", "INFO"), filename: str | None = None
 ) -> Logger:
     """
-    Вызывай один раз в entrypoint. Повторный вызов безопасен.
+    Викликати один раз у точці входу. Повторний виклик безпечний.
     """
     base = logging.getLogger(APP_NAME)
     log_lvl = getattr(logging, str(level).upper(), logging.INFO)
@@ -114,8 +114,8 @@ def init_logging(
 
 def setup_logger(name=__name__) -> Logger:
     """
-    Используй везде: logger = setup_logger(__name__)
-    Не конфигурит handlers, только возвращает нужный логгер.
+    Використовуй скрізь: logger = setup_logger(__name__)
+    Не конфігурує handlers, лише повертає потрібний логер.
     """
     # Приводим к иерархии schema_collector.*
     if not name.startswith(APP_NAME):

@@ -1,7 +1,7 @@
-"""HTML Parser for Real Estate Objects.
+"""HTML-парсер об'єктів нерухомості.
 
-Parses saved HTML pages from CRM and extracts data into dict format
-compatible with DictOfferFormFiller.
+Парсить збережені HTML-сторінки з CRM та вилучає дані у форматі словника,
+сумісному з DictOfferFormFiller.
 """
 
 from __future__ import annotations
@@ -95,10 +95,10 @@ _INFRA_TO_NEARBY = {
 
 
 class HTMLOfferParser:
-    """Parse real estate object HTML and extract data for dict_filler.
+    """Розпарсити HTML об'єкта нерухомості та вилучити дані для dict_filler.
 
-    Auto-detects property type and deal type from the HTML, then loads
-    the matching schema from ``schemas/schema_dump/{sell|lease}/``.
+    Автоматично визначає тип нерухомості та тип угоди з HTML, потім завантажує
+    відповідну схему з ``schemas/schema_dump/{sell|lease}/``.
 
     Example:
         >>> parser = HTMLOfferParser("html/Об'єкт.html")
@@ -111,11 +111,11 @@ class HTMLOfferParser:
         html_content: str | Path,
         debug: bool = False,
     ):
-        """Initialize HTML parser.
+        """Ініціалізувати HTML-парсер.
 
         Args:
-            html_content: HTML string or path to HTML file.
-            debug: Enable debug logging.
+            html_content: HTML-рядок або шлях до HTML-файлу.
+            debug: Увімкнути debug-логування.
         """
         self.debug = debug
 
@@ -126,7 +126,7 @@ class HTMLOfferParser:
         if isinstance(html_content, (str, Path)):
             path = Path(html_content)
             if path.exists() and path.is_file():
-                logger.info(f"Loading HTML from file: {path}")
+                logger.info(f"Завантаження HTML з файлу: {path}")
                 with open(path, encoding="utf-8") as f:
                     html_str = f.read()
             else:
@@ -136,8 +136,8 @@ class HTMLOfferParser:
 
         self.full_soup = BeautifulSoup(html_str, "html.parser")
         logger.debug(
-            f"Parsed HTML, title: \
-                {self.full_soup.title.string if self.full_soup.title else 'No title'}"
+            f"HTML розпарсено, заголовок: \
+                {self.full_soup.title.string if self.full_soup.title else 'Без заголовку'}"
         )
 
         # Scope to .page-content to ignore navbars, footers, summary-tags, etc.
@@ -148,7 +148,7 @@ class HTMLOfferParser:
         self.deal_type = self._detect_deal_type()
         self.property_type = self._detect_property_type()
         logger.info(
-            f"Detected deal_type={self.deal_type}, property_type={self.property_type}"
+            f"Визначено deal_type={self.deal_type}, property_type={self.property_type}"
         )
 
         # Load schema based on detected types (uses centralized loader)
@@ -164,7 +164,7 @@ class HTMLOfferParser:
         self.analyzer = DescriptionAnalyzer(self.schema["fields"], debug=debug)
 
         logger.info(
-            f"Initialized parser: deal_type={self.deal_type}, "
+            f"Парсер ініціалізовано: deal_type={self.deal_type}, "
             f"property_type={self.property_type}, "
             f"fields={len(self.schema['fields'])}, required={len(self.required_fields)}"
         )
@@ -172,10 +172,10 @@ class HTMLOfferParser:
     # ==================== Auto-detection ====================
 
     def _read_characteristics_table(self) -> dict[str, str]:
-        """Read all label→value pairs from the first characteristics detail-view table.
+        """Зчитати всі пари мітка→значення з першої таблиці характеристик detail-view.
 
         Returns:
-            Dict mapping lowercase label → raw value text.
+            Словник з маппінгом lowercase мітка → необроблений текст значення.
         """
         pairs: dict[str, str] = {}
         for table in self.soup.select("table.detail-view"):
@@ -189,22 +189,22 @@ class HTMLOfferParser:
         return pairs
 
     def _detect_deal_type(self) -> str:
-        """Detect deal type (Продаж / Оренда) from HTML.
+        """Визначити тип угоди (Продаж / Оренда) з HTML.
 
-        Strategy:
-            1. Look for "Тип угоди" row in characteristics table.
-            2. Fallback: parse the summary title (e.g. "Продаж / Квартира / ...").
+        Стратегія:
+            1. Шукати рядок "Тип угоди" в таблиці характеристик.
+            2. Запасний варіант: парсити заголовок зведення (напр. "Продаж / Квартира / ...").
 
         Returns:
-            "Продаж" or "Оренда".
+            "Продаж" або "Оренда".
 
         Raises:
-            ValueError: If deal type cannot be determined.
+            ValueError: Якщо тип угоди не вдається визначити.
         """
         chars = self._read_characteristics_table()
         raw = chars.get("тип угоди", "").strip()
         if raw:
-            logger.debug(f"Detected deal_type from table: {raw}")
+            logger.debug(f"Тип угоди визначено з таблиці: {raw}")
             return raw
 
         # Fallback: summary title
@@ -222,19 +222,19 @@ class HTMLOfferParser:
         )
 
     def _detect_property_type(self) -> str:
-        """Detect property type and map it to the schema filename.
+        """Визначити тип нерухомості та зіставити з іменем файлу схеми.
 
-        Strategy:
-            1. Read "Категорія" from characteristics — if it maps via
-               CRM_CATEGORY_TO_SCHEMA, use that directly.
-            2. Otherwise read "Тип" and look it up in CRM_TYPE_TO_SCHEMA.
-            3. Fallback: parse the summary title for known type names.
+        Стратегія:
+            1. Зчитати "Категорія" з характеристик — якщо відображається через
+               CRM_CATEGORY_TO_SCHEMA, використати безпосередньо.
+            2. Інакше зчитати "Тип" та знайти в CRM_TYPE_TO_SCHEMA.
+            3. Запасний варіант: парсити заголовок зведення на відомі назви типів.
 
         Returns:
-            Schema filename stem (e.g. "Квартира", "Комерційна").
+            Ім'я файлу схеми без розширення (напр. "Квартира", "Комерційна").
 
         Raises:
-            ValueError: If type cannot be determined.
+            ValueError: Якщо тип не вдається визначити.
         """
         chars = self._read_characteristics_table()
 
@@ -242,14 +242,14 @@ class HTMLOfferParser:
         category = chars.get("категорія", "").lower().strip()
         if category in CRM_CATEGORY_TO_SCHEMA:
             result = CRM_CATEGORY_TO_SCHEMA[category]
-            logger.debug(f"Detected property_type from category '{category}': {result}")
+            logger.debug(f"Тип нерухомості визначено з категорії '{category}': {result}")
             return result
 
         # 2. Try "Тип" field
         crm_type = chars.get("тип", "").lower().strip()
         if crm_type in CRM_TYPE_TO_SCHEMA:
             result = CRM_TYPE_TO_SCHEMA[crm_type]
-            logger.debug(f"Detected property_type from type '{crm_type}': {result}")
+            logger.debug(f"Тип нерухомості визначено з типу '{crm_type}': {result}")
             return result
 
         # 3. Fallback: summary title
@@ -258,7 +258,7 @@ class HTMLOfferParser:
             title_lower = title_elem.get_text(strip=True).lower()
             for crm_name, schema_name in CRM_TYPE_TO_SCHEMA.items():
                 if crm_name in title_lower:
-                    logger.debug(f"Detected property_type from title: {schema_name}")
+                    logger.debug(f"Тип нерухомості визначено із заголовку: {schema_name}")
                     return schema_name
 
         raise ValueError(
@@ -270,25 +270,25 @@ class HTMLOfferParser:
     # ==================== Schema helpers ====================
 
     def _get_required_fields(self) -> list[dict]:
-        """Extract required fields from schema.
+        """Вилучити обов'язкові поля зі схеми.
 
         Returns:
-            List of required field definitions
+            Список визначень обов'язкових полів.
         """
         required = [f for f in self.schema["fields"] if f.get("required", False)]
-        logger.debug(f"Required fields: {[f['label'] for f in required]}")
+        logger.debug(f"Обов'язкові поля: {[f['label'] for f in required]}")
         return required
 
     def parse(self) -> dict:
-        """Parse HTML and return dict compatible with DictOfferFormFiller.
+        """Розпарсити HTML та повернути словник, сумісний з DictOfferFormFiller.
 
         Returns:
-            Dict with extracted offer data.
+            Словник з вилученими даними оголошення.
 
         Raises:
-            ValueError: If required fields are missing.
+            ValueError: Якщо відсутні обов'язкові поля.
         """
-        logger.info("Starting HTML parse")
+        logger.info("Починаємо парсинг HTML")
         result = {}
 
         # Detected types (set during __init__)
@@ -387,7 +387,7 @@ class HTMLOfferParser:
                 if key not in result and value is not None:
                     result[key] = value
                     if self.debug:
-                        logger.debug(f"Added from description analysis: {key}={value}")
+                        logger.debug(f"Додано з аналізу опису: {key}={value}")
 
         # Validate and fill defaults
         result = self._fill_missing_with_defaults(result)
@@ -402,18 +402,18 @@ class HTMLOfferParser:
                     missing_with_opts.append(f"{label} (options: {opts})")
                 else:
                     missing_with_opts.append(label)
-            logger.warning(f"Missing required fields: {missing_with_opts}")
+            logger.warning(f"Відсутні обов'язкові поля: {missing_with_opts}")
 
-        logger.info(f"Parse complete: extracted {len(result)} top-level fields")
+        logger.info(f"Парсинг завершено: вилучено {len(result)} полів верхнього рівня")
         return result
 
     # ==================== Field Extractors ====================
 
     def _extract_basic_info(self) -> dict:
-        """Extract price and currency from summary section.
+        """Вилучити ціну та валюту з розділу зведення.
 
         Returns:
-            Dict with schema label keys ("Ціна", "Валюта").
+            Словник з ключами схеми ("Ціна", "Валюта").
         """
         result = {}
 
@@ -425,23 +425,23 @@ class HTMLOfferParser:
                 result["Ціна"] = amount
             if currency:
                 result["Валюта"] = currency
-            logger.debug(f"Extracted price: {amount} {currency}")
+            logger.debug(f"Вилучено ціну: {amount} {currency}")
 
         return result
 
     def _extract_characteristics(self) -> dict:
-        """Extract data from characteristics tables.
+        """Вилучити дані з таблиць характеристик.
 
-        Skips labels already handled by dedicated methods (see ``_SKIP_LABELS``)
-        and address fields (handled by ``_extract_address``).
+        Пропускає мітки, що вже обробляються спеціальними методами (див. ``_SKIP_LABELS``)
+        та поля адреси (обробляються ``_extract_address``).
 
         Returns:
-            Dict with schema label keys (e.g. "Загальний стан", "Тип будинку").
+            Словник з ключами схеми (напр. "Загальний стан", "Тип будинку").
         """
         result = {}
 
         tables = self.soup.select("table.detail-view")
-        logger.debug(f"Found {len(tables)} characteristic tables")
+        logger.debug(f"Знайдено {len(tables)} таблиць характеристик")
 
         for table in tables:
             rows = table.select("tr")
@@ -487,19 +487,19 @@ class HTMLOfferParser:
                         if normalized_value is not None:
                             result[schema_label] = normalized_value
                             logger.debug(
-                                f"Extracted '{schema_label}'={normalized_value} \
-                                    from HTML label '{label_text}'"
+                                f"Вилучено '{schema_label}'={normalized_value} \
+                                    з HTML мітки '{label_text}'"
                             )
                     else:
-                        logger.debug(f"No schema match for label: '{label_text}'")
+                        logger.debug(f"Збігу в схемі для мітки не знайдено: '{label_text}'")
 
         return result
 
     def _extract_address(self) -> dict:
-        """Extract address data from address table section.
+        """Вилучити дані адреси з розділу адресної таблиці.
 
         Returns:
-            Dict with schema label keys ("Місто", "Район", "Вулиця", etc.)
+            Словник з ключами схеми ("Місто", "Район", "Вулиця" тощо).
         """
         address = {}
 
@@ -538,7 +538,7 @@ class HTMLOfferParser:
                             address[schema_label] = [value]
                         else:
                             address[schema_label] = value
-                        logger.debug(f"Extracted address.{schema_label}={value}")
+                        logger.debug(f"Вилучено address.{schema_label}={value}")
 
         # Fallback: try to extract house number from "Номер будинку" (CRM label)
         if "Будинок" not in address:
@@ -551,17 +551,17 @@ class HTMLOfferParser:
                         if "номер будинку" in lbl and val:
                             address["Будинок"] = val
                             logger.debug(
-                                f"Extracted address.Будинок={val} (from 'Номер будинку')"
+                                f"Вилучено address.Будинок={val} (з 'Номер будинку')"
                             )
                             break
 
         return address if address else {}
 
     def _extract_summary_stats(self) -> dict:
-        """Extract data from summary property values (fallback).
+        """Вилучити дані зі зведених значень властивостей (запасний варіант).
 
         Returns:
-            Dict with schema label keys ("Число кімнат", "Поверх", etc.)
+            Словник з ключами схеми ("Число кімнат", "Поверх" тощо).
         """
         result = {}
 
@@ -592,15 +592,15 @@ class HTMLOfferParser:
                 result["Житлова площа, м²"] = match.group(2)
                 result["Площа кухні, м²"] = match.group(3)
 
-            logger.debug(f"Extracted summary stats: {result}")
+            logger.debug(f"Вилучено зведені характеристики: {result}")
 
         return result
 
     def _extract_photos(self) -> dict:
-        """Extract photo URLs from gallery.
+        """Вилучити URL фотографій з галереї.
 
         Returns:
-            Dict with apartment.photos list
+            Словник зі списком apartment.photos.
         """
         photos = []
 
@@ -611,17 +611,17 @@ class HTMLOfferParser:
             if href:
                 photos.append(href)
 
-        logger.debug(f"Extracted {len(photos)} photos")
+        logger.debug(f"Вилучено {len(photos)} фотографій")
 
         if photos:
             return {"apartment": {"photos": photos}}
         return {}
 
     def _extract_description(self) -> str:
-        """Extract description from additional information section.
+        """Вилучити опис з розділу додаткової інформації.
 
         Returns:
-            Description text or empty string
+            Текст опису або порожній рядок.
         """
         # Look for "Додаткова інформація" section
         for elem in self.soup.find_all(["h3", "h4"]):
@@ -630,56 +630,56 @@ class HTMLOfferParser:
                 next_elem = elem.find_next("p")
                 if next_elem:
                     text = next_elem.get_text(strip=True)
-                    logger.debug(f"Extracted description: {len(text)} chars")
+                    logger.debug(f"Вилучено опис: {len(text)} символів")
                     return text
 
         return ""
 
     def _extract_estate_note(self) -> str:
-        """Extract estate note from .estate-note section.
+        """Вилучити нотатку об'єкта з розділу .estate-note.
 
         Returns:
-            Note text or empty string
+            Текст нотатки або порожній рядок.
         """
         note_elem = self.soup.select_one(".estate-note span")
         if note_elem:
             text = note_elem.get_text(strip=True)
-            logger.debug(f"Extracted estate note: {text}")
+            logger.debug(f"Вилучено нотатку об'єкта: {text}")
             return text
         return ""
 
     def _extract_article(self) -> str | None:
-        """Extract article number from .article-label element.
+        """Вилучити номер артикула з елемента .article-label.
 
         Returns:
-            Article number string (without '#') or None.
+            Рядок номера артикула (без '#') або None.
         """
         elem = self.soup.select_one(".article-label")
         if elem:
             text = elem.get_text(strip=True).lstrip("#")
-            logger.debug(f"Extracted article: {text}")
+            logger.debug(f"Вилучено артикул: {text}")
             return text
         return None
 
     def _extract_public_link(self) -> str | None:
-        """Extract public link from input#public-view.
+        """Вилучити публічне посилання з input#public-view.
 
         Returns:
-            Public URL string or None.
+            Рядок публічного URL або None.
         """
         inp = self.soup.select_one("input#public-view")
         if inp:
             value = inp.get("value", "").strip()
             if value:
-                logger.debug(f"Extracted public link: {value}")
+                logger.debug(f"Вилучено публічне посилання: {value}")
                 return value
         return None
 
     def _extract_responsible_person(self) -> dict[str, str] | None:
-        """Extract responsible person name and profile link from 'Службова інформація'.
+        """Вилучити ім'я та посилання профілю відповідального з 'Службова інформація'.
 
         Returns:
-            Dict with 'name' and 'profile_url' keys, or None.
+            Словник з ключами 'name' та 'profile_url', або None.
         """
         # Find the "Службова інформація" section
         for h3 in self.soup.find_all("h3", class_="item-relation-header"):
@@ -700,48 +700,48 @@ class HTMLOfferParser:
                         if link:
                             name = link.get_text(strip=True)
                             href = link.get("href", "")
-                            logger.debug(f"Extracted responsible: {name} ({href})")
+                            logger.debug(f"Вилучено відповідального: {name} ({href})")
                             return {"name": name, "profile_url": href}
                         else:
                             name = td.get_text(strip=True)
                             if name:
-                                logger.debug(f"Extracted responsible (no link): {name}")
+                                logger.debug(f"Вилучено відповідального (без посилання): {name}")
                                 return {"name": name, "profile_url": ""}
         return None
 
     def _extract_advertising(self) -> str | None:
-        """Extract advertising permission from characteristics table.
+        """Вилучити дозвіл на рекламу з таблиці характеристик.
 
-        Checks both the new CRM label "Закритий/відкритий продаж"
-        and the legacy label "Реклама".
+        Перевіряє як нову мітку CRM "Закритий/відкритий продаж",
+        так і застарілу мітку "Реклама".
 
         Returns:
-            Advertising text (e.g. "Відкритий продаж можна рекламувати") or None.
+            Текст реклами (напр. "Відкритий продаж можна рекламувати") або None.
         """
         chars = self._read_characteristics_table()
         value = chars.get("закритий/відкритий продаж") or chars.get("реклама")
         if value:
-            logger.debug(f"Extracted advertising: {value}")
+            logger.debug(f"Вилучено рекламу: {value}")
         return value
 
     def _extract_photo_download_link(self) -> str | None:
-        """Extract bulk photo download URL.
+        """Вилучити URL для масового завантаження фотографій.
 
         Returns:
-            Relative URL like "/estate/17637/download-all-watermark-images" or None.
+            Відносний URL вигляду "/estate/17637/download-all-watermark-images" або None.
         """
         link = self.soup.select_one('a[href*="download-all-watermark-images"]')
         if link:
             href = link.get("href")
-            logger.debug(f"Extracted photo download link: {href}")
+            logger.debug(f"Вилучено посилання для завантаження фото: {href}")
             return href
         return None
 
     def _extract_video_url(self) -> str | None:
-        """Extract video tour URL from characteristics table.
+        """Вилучити URL відеотуру з таблиці характеристик.
 
         Returns:
-            Video URL string or None.
+            Рядок URL відео або None.
         """
         for table in self.soup.select("table.detail-view"):
             for row in table.select("tr"):
@@ -753,20 +753,20 @@ class HTMLOfferParser:
                         if link:
                             href = link.get("href", "").strip()
                             if href:
-                                logger.debug(f"Extracted video URL: {href}")
+                                logger.debug(f"Вилучено URL відео: {href}")
                                 return href
                         # Fallback: plain text URL
                         text = cells[1].get_text(strip=True)
                         if text.startswith("http"):
-                            logger.debug(f"Extracted video URL (text): {text}")
+                            logger.debug(f"Вилучено URL відео (текст): {text}")
                             return text
         return None
 
     def _extract_infrastructure(self) -> list[str] | None:
-        """Extract nearby infrastructure and map to schema 'Поруч є' options.
+        """Вилучити навколишню інфраструктуру та зіставити з варіантами схеми 'Поруч є'.
 
         Returns:
-            List of matched schema option values, or None.
+            Список відповідних значень варіантів схеми або None.
         """
         infra_div = self.soup.select_one(".infrastructures.clearfix")
         if not infra_div:
@@ -803,21 +803,21 @@ class HTMLOfferParser:
                         break
 
         if matched:
-            logger.debug(f"Extracted infrastructure → Поруч є: {matched}")
+            logger.debug(f"Вилучено інфраструктуру → Поруч є: {matched}")
             return matched
         return None
 
     # ==================== Value Normalizers ====================
 
     def _normalize_value(self, field_info: dict, raw_value: str) -> Any:
-        """Normalize value based on field widget type.
+        """Нормалізувати значення відповідно до типу віджета поля.
 
         Args:
-            field_info: Field definition from schema
-            raw_value: Raw text value from HTML
+            field_info: Визначення поля зі схеми.
+            raw_value: Необроблений текст значення з HTML.
 
         Returns:
-            Normalized value appropriate for the field type
+            Нормалізоване значення, відповідне типу поля.
         """
         widget = field_info.get("widget", "")
         options = field_info.get("options", [])
@@ -847,14 +847,14 @@ class HTMLOfferParser:
         return raw_value
 
     def _normalize_select_option(self, text: str, options: list[str]) -> str:
-        """Fuzzy match text against schema options.
+        """Нечітке зіставлення тексту з варіантами схеми.
 
         Args:
-            text: Text to match
-            options: List of valid options from schema
+            text: Текст для зіставлення.
+            options: Список допустимих варіантів зі схеми.
 
         Returns:
-            Best matching option or original text
+            Найкращий відповідний варіант або вихідний текст.
         """
         text_lower = text.lower().strip()
 
@@ -889,14 +889,14 @@ class HTMLOfferParser:
         return text
 
     def _normalize_rooms(self, text: str, options: list[str]) -> str:
-        """Normalize room count to schema format.
+        """Нормалізувати кількість кімнат до формату схеми.
 
         Args:
-            text: Room count as text or number
-            options: Valid room options from schema
+            text: Кількість кімнат як текст або число.
+            options: Допустимі варіанти кімнат зі схеми.
 
         Returns:
-            Formatted room string (e.g., "1 кімната", "2 кімнати")
+            Відформатований рядок кімнат (напр. "1 кімната", "2 кімнати").
         """
         # Parse number
         try:
@@ -925,13 +925,13 @@ class HTMLOfferParser:
             return f"{num} кімнат"
 
     def _parse_price(self, text: str) -> tuple[int | None, str | None]:
-        """Parse price text to amount and currency.
+        """Розпарсити текст ціни на суму та валюту.
 
         Args:
-            text: Price text like "182 000 $" or "50000 грн"
+            text: Текст ціни вигляду "182 000 $" або "50000 грн".
 
         Returns:
-            Tuple of (amount, currency_text)
+            Кортеж (сума, текст_валюти).
         """
         # Remove spaces and find number
         text_clean = text.replace(" ", "").replace(",", "")
@@ -958,16 +958,16 @@ class HTMLOfferParser:
         return amount, currency
 
     def _look_up_field_by_html_label(self, html_label: str) -> dict | None:
-        """Look up field info by HTML table label (not schema label).
+        """Знайти інформацію поля за міткою HTML-таблиці (не міткою схеми).
 
-        Some HTML tables use different labels than the schema.
-        For example, HTML has "Ремонт" but schema has "Загальний стан".
+        Деякі HTML-таблиці використовують інші мітки, ніж схема.
+        Наприклад, HTML має "Ремонт", а схема — "Загальний стан".
 
         Args:
-            html_label: Label text from HTML
+            html_label: Текст мітки з HTML.
 
         Returns:
-            Field info dict or None
+            Словник інформації поля або None.
         """
         html_label_lower = html_label.lower().strip()
 
@@ -998,13 +998,13 @@ class HTMLOfferParser:
     # ==================== Validation ====================
 
     def _validate_required_fields(self, data: dict) -> list[str]:
-        """Validate that all required fields are present.
+        """Перевірити наявність усіх обов'язкових полів.
 
         Args:
-            data: Parsed offer data (keys are schema labels)
+            data: Розпарсені дані оголошення (ключі — мітки схеми).
 
         Returns:
-            List of missing required field labels
+            Список міток відсутніх обов'язкових полів.
         """
         missing = []
 
@@ -1030,13 +1030,13 @@ class HTMLOfferParser:
         return missing
 
     def _fill_missing_with_defaults(self, data: dict) -> dict:
-        """Fill missing fields with sensible defaults where possible.
+        """Заповнити відсутні поля розумними значеннями за замовчуванням там, де можливо.
 
         Args:
-            data: Parsed offer data (keys are schema labels)
+            data: Розпарсені дані оголошення (ключі — мітки схеми).
 
         Returns:
-            Data with defaults filled
+            Дані із заповненими значеннями за замовчуванням.
         """
         # Ensure address dict exists
         if "address" not in data:
@@ -1045,7 +1045,7 @@ class HTMLOfferParser:
         # Default currency if price exists but currency doesn't
         if "Ціна" in data and not data.get("Валюта"):
             data["Валюта"] = "доларів"
-            logger.debug("Defaulted Валюта to 'доларів'")
+            logger.debug("Валюта встановлена за замовчуванням: 'доларів'")
 
         # Fallback: living area ≈ total area - (1.4 × kitchen area)
         # The multiplier accounts for corridors, hallways, bathrooms, etc.
@@ -1058,7 +1058,7 @@ class HTMLOfferParser:
                     if living > 0:
                         data["Житлова площа, м²"] = str(living)
                         logger.debug(
-                            f"Calculated Житлова площа: {total} - 1.4*{kitchen} = {living}"
+                            f"Обчислено Житлова площа: {total} - 1.4*{kitchen} = {living}"
                         )
                 except (ValueError, TypeError):
                     pass

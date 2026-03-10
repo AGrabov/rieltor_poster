@@ -48,15 +48,15 @@ class DictOfferFormFiller(
     PhotosMixin,
     ValidationMixin,
 ):
-    """Dict-based offer form filler — schema-driven version.
+    """Заповнювач форми оголошення на основі словника — версія зі схемою.
 
-    Fill only the 'Нове оголошення' form on /offers/create using dict data.
-    All field metadata comes from JSON schemas in schemas/schema_dump/.
-    Assumes Page already exists and user is logged in.
+    Заповнює лише форму 'Нове оголошення' на /offers/create за допомогою словника даних.
+    Метадані полів беруться з JSON-схем у schemas/schema_dump/.
+    Передбачається, що сторінка вже відкрита і користувач авторизований.
 
-    Keys in offer_data are Ukrainian labels from the schema
-    (e.g. "Число кімнат", "Поверх") except for a few special keys
-    ("offer_type", "property_type", "address", photo block keys, etc.).
+    Ключі offer_data — українські підписи зі схеми
+    (напр. "Число кімнат", "Поверх"), крім декількох спеціальних ключів
+    ("offer_type", "property_type", "address", ключі фото-блоків тощо).
     """
 
     CREATE_URL = "https://my.rieltor.ua/offers/create"
@@ -91,14 +91,14 @@ class DictOfferFormFiller(
                 self._photo_block_sections[_PHOTO_BLOCK_KEY_ORDER[i]] = section_name
 
         logger.debug(
-            "Schema loaded: %d fields, photo blocks: %s",
+            "Схему завантажено: %d полів, фото-блоки: %s",
             len(self._schema["fields"]),
             self._photo_block_sections,
         )
 
     # ---------- public API ----------
     def open(self) -> None:
-        """Open the create offer page."""
+        """Відкриває сторінку створення оголошення."""
         self.page.goto(self.CREATE_URL, wait_until="domcontentloaded")
         # Wait for MUI to fully render (h6 sections + card buttons)
         try:
@@ -108,20 +108,20 @@ class DictOfferFormFiller(
             self.page.wait_for_timeout(1500)
         except Exception:
             pass
-        logger.info("Opened create-offer page")
+        logger.info("Сторінку створення оголошення відкрито")
 
     def create_offer_draft(self, offer_data: dict) -> None:
-        """Fill form using dict data — schema-driven version.
+        """Заповнює форму зі словника даних — версія зі схемою.
 
         Args:
-            offer_data: Dict with offer fields. Keys are Ukrainian labels
-                from the schema (e.g. "Число кімнат", "Ціна") plus special
-                keys ("offer_type", "property_type", "address", photo blocks).
+            offer_data: Словник з полями оголошення. Ключі — українські підписи
+                зі схеми (напр. "Число кімнат", "Ціна") та спеціальні ключі
+                ("offer_type", "property_type", "address", фото-блоки).
         """
         self.open()
         root = self._new_offer_root()
         self.last_saved_offer_id = offer_data.get("article")
-        logger.info("Start filling offer draft (dict-based, schema-driven)")
+        logger.info("Початок заповнення чернетки оголошення (на основі словника та схеми)")
 
         state = {
             "address_filled": False,
@@ -176,7 +176,7 @@ class DictOfferFormFiller(
             label_lower = key.lower().strip()
             field_info = self._schema["label_to_field"].get(label_lower)
             if not field_info:
-                logger.debug("Key '%s' not in schema, skipping", key)
+                logger.debug("Ключ '%s' відсутній у схемі, пропуск", key)
                 continue
 
             section = self._schema["label_to_section"].get(label_lower, "")
@@ -218,13 +218,13 @@ class DictOfferFormFiller(
         except Exception:
             time.sleep(2)
 
-        logger.info("Offer draft filled (dict-based, schema-driven)")
+        logger.info("Чернетку оголошення заповнено (на основі словника та схеми)")
 
     def _is_additional_param(self, field_info: dict) -> bool:
-        """Check if a field belongs to the 'Додаткові параметри' collapsible section.
+        """Перевіряє, чи належить поле до згортної секції 'Додаткові параметри'.
 
-        These are fields in 'Інформація про об'єкт' that appear after the toggle
-        in the form (field_index >= 16 typically: Опалення, Гаряча вода, etc.).
+        Це поля в 'Інформація про об'єкт', що з'являються після перемикача
+        у формі (зазвичай field_index >= 16: Опалення, Гаряча вода тощо).
         """
         if field_info.get("section") != "Інформація про об'єкт":
             return False
@@ -252,7 +252,7 @@ class DictOfferFormFiller(
         value: Any,
         widget: str | None,
     ) -> None:
-        """Fill single field using widget-specific handler."""
+        """Заповнює одне поле за допомогою обробника, специфічного для типу віджету."""
         if widget == "box_select":
             self._click_box_button_in_section(
                 root, section, self._to_text(value).lower()
@@ -306,16 +306,16 @@ class DictOfferFormFiller(
     # ── Address ──
 
     def _fill_address_from_dict(self, root: Locator, address_data: dict) -> None:
-        """Fill address section from dict with Ukrainian label keys.
+        """Заповнює секцію адреси зі словника з українськими ключами-підписами.
 
         Args:
-            address_data: Dict like {"Місто": "Київ", "Новобудова": "ЖК Панорама",
+            address_data: Словник на зразок {"Місто": "Київ", "Новобудова": "ЖК Панорама",
                            "Район": "...", "Будинок": "1", "Метро": [...]}
         """
         sec = self._section(root, "Адреса об'єкта")
 
         if not address_data:
-            logger.warning("Address data is empty, skip")
+            logger.warning("Дані адреси порожні, пропуск")
             return
 
         # Helper to get value by Ukrainian label (case-insensitive)
@@ -348,7 +348,7 @@ class DictOfferFormFiller(
             condo = cc
 
         logger.info(
-            "Fill address: city=%s, condo=%s, district=%s, street=%s, house=%s",
+            "Заповнення адреси: місто=%s, ЖК=%s, район=%s, вулиця=%s, будинок=%s",
             city,
             condo,
             district,
@@ -407,9 +407,9 @@ class DictOfferFormFiller(
             self._fill_autocomplete_multi(sec, "Орієнтир", [str(v) for v in items])
 
     def _handle_map_error(self, root: Locator, address_data: dict) -> None:
-        """Handle map pin error — try to snap pin by reselecting house number."""
+        """Обробляє помилку піна карти — спроба прив'язати пін повторним вибором номера будинку."""
         logger.warning(
-            "Map pin error is visible — trying to snap pin by reselecting house number"
+            "Видно помилку піна карти — спроба прив'язки через повторний вибір номера будинку"
         )
 
         if not address_data:
@@ -432,16 +432,16 @@ class DictOfferFormFiller(
             pass
 
         if self._map_error_visible():
-            logger.error("Map pin error still visible — refilling address")
+            logger.error("Помилка піна карти досі видна — повторне заповнення адреси")
             self._fill_address_from_dict(root, address_data)
 
     # ── Personal notes ──
 
     def _fill_personal_notes(self, root: Locator, text: str) -> None:
-        """Fill the personal notes textarea.
+        """Заповнює textarea особистих нотаток.
 
-        The notes textarea has no <label>, so we find it by locating
-        the section via h6 and then the textarea inside it.
+        Textarea нотаток не має <label>, тому знаходимо її через секцію h6
+        і вже всередині неї шукаємо textarea.
         """
         text = (text or "").strip()
         if not text:
@@ -450,7 +450,7 @@ class DictOfferFormFiller(
         try:
             sec = self._section(root, "Особисті нотатки")
         except Exception:
-            logger.warning("Cannot find 'Особисті нотатки' section")
+            logger.warning("Не вдалось знайти секцію 'Особисті нотатки'")
             return
 
         textarea = sec.locator("css=textarea:not([aria-hidden='true'])").first
@@ -458,7 +458,7 @@ class DictOfferFormFiller(
             textarea = sec.locator("css=textarea").first
 
         if textarea.count() == 0:
-            logger.warning("Notes textarea not found in 'Особисті нотатки'")
+            logger.warning("Textarea нотаток не знайдено в секції 'Особисті нотатки'")
             return
 
         try:
@@ -467,10 +467,10 @@ class DictOfferFormFiller(
             cur = ""
 
         if cur == text:
-            logger.info("Notes skip: already filled")
+            logger.info("Нотатки пропущено: вже заповнено")
             return
 
-        logger.info("Fill personal notes (%d chars)", len(text))
+        logger.info("Заповнення особистих нотаток (%d симв.)", len(text))
         try:
             textarea.click()
             textarea.fill(text)
@@ -480,7 +480,7 @@ class DictOfferFormFiller(
                 textarea.press("Backspace")
                 textarea.type(text, delay=10)
             except Exception:
-                logger.exception("Failed to fill personal notes")
+                logger.exception("Не вдалось заповнити особисті нотатки")
                 return
 
         self._mark_touched(textarea)
@@ -488,10 +488,10 @@ class DictOfferFormFiller(
     # ── Commission radio ──
 
     def _set_commission_no(self, root: Locator, label: str) -> None:
-        """Set commission radio to 'Немає' by directly clicking the radio label.
+        """Встановлює радіокнопку комісії у 'Немає' прямим кліком по label.
 
-        DOM structure: the label text lives in a <p> sibling to the
-        MuiFormControl-root, both wrapped in a MuiBox-root container:
+        Структура DOM: текст label знаходиться у <p>, що є сусідом
+        MuiFormControl-root, обидва загорнуті у MuiBox-root:
             MuiBox-root
               ├── <p>Комісія з покупця/орендатора</p>
               └── MuiBox-root
@@ -502,7 +502,7 @@ class DictOfferFormFiller(
             sec = self._section(root, "Основні параметри")
         except Exception:
             logger.warning(
-                "Cannot find 'Основні параметри' section for commission radio"
+                "Не вдалось знайти секцію 'Основні параметри' для радіокнопки комісії"
             )
             return
 
@@ -515,7 +515,7 @@ class DictOfferFormFiller(
         ).first
 
         if wrapper.count() == 0:
-            logger.warning("Commission radio wrapper not found for '%s'", label)
+            logger.warning("Обгортку радіокнопки комісії не знайдено для '%s'", label)
             return
 
         nemaye = wrapper.locator(
@@ -523,19 +523,19 @@ class DictOfferFormFiller(
         ).first
         if nemaye.count():
             nemaye.click()
-            logger.info("Set '%s' to 'Немає' (no commission data provided)", label)
+            logger.info("Встановлено '%s' у 'Немає' (дані комісії не надано)", label)
         else:
             logger.warning(
-                "'Немає' option not found in commission radio for '%s'", label
+                "Опція 'Немає' не знайдена у радіокнопці комісії для '%s'", label
             )
 
     # ── Photos ──
 
     def _fill_photos_from_dict(self, root: Locator, offer_data: dict) -> None:
-        """Fill photo blocks that have data.
+        """Заповнює фото-блоки, що мають дані.
 
-        Photo block keys ("apartment", "interior", etc.) are mapped to
-        section titles from schema navigation ("Блок 1 з 5: Про квартиру", etc.).
+        Ключі фото-блоків ("apartment", "interior" тощо) відповідають
+        заголовкам секцій зі схеми навігації ("Блок 1 з 5: Про квартиру" тощо).
         """
         for key, section_title in self._photo_block_sections.items():
             photo_block = offer_data.get(key)
@@ -560,7 +560,7 @@ class DictOfferFormFiller(
                 self._fill_text_in_photo_section(sec, _LABEL_VIDEO_URL, video)
             elif video and key != "apartment":
                 logger.debug(
-                    "PhotoBlock '%s': video_url set, but UI only has it in first block — skipping",
+                    "PhotoBlock '%s': video_url задано, але UI підтримує його лише у першому блоці — пропуск",
                     key,
                 )
 
@@ -570,10 +570,10 @@ class DictOfferFormFiller(
     # ── Checklists ──
 
     def _checklist_items(self, key: str, value: Any) -> List[str]:
-        """Convert checklist value to UI labels.
+        """Перетворює значення чекліста на UI-підписи.
 
-        In the new schema-driven format, checklist values in offer_data are
-        already the Ukrainian UI label texts (from schema field options).
+        У новому форматі зі схемою значення чеклістів у offer_data вже є
+        українськими UI-підписами (з опцій полів схеми).
         """
         if isinstance(value, (list, tuple, set)):
             return [str(v) for v in value if str(v).strip()]
@@ -587,10 +587,10 @@ class DictOfferFormFiller(
         publish_immediately: bool,
         raise_on_errors: bool = False,
     ) -> List[dict]:
-        """Common submit: save draft or publish."""
+        """Спільна логіка відправки: збереження чернетки або публікація."""
         action = "publish" if publish_immediately else "save"
         btn_text = "Опублікувати" if publish_immediately else "Зберегти чернетку"
-        logger.info("Click %s", action)
+        logger.info("Натискання кнопки %s", action)
 
         btn = self.page.locator(f"button:has-text('{btn_text}')").first
         btn.wait_for(state="visible", timeout=15_000)
@@ -598,7 +598,7 @@ class DictOfferFormFiller(
         if publish_immediately:
             try:
                 if btn.is_disabled():
-                    logger.warning("Publish button is disabled")
+                    logger.warning("Кнопка публікації неактивна")
                     root = self._new_offer_root()
                     report = self.collect_validation_report(root)
                     if report and raise_on_errors:
@@ -630,7 +630,7 @@ class DictOfferFormFiller(
             try:
                 btn.click(force=True)
             except Exception:
-                logger.warning("Failed to click '%s' button", btn_text)
+                logger.warning("Не вдалось натиснути кнопку '%s'", btn_text)
 
         # Quick check: if NEW validation errors appear, no API call was made
         try:
@@ -647,10 +647,10 @@ class DictOfferFormFiller(
             not in pre_errors
         ]
         if new_errors:
-            logger.warning("Client-side validation errors after %s:", action)
+            logger.warning("Помилки валідації на стороні клієнта після %s:", action)
             for err in new_errors:
                 logger.error(
-                    "  Validation error: [%s] %s — %s",
+                    "  Помилка валідації: [%s] %s — %s",
                     err.get("section", ""),
                     err.get("field", ""),
                     err.get("message", ""),
@@ -683,7 +683,7 @@ class DictOfferFormFiller(
             pass
 
         if "/offers/management" in (self.page.url or ""):
-            logger.info("Redirected to offers management: %s", self.page.url)
+            logger.info("Перенаправлено до управління оголошеннями: %s", self.page.url)
             return []
 
         # Still on the form — check for server-side validation errors
@@ -695,7 +695,7 @@ class DictOfferFormFiller(
         root = self._new_offer_root()
         report = self.collect_validation_report(root)
         if report:
-            logger.warning("Validation errors after %s:", action)
+            logger.warning("Помилки валідації після %s:", action)
             for err in report:
                 logger.error(
                     "  [%s] %s — %s",
@@ -707,7 +707,7 @@ class DictOfferFormFiller(
                 raise FormValidationError(report)
         else:
             logger.warning(
-                "%s finished without redirect and without visible validation errors",
+                "%s завершено без перенаправлення та без видимих помилок валідації",
                 action,
             )
 
@@ -736,7 +736,7 @@ class DictOfferFormFiller(
     def _upload_file_in_section(
         self, root: Locator, section: str, key: str, value: Any
     ) -> None:
-        """Upload file(s) in a section."""
+        """Завантажує файл(и) у секції."""
         files: List[str] = []
         if isinstance(value, str):
             if value.strip():
@@ -758,12 +758,12 @@ class DictOfferFormFiller(
         )
 
         if inp.count() == 0:
-            logger.warning("File input not found for %s/%s", section, key)
+            logger.warning("Поле завантаження файлу не знайдено для %s/%s", section, key)
             return
 
         try:
-            logger.info("Upload %s/%s: %d file(s)", section, key, len(files))
+            logger.info("Завантаження %s/%s: %d файл(ів)", section, key, len(files))
             inp.set_input_files(files)
             self._mark_touched(inp)
         except Exception:
-            logger.exception("Failed uploading files for %s/%s", section, key)
+            logger.exception("Помилка завантаження файлів для %s/%s", section, key)

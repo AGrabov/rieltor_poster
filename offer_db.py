@@ -1,6 +1,6 @@
-"""SQLite database for tracking offer processing status.
+"""SQLite база даних для відстеження стану обробки оголошень.
 
-Stores parsed offer data from CRM and tracks posting status to Rieltor.
+Зберігає розпарсені дані оголошень з CRM та відстежує статус публікації на Rieltor.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ DB_PATH = Path(__file__).parent / "offers.db"
 
 @dataclass
 class OfferRecord:
-    """Single offer row from the database."""
+    """Один запис оголошення з бази даних."""
 
     id: int
     estate_id: int
@@ -54,7 +54,7 @@ def _row_to_record(row: sqlite3.Row) -> OfferRecord:
 
 
 class OfferDB:
-    """Thin wrapper around SQLite for offer tracking."""
+    """Тонка обгортка навколо SQLite для відстеження оголошень."""
 
     def __init__(self, db_path: Path = DB_PATH) -> None:
         self.db_path = db_path
@@ -65,13 +65,13 @@ class OfferDB:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self._create_tables()
-        logger.debug("Opened DB: %s", self.db_path)
+        logger.debug("Відкрито БД: %s", self.db_path)
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
         if self.conn:
             self.conn.close()
-            logger.debug("Closed DB")
+            logger.debug("БД закрито")
 
     def _create_tables(self) -> None:
         self.conn.execute("""
@@ -109,7 +109,7 @@ class OfferDB:
         title: Optional[str] = None,
         status: str = "new",
     ) -> Optional[int]:
-        """Insert a new offer. Returns rowid, or None if estate_id already exists."""
+        """Вставити нове оголошення. Повертає rowid або None, якщо estate_id вже існує."""
         try:
             cur = self.conn.execute(
                 """INSERT OR IGNORE INTO offers
@@ -128,10 +128,10 @@ class OfferDB:
             self.conn.commit()
             if cur.rowcount == 0:
                 return None
-            logger.debug("Inserted offer estate_id=%d status=%s", estate_id, status)
+            logger.debug("Вставлено оголошення estate_id=%d status=%s", estate_id, status)
             return cur.lastrowid
         except Exception:
-            logger.exception("Failed to insert offer estate_id=%d", estate_id)
+            logger.exception("Помилка вставки оголошення estate_id=%d", estate_id)
             return None
 
     def get_unprocessed(
@@ -140,7 +140,7 @@ class OfferDB:
         property_type: Optional[str] = None,
         max_count: Optional[int] = None,
     ) -> List[OfferRecord]:
-        """Return offers with status='new', with optional filters."""
+        """Повернути оголошення зі статусом 'new', з необов'язковими фільтрами."""
         query = "SELECT * FROM offers WHERE status = 'new'"
         params: list = []
 
@@ -171,7 +171,7 @@ class OfferDB:
         )
         self.conn.commit()
         logger.info(
-            "Marked estate %d as posted (rieltor_id=%s)", estate_id, rieltor_offer_id
+            "Об'єкт %d позначено як опублікований (rieltor_id=%s)", estate_id, rieltor_offer_id
         )
 
     def mark_failed(self, estate_id: int, errors: Any) -> None:
@@ -183,7 +183,7 @@ class OfferDB:
             (json.dumps(errors, ensure_ascii=False, default=str), estate_id),
         )
         self.conn.commit()
-        logger.warning("Marked estate %d as failed", estate_id)
+        logger.warning("Об'єкт %d позначено як помилковий", estate_id)
 
     def mark_skipped(self, estate_id: int, reason: str) -> None:
         self.conn.execute(
@@ -194,7 +194,7 @@ class OfferDB:
             (json.dumps({"reason": reason}, ensure_ascii=False), estate_id),
         )
         self.conn.commit()
-        logger.info("Marked estate %d as skipped: %s", estate_id, reason)
+        logger.info("Об'єкт %d позначено як пропущений: %s", estate_id, reason)
 
     def summary(self) -> Dict[str, int]:
         rows = self.conn.execute(

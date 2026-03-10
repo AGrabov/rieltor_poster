@@ -1,17 +1,17 @@
-"""Main orchestration script for Rieltor offer automation.
+"""Головний скрипт оркестрації автоматизації оголошень Rieltor.
 
-Two-phase pipeline:
-  Phase 1 (collect):  CRM → parse estates → download photos → save to SQLite
-  Phase 2 (post):     SQLite → create drafts/publish on Rieltor
+Двофазний конвеєр:
+  Фаза 1 (collect):  CRM → парсинг об'єктів → завантаження фото → збереження в SQLite
+  Фаза 2 (post):     SQLite → створення чернеток/публікація на Rieltor
 
-Usage:
-  python main.py                                    # collect + post (draft)
-  python main.py collect                            # only Phase 1
+Використання:
+  python main.py                                    # collect + post (чернетка)
+  python main.py collect                            # тільки Фаза 1
   python main.py collect --max-pages 1 --max-count 3
-  python main.py post                               # only Phase 2 (draft)
-  python main.py post --publish                     # Phase 2 with publish
+  python main.py post                               # тільки Фаза 2 (чернетка)
+  python main.py post --publish                     # Фаза 2 з публікацією
   python main.py post --deal-type sell --max-count 5
-  python main.py post-one offer.json                # post single offer from JSON
+  python main.py post-one offer.json                # публікація одного оголошення з JSON
   python main.py post-one '{"Ціна": "100000", ...}'
 """
 
@@ -65,10 +65,10 @@ def phase1_collect(
     headless: bool = True,
     debug: bool = False,
 ) -> int:
-    """Collect estates from CRM, parse, download photos, save to DB.
+    """Зібрати об'єкти з CRM, розпарсити, завантажити фото, зберегти в БД.
 
     Returns:
-        Number of new offers saved.
+        Кількість нових оголошень збережених у БД.
     """
     from crm_data_parser import (
         CrmCredentials,
@@ -82,7 +82,7 @@ def phase1_collect(
     crm_email = os.environ.get("CRM_EMAIL", "").strip()
     crm_password = os.environ.get("CRM_PASSWORD", "").strip()
     if not crm_email or not crm_password:
-        logger.error("CRM_EMAIL and CRM_PASSWORD must be set in .env")
+        logger.error("CRM_EMAIL та CRM_PASSWORD повинні бути задані в .env")
         return 0
 
     crm_creds = CrmCredentials(email=crm_email, password=crm_password)
@@ -101,7 +101,7 @@ def phase1_collect(
         )
 
         items = collector.collect_advertisable(max_pages=max_pages)
-        logger.info("Collected %d advertisable estates from CRM", len(items))
+        logger.info("Зібрано %d рекламованих об'єктів з CRM", len(items))
 
         # Apply filters
         if deal_type:
@@ -113,7 +113,7 @@ def phase1_collect(
                     if i.deal_type and i.deal_type.lower() == normalized.lower()
                 ]
                 logger.info(
-                    "Filtered by deal_type=%s: %d items", normalized, len(items)
+                    "Відфільтровано за deal_type=%s: %d елементів", normalized, len(items)
                 )
 
         if property_type:
@@ -123,17 +123,17 @@ def phase1_collect(
                 if i.property_type and i.property_type.lower() == property_type.lower()
             ]
             logger.info(
-                "Filtered by property_type=%s: %d items", property_type, len(items)
+                "Відфільтровано за property_type=%s: %d елементів", property_type, len(items)
             )
 
         if max_count:
             items = items[:max_count]
-            logger.info("Limited to %d items", len(items))
+            logger.info("Обмежено до %d елементів", len(items))
 
         for idx, item in enumerate(items, 1):
             if db.estate_exists(item.estate_id):
                 logger.info(
-                    "[%d/%d] Estate %d already in DB, skipping",
+                    "[%d/%d] Об'єкт %d вже є в БД, пропускаємо",
                     idx,
                     len(items),
                     item.estate_id,
@@ -152,7 +152,7 @@ def phase1_collect(
                         status="skipped",
                     )
                     logger.warning(
-                        "[%d/%d] Estate %d closed, skipped",
+                        "[%d/%d] Об'єкт %d закрито, пропущено",
                         idx,
                         len(items),
                         item.estate_id,
@@ -184,7 +184,7 @@ def phase1_collect(
                 )
                 saved += 1
                 logger.info(
-                    "[%d/%d] Saved estate %d (article=%s)",
+                    "[%d/%d] Збережено об'єкт %d (article=%s)",
                     idx,
                     len(items),
                     item.estate_id,
@@ -193,7 +193,7 @@ def phase1_collect(
 
             except Exception:
                 logger.exception(
-                    "[%d/%d] Failed to process estate %d",
+                    "[%d/%d] Помилка обробки об'єкта %d",
                     idx,
                     len(items),
                     item.estate_id,
@@ -207,7 +207,7 @@ def phase1_collect(
                     status="failed",
                 )
 
-    logger.info("Phase 1 complete: %d new offers saved to DB", saved)
+    logger.info("Фаза 1 завершена: %d нових оголошень збережено в БД", saved)
     return saved
 
 
@@ -222,10 +222,10 @@ def phase2_post(
     headless: bool = True,
     debug: bool = False,
 ) -> int:
-    """Post unprocessed offers from DB to Rieltor.
+    """Опублікувати необроблені оголошення з БД на Rieltor.
 
     Returns:
-        Number of successfully posted offers.
+        Кількість успішно опублікованих оголошень.
     """
     from crm_data_parser import cleanup_photos
     from offer_db import OfferDB
@@ -239,7 +239,7 @@ def phase2_post(
     phone = os.environ.get("PHONE", "").strip()
     password = os.environ.get("PASSWORD", "").strip()
     if not phone or not password:
-        logger.error("PHONE and PASSWORD must be set in .env")
+        logger.error("PHONE та PASSWORD повинні бути задані в .env")
         return 0
 
     # Normalize deal_type filter for DB query
@@ -254,10 +254,10 @@ def phase2_post(
             max_count=max_count,
         )
         if not offers:
-            logger.info("No unprocessed offers in DB")
+            logger.info("Необроблених оголошень у БД не знайдено")
             return 0
 
-        logger.info("Found %d unprocessed offers to post", len(offers))
+        logger.info("Знайдено %d необроблених оголошень для публікації", len(offers))
 
         with RieltorOfferPoster(
             phone=phone,
@@ -274,7 +274,7 @@ def phase2_post(
                     dt = offer_data.get("offer_type", "Продаж")
 
                     logger.info(
-                        "[%d/%d] Posting estate %d (article=%s, %s/%s)...",
+                        "[%d/%d] Публікація об'єкта %d (article=%s, %s/%s)...",
                         idx,
                         len(offers),
                         offer.estate_id,
@@ -304,7 +304,7 @@ def phase2_post(
 
                     if report:
                         logger.warning(
-                            "Estate %d posted with validation issues: %s",
+                            "Об'єкт %d опубліковано з помилками валідації: %s",
                             offer.estate_id,
                             report,
                         )
@@ -319,23 +319,23 @@ def phase2_post(
 
                 except FormValidationError as e:
                     logger.error(
-                        "Validation error for estate %d: %s", offer.estate_id, e
+                        "Помилка валідації для об'єкта %d: %s", offer.estate_id, e
                     )
                     db.mark_failed(offer.estate_id, e.errors)
 
                 except RieltorErrorPageException as e:
                     logger.error(
-                        "Rieltor error page for estate %d: %s", offer.estate_id, e
+                        "Сторінка помилки Rieltor для об'єкта %d: %s", offer.estate_id, e
                     )
                     db.mark_failed(offer.estate_id, [{"error": str(e)}])
 
                 except Exception:
                     logger.exception(
-                        "Unexpected error posting estate %d", offer.estate_id
+                        "Непередбачена помилка при публікації об'єкта %d", offer.estate_id
                     )
                     db.mark_failed(offer.estate_id, [{"error": "unexpected error"}])
 
-    logger.info("Phase 2 complete: %d offers posted", posted)
+    logger.info("Фаза 2 завершена: %d оголошень опубліковано", posted)
     return posted
 
 
@@ -348,16 +348,16 @@ def post_single_offer(
     headless: bool = True,
     debug: bool = False,
 ) -> None:
-    """Post a single offer from a JSON string or file path.
+    """Опублікувати одне оголошення з JSON-рядка або файлу.
 
-    Does NOT use the database — meant for testing and manual posting.
+    Не використовує базу даних — призначено для тестування та ручної публікації.
     """
     from rieltor_handler import RieltorOfferPoster
 
     # Parse offer_data from string or file
     source_path = Path(offer_source)
     if source_path.exists() and source_path.is_file():
-        logger.info("Loading offer data from file: %s", source_path)
+        logger.info("Завантаження даних оголошення з файлу: %s", source_path)
         offer_data = json.loads(source_path.read_text(encoding="utf-8"))
     else:
         offer_data = json.loads(offer_source)
@@ -368,7 +368,7 @@ def post_single_offer(
     phone = os.environ.get("PHONE", "").strip()
     password = os.environ.get("PASSWORD", "").strip()
     if not phone or not password:
-        logger.error("PHONE and PASSWORD must be set in .env")
+        logger.error("PHONE та PASSWORD повинні бути задані в .env")
         return
 
     with RieltorOfferPoster(
@@ -389,8 +389,8 @@ def post_single_offer(
 
         rieltor_id = poster.last_saved_offer_id
         if report:
-            logger.warning("Posted with validation issues: %s", report)
-        logger.info("Offer posted, rieltor_id=%s", rieltor_id)
+            logger.warning("Опубліковано з помилками валідації: %s", report)
+        logger.info("Оголошення опубліковано, rieltor_id=%s", rieltor_id)
 
 
 # ── CLI ──────────────────────────────────────────────────────────────
@@ -442,7 +442,7 @@ def main() -> None:
 
     headless = not args.no_headless
 
-    logger.info("=== Rieltor Automation Started ===")
+    logger.info("=== Автоматизацію Rieltor запущено ===")
 
     try:
         if args.command == "collect":
@@ -484,16 +484,16 @@ def main() -> None:
         with OfferDB() as db:
             summary = db.summary()
         if summary:
-            logger.info("=== DB Summary: %s ===", summary)
+            logger.info("=== Зведення БД: %s ===", summary)
 
     except KeyboardInterrupt:
-        logger.info("Interrupted by user")
+        logger.info("Перервано користувачем")
         sys.exit(1)
     except Exception:
-        logger.exception("Fatal error")
+        logger.exception("Критична помилка")
         sys.exit(1)
 
-    logger.info("=== Done ===")
+    logger.info("=== Завершено ===")
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ logger = setup_logger(__name__)
 
 
 class RieltorErrorPageException(Exception):
-    """Raised when the site displays an error page."""
+    """Виникає, коли сайт повертає сторінку з помилкою."""
 
     pass
 
@@ -29,14 +29,14 @@ class RieltorCredentials:
 
 
 class RieltorSession:
-    """Playwright session wrapper.
+    """Обгортка над Playwright-сесією.
 
-    Responsibilities:
-      - start/stop Playwright
-      - create browser/context/page
-      - login
+    Відповідальності:
+      - запуск/зупинка Playwright
+      - створення browser/context/page
+      - авторизація
 
-    This keeps the form-filling code isolated in a separate class.
+    Утримує код заповнення форм ізольованим в окремому класі.
     """
 
     LOGIN_URL = "https://my.rieltor.ua/login"
@@ -71,15 +71,15 @@ class RieltorSession:
         self._context = self._browser.new_context()
         self.page = self._context.new_page()
         self.page.set_default_timeout(self.default_timeout_ms)
-        logger.debug("Playwright started")
+        logger.debug("Playwright запущено")
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
         if self.debug:
-            logger.debug("Saving page html...")
+            logger.debug("Збереження HTML сторінки...")
             with open("offer_page.html", "w", encoding="utf-8") as f:
                 f.write(self.page.content())
-            logger.info("Page html saved to offer_page.html")
+            logger.info("HTML сторінки збережено у offer_page.html")
         try:
             if self._context:
                 self._context.close()
@@ -90,22 +90,22 @@ class RieltorSession:
             finally:
                 if self._p:
                     self._p.stop()
-        logger.debug("Playwright stopped")
+        logger.debug("Playwright зупинено")
 
     def close_popup(self) -> None:
         # Ждём появления диалога
         self.page.wait_for_selector('div[role="dialog"]')
-        logger.debug("Popup opened")
+        logger.debug("Спливаюче вікно відкрито")
 
         # Кликаем по svg-крестику внутри диалога
         self.page.click('div[role="dialog"] svg.MuiSvgIcon-root')
 
         # Проверяем, что диалог закрылся
         self.page.wait_for_selector('div[role="dialog"]', state="detached")
-        logger.info("Popup successfully closed")
+        logger.info("Спливаюче вікно успішно закрито")
 
     def is_error_page(self) -> bool:
-        """Check if the current page is a rieltor.ua error page."""
+        """Перевіряє, чи поточна сторінка є сторінкою помилки rieltor.ua."""
         if not self.page:
             return False
         # Check for error page indicators: "Щось пішло не так" text or 404 bot image
@@ -114,24 +114,24 @@ class RieltorSession:
         return error_text.count() > 0 or error_bot.count() > 0
 
     def check_for_error_page(self, raise_exception: bool = True) -> bool:
-        """Check if current page is an error page and optionally raise an exception.
+        """Перевіряє, чи поточна сторінка є сторінкою помилки, і за потреби піднімає виняток.
 
         Args:
-            raise_exception: If True, raises RieltorErrorPageException when error page detected.
+            raise_exception: Якщо True, піднімає RieltorErrorPageException при виявленні сторінки помилки.
 
         Returns:
-            True if error page was detected, False otherwise.
+            True якщо виявлено сторінку помилки, False — інакше.
 
         Raises:
-            RieltorErrorPageException: If error page detected and raise_exception is True.
+            RieltorErrorPageException: Якщо виявлено сторінку помилки і raise_exception=True.
         """
         if self.is_error_page():
             current_url = self.page.url if self.page else "unknown"
-            logger.error(f"Error page detected at: {current_url}")
+            logger.error(f"Виявлено сторінку помилки за адресою: {current_url}")
             if raise_exception:
                 raise RieltorErrorPageException(
-                    f"Site returned error page at {current_url}. "
-                    "The page may be unavailable or the session may have expired."
+                    f"Сайт повернув сторінку помилки за адресою {current_url}. "
+                    "Сторінка може бути недоступна або сесія закінчилась."
                 )
             return True
         return False
@@ -139,34 +139,34 @@ class RieltorSession:
     def navigate_with_error_check(
         self, url: str, wait_until: str = "domcontentloaded"
     ) -> None:
-        """Navigate to URL and check for error page.
+        """Перехід за URL з перевіркою на сторінку помилки.
 
         Args:
-            url: URL to navigate to.
-            wait_until: When to consider navigation complete.
+            url: URL для переходу.
+            wait_until: Коли вважати навігацію завершеною.
 
         Raises:
-            RieltorErrorPageException: If navigation results in an error page.
-            RuntimeError: If session not started.
+            RieltorErrorPageException: Якщо навігація призвела до сторінки помилки.
+            RuntimeError: Якщо сесію не розпочато.
         """
         if not self.page:
             raise RuntimeError("Session not started")
-        logger.debug(f"Navigating to: {url}")
+        logger.debug(f"Перехід до: {url}")
         self.page.goto(url, wait_until=wait_until)
         self.check_for_error_page()
 
     def login(self) -> None:
-        """Login with phone/password.
+        """Авторизація за номером телефону та паролем.
 
         Raises:
-            RieltorErrorPageException: If login results in an error page.
-            RuntimeError: If session not started.
+            RieltorErrorPageException: Якщо після входу відкрилась сторінка помилки.
+            RuntimeError: Якщо сесію не розпочато.
         """
         if not self.page:
             raise RuntimeError("Session not started")
 
         p = self.page
-        logger.info("Navigating to login")
+        logger.info("Перехід до сторінки входу")
         p.goto(self.LOGIN_URL, wait_until="domcontentloaded")
         self.check_for_error_page()
 
@@ -189,4 +189,4 @@ class RieltorSession:
                 self.close_popup()
             except Exception:
                 pass
-        logger.info("Login complete")
+        logger.info("Авторизація завершена")

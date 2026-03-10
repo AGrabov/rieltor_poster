@@ -1,10 +1,10 @@
-"""CRM Estate List Collector.
+"""Збирач списку об'єктів CRM.
 
-Navigates paginated estate lists in the CRM, parses .estate-item cards,
-filters by "Можна рекламувати", and fetches individual estate HTML pages
-for downstream parsing by HTMLOfferParser.
+Навігує по посторінкових списках об'єктів у CRM, парсить картки .estate-item,
+фільтрує за "Можна рекламувати" та отримує HTML-сторінки окремих об'єктів
+для подальшого парсингу за допомогою HTMLOfferParser.
 
-Usage:
+Використання:
     collector = EstateListCollector(page, debug=True)
     items = collector.collect_advertisable(max_pages=5)
     for item in items:
@@ -41,7 +41,7 @@ COMMISSION_RENT_UNIT = os.getenv("COMMISSION_RENT_UNIT", "%")
 
 @dataclass
 class EstateListItem:
-    """Single estate card from the CRM list page."""
+    """Одна картка об'єкта зі сторінки списку CRM."""
 
     estate_id: int
     title: str
@@ -58,9 +58,9 @@ class EstateListItem:
 
 
 class EstateListCollector:
-    """Collects estate items from CRM list pages via Playwright.
+    """Збирає об'єкти зі сторінок списку CRM через Playwright.
 
-    Works with a live Playwright Page — assumes user is already logged in.
+    Працює з активною Playwright Page — передбачає, що користувач вже увійшов.
     """
 
     ESTATE_LIST_PATH = "/estate/index"
@@ -88,17 +88,17 @@ class EstateListCollector:
     def collect_advertisable(
         self, max_pages: Optional[int] = None
     ) -> List[EstateListItem]:
-        """Collect all advertisable estates from the filtered CRM list.
+        """Зібрати всі рекламовані об'єкти з відфільтрованого списку CRM.
 
-        Opens the estate list with the "Можна рекламувати" filter applied,
-        then iterates through all pages collecting estate items.
-        Automatically skips closed estates.
+        Відкриває список об'єктів з фільтром "Можна рекламувати",
+        потім ітерує всі сторінки, збираючи картки об'єктів.
+        Автоматично пропускає закриті об'єкти.
 
         Args:
-            max_pages: Maximum number of pages to process (None = all).
+            max_pages: Максимальна кількість сторінок для обробки (None = всі).
 
         Returns:
-            List of active EstateListItem (closed ones are excluded).
+            Список активних EstateListItem (закриті виключені).
         """
         url = (
             f"{CRM_BASE_URL}{self.ESTATE_LIST_PATH}"
@@ -107,7 +107,7 @@ class EstateListCollector:
             f"&status[0]=active"
         )
 
-        logger.info("Opening filtered estate list: %s", url)
+        logger.info("Відкриття відфільтрованого списку об'єктів: %s", url)
         self.page.goto(url, wait_until="domcontentloaded")
         self.page.wait_for_selector(".estate-list", timeout=15_000)
 
@@ -115,7 +115,7 @@ class EstateListCollector:
         page_num = 1
 
         while True:
-            logger.info("Parsing page %d...", page_num)
+            logger.info("Парсинг сторінки %d...", page_num)
             items = self.collect_page()
             active = [i for i in items if not i.is_closed and i.can_advertise]
             skipped_closed = sum(1 for i in items if i.is_closed)
@@ -124,7 +124,7 @@ class EstateListCollector:
             )
             all_items.extend(active)
             logger.info(
-                "Page %d: %d items (%d active, %d closed, %d not advertisable), total: %d",
+                "Сторінка %d: %d об'єктів (%d активних, %d закритих, %d не рекламованих), всього: %d",
                 page_num,
                 len(items),
                 len(active),
@@ -134,24 +134,24 @@ class EstateListCollector:
             )
 
             if max_pages and page_num >= max_pages:
-                logger.info("Reached max_pages=%d, stopping", max_pages)
+                logger.info("Досягнуто max_pages=%d, зупинка", max_pages)
                 break
 
             if not self._has_next_page():
-                logger.info("No more pages")
+                logger.info("Більше сторінок немає")
                 break
 
             self._go_next_page()
             page_num += 1
 
-        logger.info("Collected %d active advertisable estates", len(all_items))
+        logger.info("Зібрано %d активних рекламованих об'єктів", len(all_items))
         return all_items
 
     def collect_page(self) -> List[EstateListItem]:
-        """Parse all estate items on the current page.
+        """Розпарсити всі картки об'єктів на поточній сторінці.
 
         Returns:
-            List of EstateListItem from current page.
+            Список EstateListItem поточної сторінки.
         """
         html = self.page.content()
         soup = BeautifulSoup(html, "html.parser")
@@ -163,23 +163,23 @@ class EstateListCollector:
                 if item:
                     items.append(item)
             except Exception:
-                logger.exception("Failed to parse estate item")
+                logger.exception("Помилка парсингу картки об'єкта")
 
         return items
 
     def get_estate_html(self, estate_id: int) -> Optional[str]:
-        """Navigate to a single estate page and return its HTML.
+        """Перейти на сторінку окремого об'єкта та повернути його HTML.
 
-        Checks for "Причина закриття" alert — returns None if estate is closed.
+        Перевіряє наявність сповіщення "Причина закриття" — повертає None, якщо об'єкт закрито.
 
         Args:
-            estate_id: CRM estate ID.
+            estate_id: ID об'єкта в CRM.
 
         Returns:
-            Full HTML content, or None if the estate page shows a closure alert.
+            Повний HTML-вміст або None, якщо на сторінці є сповіщення про закриття.
         """
         url = f"{CRM_BASE_URL}/estate/{estate_id}"
-        logger.info("Fetching estate page: %s", url)
+        logger.info("Отримання сторінки об'єкта: %s", url)
         self.page.goto(url, wait_until="domcontentloaded")
         self.page.wait_for_selector(".page-content", timeout=15_000)
 
@@ -187,22 +187,22 @@ class EstateListCollector:
 
         if self._html_has_closure_alert(html):
             logger.warning(
-                "Estate %d is closed (closure alert found), skipping", estate_id
+                "Об'єкт %d закрито (знайдено сповіщення про закриття), пропускаємо", estate_id
             )
             return None
 
         return html
 
     def enrich_with_commission(self, offer_data: dict, item: EstateListItem) -> None:
-        """Add commission fields to offer_data unconditionally.
+        """Додати поля комісії до offer_data безумовно.
 
-        Always sets "Комісія з покупця/орендатора": "Є" with commission
-        size/unit so the field is filled on the website regardless of
-        whether the seller pays commission or not.
+        Завжди встановлює "Комісія з покупця/орендатора": "Є" з розміром та
+        одиницею комісії, щоб поле заповнювалось на сайті незалежно від того,
+        чи платить продавець комісію.
 
         Args:
-            offer_data: Dict being built for DictOfferFormFiller (modified in place).
-            item: EstateListItem with parsed tag info.
+            offer_data: Словник, що будується для DictOfferFormFiller (змінюється на місці).
+            item: EstateListItem з розпарсеною інформацією тегів.
         """
         offer_data["Комісія з покупця/орендатора"] = "Є"
 
@@ -219,21 +219,21 @@ class EstateListCollector:
         offer_data["Комісія у"] = unit
 
         logger.info(
-            "Estate %d: commission → %s %s",
+            "Об'єкт %d: комісія → %s %s",
             item.estate_id,
             rate,
             unit,
         )
 
     def enrich_with_responsible_contacts(self, offer_data: dict) -> None:
-        """Fetch responsible person's contacts from their CRM profile page.
+        """Отримати контакти відповідального зі сторінки його профілю в CRM.
 
-        If offer_data contains a 'responsible_person' dict with a 'profile_url',
-        navigates to that URL, extracts phone/email, and adds them as 'contacts'
-        to the responsible_person dict. Also updates personal_notes accordingly.
+        Якщо offer_data містить словник 'responsible_person' з 'profile_url',
+        переходить за цим URL, вилучає телефон/email та додає їх як 'contacts'
+        до словника responsible_person. Також оновлює personal_notes відповідно.
 
         Args:
-            offer_data: Dict being built for DictOfferFormFiller (modified in place).
+            offer_data: Словник, що будується для DictOfferFormFiller (змінюється на місці).
         """
         rp = offer_data.get("responsible_person")
         if not rp or not rp.get("profile_url"):
@@ -244,27 +244,27 @@ class EstateListCollector:
             profile_url = f"{CRM_BASE_URL}{profile_url}"
 
         try:
-            logger.info("Fetching responsible person profile: %s", profile_url)
+            logger.info("Отримання профілю відповідального: %s", profile_url)
             self.page.goto(profile_url, wait_until="domcontentloaded")
             self.page.wait_for_selector(".page-content", timeout=15_000)
             html = self.page.content()
             contacts = self._parse_user_contacts(html)
             if contacts:
                 rp["contacts"] = contacts
-                logger.info("Responsible person contacts: %s", contacts)
+                logger.info("Контакти відповідального: %s", contacts)
                 # Update personal_notes with contacts
                 self._update_notes_with_contacts(offer_data)
         except Exception:
-            logger.exception("Failed to fetch responsible person contacts")
+            logger.exception("Помилка отримання контактів відповідального")
 
     def _parse_user_contacts(self, html: str) -> str:
-        """Parse phone and email from a CRM user profile page.
+        """Розпарсити телефон та email зі сторінки профілю користувача CRM.
 
         Args:
-            html: Full HTML of the user profile page.
+            html: Повний HTML сторінки профілю користувача.
 
         Returns:
-            Contacts string like "тел: +380..., email: user@example.com" or empty string.
+            Рядок контактів вигляду "тел: +380..., email: user@example.com" або порожній рядок.
         """
         soup = BeautifulSoup(html, "html.parser")
         parts: list[str] = []
@@ -289,7 +289,7 @@ class EstateListCollector:
 
     @staticmethod
     def _update_notes_with_contacts(offer_data: dict) -> None:
-        """Update personal_notes to include responsible person contacts."""
+        """Оновити personal_notes, включивши контакти відповідального."""
         rp = offer_data.get("responsible_person", {})
         if not rp.get("contacts"):
             return
@@ -304,7 +304,7 @@ class EstateListCollector:
     # ── Internal ──
 
     def _parse_estate_item(self, elem: Tag) -> Optional[EstateListItem]:
-        """Parse a single .estate-item element."""
+        """Розпарсити один елемент .estate-item."""
         # Estate ID from data-key
         estate_id_str = elem.get("data-key", "")
         if not estate_id_str:
@@ -372,7 +372,7 @@ class EstateListCollector:
         )
 
     def _parse_extras(self, elem: Tag) -> dict:
-        """Parse .estate-extra-item pairs into a dict."""
+        """Розпарсити пари .estate-extra-item у словник."""
         result = {}
         for extra in elem.select(".estate-extra-item"):
             title_el = extra.select_one(".estate-extra-title")
@@ -385,7 +385,7 @@ class EstateListCollector:
         return result
 
     def _elem_has_closure_alert(self, elem: Tag) -> bool:
-        """Check if an estate-item element has a closure/closing alert."""
+        """Перевірити, чи елемент estate-item містить сповіщення про закриття."""
         for alert in elem.select(".alert"):
             text = alert.get_text(strip=True).lower()
             if "причина закриття" in text or "закрито" in text:
@@ -393,7 +393,7 @@ class EstateListCollector:
         return False
 
     def _html_has_closure_alert(self, html: str) -> bool:
-        """Check if a full estate page HTML contains a closure alert."""
+        """Перевірити, чи повний HTML сторінки об'єкта містить сповіщення про закриття."""
         soup = BeautifulSoup(html, "html.parser")
         page_content = soup.select_one(".page-content")
         scope = page_content if page_content else soup
@@ -405,12 +405,12 @@ class EstateListCollector:
         return False
 
     def _has_next_page(self) -> bool:
-        """Check if there's a next page in pagination."""
+        """Перевірити, чи є наступна сторінка в пагінації."""
         next_btn = self.page.locator("ul.pagination li.next:not(.disabled)")
         return next_btn.count() > 0
 
     def _go_next_page(self) -> None:
-        """Click the 'next' pagination button and wait for page load."""
+        """Натиснути кнопку 'наступна' в пагінації та дочекатися завантаження."""
         next_link = self.page.locator("ul.pagination li.next:not(.disabled) a")
         if next_link.count() == 0:
             return

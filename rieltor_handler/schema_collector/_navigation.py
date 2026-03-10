@@ -52,8 +52,8 @@ class _NavigationMixin:
             compact.append((t, occ))
             prev = t
 
-        logger.debug("Navigation items: %d", len(compact))
-        logger.debug("Navigation list: %s", [t for (t, _) in compact])
+        logger.debug("Елементів навігації: %d", len(compact))
+        logger.debug("Список навігації: %s", [t for (t, _) in compact])
         return compact
 
     def _h6_by_title_occ(self, title: str, occ: int) -> Optional[Locator]:
@@ -68,7 +68,7 @@ class _NavigationMixin:
         if not h6 or not h6.count():
             return None
 
-        logger.debug("Scope for nav: %s (occ=%d)", title, occ)
+        logger.debug("Scope для nav: %s (occ=%d)", title, occ)
 
         try:
             h6.scroll_into_view_if_needed(timeout=1500)

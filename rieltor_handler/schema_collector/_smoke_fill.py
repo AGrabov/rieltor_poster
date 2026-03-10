@@ -46,8 +46,8 @@ class _SmokeFillMixin:
     def smoke_fill_visible_fields(
         self, *, skip_nav_titles: Set[str] | None = None
     ) -> int:
-        """Fill only safe widgets to trigger dynamic fields: text/textarea/select/radio.
-        Skips checkboxes & file uploads.
+        """Заповнити лише безпечні віджети для активації динамічних полів: text/textarea/select/radio.
+        Пропускає прапорці та завантаження файлів.
         """
         skip_nav_titles = skip_nav_titles or set()
         root = self._root()
@@ -167,7 +167,7 @@ class _SmokeFillMixin:
                         if click_ok:
                             actions += 1
                             logger.debug(
-                                "Smoke filled autocomplete: %s with '%s'",
+                                "Smoke-fill autocomplete: %s → '%s'",
                                 label,
                                 clicked_text,
                             )
@@ -175,11 +175,11 @@ class _SmokeFillMixin:
                         # No options appeared, just clear the field
                         inp.fill("")
                 except Exception as e:
-                    logger.debug("Smoke fill autocomplete failed for %s: %s", label, e)
+                    logger.debug("Smoke-fill autocomplete не вдався для %s: %s", label, e)
                 self.page.wait_for_timeout(self.ui_delay_ms + 250)
                 continue
 
-        logger.info("Smoke fill actions=%d", actions)
+        logger.info("Smoke-fill: дій виконано=%d", actions)
         return actions
 
     def discover_schema_until_stable(
@@ -189,17 +189,17 @@ class _SmokeFillMixin:
         max_rounds: int = 3,
         smoke_fill: bool = True,
     ) -> Dict[str, Any]:
-        """Seed address -> collect -> (optional smoke fill -> collect) until schema stops growing."""
+        """Заповнити адресу-зерно -> зібрати -> (опціонально smoke fill -> зібрати) до стабілізації схеми."""
         prev_keys: Set[str] = set()
         last_schema: Dict[str, Any] = {}
 
         for r in range(1, max_rounds + 1):
-            logger.info("Discovery round %d/%d", r, max_rounds)
+            logger.info("Раунд виявлення %d/%d", r, max_rounds)
 
             try:
                 self.seed_fill_address(seed_address_city)
             except Exception as e:
-                logger.warning("Seed fill address failed: %s", e)
+                logger.warning("Заповнення адреси-зерна не вдалося: %s", e)
 
             self.open_all_blocks_sticky()
             schema = self.collect_schema_dynamic_h6()
@@ -215,14 +215,14 @@ class _SmokeFillMixin:
                 for f in (schema.get("fields") or [])
             )
             logger.info(
-                "Schema keys=%d (prev=%d, +%d)",
+                "Ключів схеми=%d (попер.=%d, +%d)",
                 len(keys),
                 len(prev_keys),
                 max(0, len(keys) - len(prev_keys)),
             )
 
             if keys.issubset(prev_keys) and prev_keys:
-                logger.info("Schema stable; stop discovery")
+                logger.info("Схема стабільна; зупиняємо виявлення")
                 break
 
             prev_keys = keys
@@ -231,7 +231,7 @@ class _SmokeFillMixin:
                 try:
                     self.smoke_fill_visible_fields(skip_nav_titles={"Адреса об'єкта"})
                 except Exception as e:
-                    logger.warning("Smoke fill failed: %s", e)
+                    logger.warning("Smoke-fill не вдався: %s", e)
 
             self.page.wait_for_timeout(self.ui_delay_ms + 500)
 

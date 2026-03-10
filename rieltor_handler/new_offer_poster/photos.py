@@ -18,13 +18,13 @@ _LABEL_UPLOAD_PHOTOS = "Завантажити фото"
 
 
 class PhotosMixin:
-    """Заполняет PhotoBlock-секции: описание, видео (только блок 1) и фото."""
+    """Заповнює PhotoBlock-секції: опис, відео (тільки блок 1) та фото."""
 
     page: any  # Playwright Page
 
     # ---------- internals ----------
     def _ensure_photo_block_open(self, sec: Locator) -> None:
-        """Раскрывает секцию фото-блока, если она свернута."""
+        """Розкриває секцію фото-блока, якщо вона згорнута."""
         if self._photo_block_content_visible(sec):
             return
 
@@ -46,7 +46,7 @@ class PhotosMixin:
             pass
 
     def _photo_block_content_visible(self, sec: Locator) -> bool:
-        """Проверяем по наличию кнопки загрузки/поля описания, что секция развернута."""
+        """Перевіряє наявність кнопки завантаження/поля опису, щоб визначити, чи секцію розгорнуто."""
         upload_text = _LABEL_UPLOAD_PHOTOS
         desc_label = _LABEL_DESCRIPTION
 
@@ -83,7 +83,7 @@ class PhotosMixin:
         ctrl = self._find_control_by_label(sec, ui_label)
         if not ctrl:
             logger.debug(
-                "PhotoBlock: control not found for label='%s' (skip)", ui_label
+                "PhotoBlock: елемент керування не знайдено для label='%s' (пропуск)", ui_label
             )
             return
 
@@ -124,7 +124,7 @@ class PhotosMixin:
                 ctrl.press("Backspace")
                 ctrl.type(value, delay=15)
             except Exception:
-                logger.exception("PhotoBlock: failed to fill label='%s'", ui_label)
+                logger.exception("PhotoBlock: не вдалось заповнити label='%s'", ui_label)
                 return
 
         try:
@@ -133,8 +133,8 @@ class PhotosMixin:
             pass
 
     def _count_photo_previews(self, sec: Locator) -> int:
-        """Пробуем посчитать превьюшки загруженных фото внутри секции."""
-        # Часто превью — это <img src=...>, иногда background-image.
+        """Підраховує прев'ю завантажених фото всередині секції."""
+        # Часто прев'ю — це <img src=...>, іноді background-image.
         try:
             imgs = sec.locator("css=img[src]").count()
         except Exception:
@@ -153,7 +153,7 @@ class PhotosMixin:
         return bg
 
     def _progress_visible(self, sec: Locator) -> bool:
-        """Есть ли индикаторы прогресса/загрузки в пределах секции."""
+        """Перевіряє наявність індикаторів прогресу/завантаження у межах секції."""
         try:
             loc = sec.locator(
                 "css=[role='progressbar'], .MuiCircularProgress-root, .MuiLinearProgress-root, [aria-busy='true']"
@@ -177,12 +177,12 @@ class PhotosMixin:
         timeout_ms: int = 90000,
         stable_ms: int = 1000,
     ) -> None:
-        """Ждём, пока:
-        - количество превью увеличится (желательно на expected_added)
-        - и исчезнут индикаторы прогресса
-        - и состояние будет стабильным stable_ms
+        """Чекає, поки:
+        - кількість прев'ю збільшиться (бажано на expected_added)
+        - зникнуть індикатори прогресу
+        - стан буде стабільним протягом stable_ms
 
-        Не падаем по таймауту — только логируем warning.
+        Не падає по таймауту — лише логує warning.
         """
         deadline = time.monotonic() + (timeout_ms / 1000.0)
         stable_since: float | None = None
@@ -222,12 +222,12 @@ class PhotosMixin:
 
         try:
             after = self._count_photo_previews(sec)
-            logger.debug("PhotoBlock: uploaded %s photos", after)
+            logger.debug("PhotoBlock: завантажено %s фото", after)
         except Exception:
             after = -1
 
         logger.warning(
-            "PhotoBlock: upload wait timeout (before=%s, after=%s, expected_added=%s)",
+            "PhotoBlock: таймаут очікування завантаження (before=%s, after=%s, expected_added=%s)",
             before_count,
             after,
             expected_added,
@@ -242,7 +242,7 @@ class PhotosMixin:
 
         prepared = prepare_photos(paths)
         if not prepared:
-            logger.warning("PhotoBlock: no valid photos after preparation")
+            logger.warning("PhotoBlock: немає придатних фото після підготовки")
             return
 
         file_input = sec.locator("css=input[type='file']").first
@@ -250,13 +250,13 @@ class PhotosMixin:
             file_input = sec.locator("xpath=.//input[@type='file']").first
 
         if file_input.count() == 0:
-            logger.error("PhotoBlock: file input not found")
+            logger.error("PhotoBlock: поле завантаження файлу не знайдено")
             return
 
         before = self._count_photo_previews(sec)
 
         logger.info(
-            "PhotoBlock: uploading %d photos (before=%d)", len(prepared), before
+            "PhotoBlock: завантаження %d фото (before=%d)", len(prepared), before
         )
         try:
             file_input.set_input_files(prepared)
@@ -272,4 +272,4 @@ class PhotosMixin:
             )
 
         except Exception:
-            logger.exception("PhotoBlock: failed uploading photos")
+            logger.exception("PhotoBlock: помилка завантаження фото")

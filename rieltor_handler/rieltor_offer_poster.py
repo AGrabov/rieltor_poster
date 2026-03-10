@@ -1,10 +1,10 @@
-"""Backward-compatible facade.
+"""Фасад зі зворотньою сумісністю.
 
-Split into:
-    - rieltor_session.py: Playwright lifecycle + login
-    - new_offer_poster/dict_filler.py: dict-based, schema-driven form filling
+Розбитий на:
+    - rieltor_session.py: життєвий цикл Playwright + авторизація
+    - new_offer_poster/dict_filler.py: заповнення форми на основі словника та схеми
 
-Keep importing `RieltorOfferPoster` from this module if you don't want to update imports.
+Імпортуйте `RieltorOfferPoster` з цього модуля, якщо не хочете оновлювати імпорти.
 """
 
 from __future__ import annotations
@@ -22,10 +22,10 @@ logger = setup_logger(__name__)
 
 
 class RieltorOfferPoster:
-    """High-level helper that manages browser session and fills the offer form.
+    """Високорівневий помічник, що керує браузерною сесією та заповнює форму оголошення.
 
-    Uses DictOfferFormFiller under the hood — all offer data is passed as dicts
-    with Ukrainian label keys from the schema.
+    Під капотом використовує DictOfferFormFiller — всі дані передаються як словники
+    з українськими ключами-підписами зі схеми.
     """
 
     CREATE_URL = "https://my.rieltor.ua/offers/create"
@@ -78,10 +78,10 @@ class RieltorOfferPoster:
         self._session.login()
 
     def create_offer_draft(self, offer_data: dict) -> None:
-        """Fill offer form from a dict with Ukrainian label keys.
+        """Заповнює форму оголошення зі словника з українськими ключами-підписами.
 
         Args:
-            offer_data: Dict with keys like "Число кімнат", "Ціна", "address", etc.
+            offer_data: Словник з ключами на зразок "Число кімнат", "Ціна", "address" тощо.
         """
         if not self.filler:
             raise RuntimeError("Poster not started")
@@ -181,4 +181,4 @@ if __name__ == "__main__":
         poster.create_offer_draft(offer_data)
         report = poster.save_and_get_report()
         if report:
-            print("Ошибки:", report)
+            print("Помилки:", report)

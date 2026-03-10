@@ -17,7 +17,7 @@ class _PropertyTypeMixin:
         # New property type => reset cached select options (same labels can have different options).
         self._select_options_cache = {}
 
-        logger.info("Select property type: %s", ui_text)
+        logger.info("Вибір типу нерухомості: %s", ui_text)
         root = self._root()
         self.open_all_blocks_sticky()
 
@@ -50,7 +50,7 @@ class _PropertyTypeMixin:
 
         inner = chosen.locator("xpath=.//span[normalize-space()]").first
         if not self._click_best_effort(inner if inner.count() else chosen):
-            logger.warning("Failed to click property type card: %s", ui_text)
+            logger.warning("Не вдалося клікнути на картку типу нерухомості: %s", ui_text)
 
         self._wait_ready()
         try:
@@ -61,4 +61,4 @@ class _PropertyTypeMixin:
 
         self._epoch += 1
         self.open_all_blocks_sticky()
-        logger.info("Property type selected: %s (epoch=%s)", ui_text, self._epoch)
+        logger.info("Тип нерухомості вибрано: %s (epoch=%s)", ui_text, self._epoch)

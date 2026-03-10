@@ -8,17 +8,17 @@ logger = setup_logger(__name__)
 
 
 class _ParkingTypeMixin:
-    """Mixin for selecting parking subtype (Гараж/Паркомісце)."""
+    """Мікін для вибору підтипу паркінгу (Гараж/Паркомісце)."""
 
     PARKING_TYPE_GARAGE = "Гараж"
     PARKING_TYPE_PARKING = "Паркомісце"
 
     def select_parking_type(self, parking_type: str) -> None:
         """
-        Select parking subtype: 'Гараж' or 'Паркомісце'.
+        Вибрати підтип паркінгу: 'Гараж' або 'Паркомісце'.
 
         Args:
-            parking_type: Either 'Гараж'/'garage' or 'Паркомісце'/'parking'
+            parking_type: 'Гараж'/'garage' або 'Паркомісце'/'parking'
         """
         # Normalize parking type name
         parking_type_map = {
@@ -29,7 +29,7 @@ class _ParkingTypeMixin:
         }
         ui_text = parking_type_map.get(parking_type.lower(), parking_type)
 
-        logger.info("Select parking type: %s", ui_text)
+        logger.info("Вибір типу паркінгу: %s", ui_text)
         root = self._root()
 
         # Find the radiogroup for parking type selection
@@ -71,7 +71,7 @@ class _ParkingTypeMixin:
             if has_garage and has_parking and target_label:
                 # This is the parking type radiogroup
                 found = True
-                logger.debug("Found parking type radiogroup")
+                logger.debug("Знайдено radiogroup типу паркінгу")
 
                 # Click the target option
                 try:
@@ -83,12 +83,12 @@ class _ParkingTypeMixin:
                     else:
                         self._click_best_effort(target_label)
                 except Exception as e:
-                    logger.warning("Failed to click parking type option: %s", e)
+                    logger.warning("Не вдалося клікнути на варіант типу паркінгу: %s", e)
 
                 break
 
         if not found:
-            logger.warning("Parking type radiogroup not found")
+            logger.warning("Radiogroup типу паркінгу не знайдено")
             return
 
         self._wait_ready()
@@ -100,10 +100,10 @@ class _ParkingTypeMixin:
 
         self._epoch += 1
         self.open_all_blocks_sticky()
-        logger.info("Parking type selected: %s (epoch=%s)", ui_text, self._epoch)
+        logger.info("Тип паркінгу вибрано: %s (epoch=%s)", ui_text, self._epoch)
 
     def get_current_parking_type(self) -> str | None:
-        """Get currently selected parking type."""
+        """Отримати поточний вибраний тип паркінгу."""
         root = self._root()
         rgs = root.locator("xpath=.//*[@role='radiogroup']")
 

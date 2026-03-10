@@ -122,10 +122,10 @@ ${GREEN}============================================================
   Следующие шаги:
     1. Откройте .env и заполните CRM_EMAIL, CRM_PASSWORD,
        PHONE, PASSWORD и другие переменные.
-    2. Запустите:
+    2. Запустите дашборд:
+         uv run streamlit run dashboard.py
+       или CLI:
          uv run python main.py collect
          uv run python main.py post
-       или полный пайплайн:
-         uv run python main.py
 ============================================================${RESET}
 "

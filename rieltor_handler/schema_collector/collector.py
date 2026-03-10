@@ -28,4 +28,4 @@ class OfferCreateSchemaCollector(
     _SmokeFillMixin,
     _RadioProbeMixin,
 ):
-    """Concrete collector class composed from mixins."""
+    """Конкретний клас збирача, зібраний з міксинів."""

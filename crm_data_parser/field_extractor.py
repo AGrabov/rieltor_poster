@@ -1,6 +1,6 @@
 """
-Field extractor using spaCy for Ukrainian language.
-Extracts real estate field data from text based on schema definitions.
+Вилучувач полів на основі spaCy для української мови.
+Вилучає дані полів нерухомості з тексту на основі визначень схеми.
 """
 
 import json
@@ -12,7 +12,7 @@ import spacy
 
 
 class FieldExtractor:
-    """Extracts field data from text using spaCy Ukrainian model."""
+    """Вилучає дані полів з тексту за допомогою моделі spaCy для української мови."""
 
     SCHEMA_DIR = Path(__file__).parent / "schemas" / "schema_dump"
 
@@ -99,18 +99,18 @@ class FieldExtractor:
 
     def __init__(self, schema_name: str = "Квартира"):
         """
-        Initialize the field extractor.
+        Ініціалізувати вилучувач полів.
 
         Args:
-            schema_name: Name of the schema file (without .json extension).
-                        Available: Квартира, Кімната, Будинок, Комерційна, Ділянка, Паркомісце
+            schema_name: Назва файлу схеми (без розширення .json).
+                        Доступні: Квартира, Кімната, Будинок, Комерційна, Ділянка, Паркомісце
         """
         self.nlp = self._load_spacy_model()
         self.schema = self._load_schema(schema_name)
         self.fields = self._parse_fields()
 
     def _load_spacy_model(self) -> spacy.Language:
-        """Load Ukrainian spaCy model."""
+        """Завантажити українську модель spaCy."""
         try:
             return spacy.load("uk_core_news_sm")
         except OSError:
@@ -120,7 +120,7 @@ class FieldExtractor:
             )
 
     def _load_schema(self, schema_name: str) -> dict:
-        """Load schema from JSON file."""
+        """Завантажити схему з JSON-файлу."""
         schema_path = self.SCHEMA_DIR / f"{schema_name}.json"
         if not schema_path.exists():
             available = [f.stem for f in self.SCHEMA_DIR.glob("*.json")]
@@ -131,7 +131,7 @@ class FieldExtractor:
             return json.load(f)
 
     def _parse_fields(self) -> dict[str, dict]:
-        """Parse fields from schema into a lookup dictionary."""
+        """Розпарсити поля зі схеми у словник пошуку."""
         fields = {}
         for field in self.schema.get("fields", []):
             label = field.get("label", "").lower()
@@ -148,13 +148,13 @@ class FieldExtractor:
 
     def extract(self, text: str) -> dict[str, Any]:
         """
-        Extract field values from text.
+        Вилучити значення полів з тексту.
 
         Args:
-            text: Input text describing a real estate property.
+            text: Вхідний текст з описом об'єкта нерухомості.
 
         Returns:
-            Dictionary with extracted field values.
+            Словник з вилученими значеннями полів.
         """
         # Clean HTML tags
         clean_text = re.sub(r"<[^>]+>", " ", text)
@@ -174,7 +174,7 @@ class FieldExtractor:
         return extracted
 
     def _extract_by_context(self, text: str) -> dict[str, Any]:
-        """Extract values using contextual patterns."""
+        """Вилучити значення за контекстуальними патернами."""
         extracted = {}
         text_lower = text.lower()
 
@@ -194,7 +194,7 @@ class FieldExtractor:
         return extracted
 
     def _extract_numeric_fields(self, text: str) -> dict[str, Any]:
-        """Extract numeric field values using regex patterns."""
+        """Вилучити числові значення полів за допомогою regex-патернів."""
         extracted = {}
         text_lower = text.lower()
 
@@ -309,7 +309,7 @@ class FieldExtractor:
         return extracted
 
     def _extract_address(self, text: str) -> dict[str, Any]:
-        """Extract address components from text."""
+        """Вилучити компоненти адреси з тексту."""
         extracted = {}
         text_lower = text.lower()
 
@@ -397,23 +397,23 @@ class FieldExtractor:
         return extracted
 
     def get_field_info(self, field_label: str) -> dict | None:
-        """Get information about a specific field."""
+        """Отримати інформацію про конкретне поле."""
         return self.fields.get(field_label.lower())
 
     def get_all_fields(self) -> list[dict]:
-        """Get all field definitions from the schema."""
+        """Отримати всі визначення полів зі схеми."""
         return list(self.fields.values())
 
     def get_required_fields(self) -> list[dict]:
-        """Get only required fields from the schema."""
+        """Отримати лише обов'язкові поля зі схеми."""
         return [f for f in self.fields.values() if f.get("required")]
 
     def validate_extracted(self, extracted: dict) -> dict[str, list[str]]:
         """
-        Validate extracted data against schema.
+        Перевірити вилучені дані відповідно до схеми.
 
         Returns:
-            Dictionary with 'missing_required' and 'invalid_options' lists.
+            Словник зі списками 'missing_required' та 'invalid_options'.
         """
         issues = {
             "missing_required": [],

@@ -47,7 +47,7 @@ def _attach_field_keys(schema: Dict[str, Any]) -> None:
 def _inject_conditionals_into_meta(
     schema: Dict[str, Any], cond: List[Dict[str, Any]]
 ) -> None:
-    """Put visible_when rules into meta of affected fields, and ensure conditional-only fields exist in schema."""
+    """Вставляє правила visible_when у meta відповідних полів і забезпечує наявність умовних полів у схемі."""
     fields = schema.get("fields") or []
 
     # index by sig
@@ -93,7 +93,7 @@ def _inject_conditionals_into_meta(
                 added_inserted += 1
 
     if added_inserted:
-        logger.info("Injected conditional-only fields into schema: %d", added_inserted)
+        logger.info("Додано умовні поля до схеми: %d", added_inserted)
 
     # build visible_when rules
     merged_rules = 0
@@ -136,7 +136,7 @@ def _inject_conditionals_into_meta(
                     f["meta"] = meta
                     merged_rules += 1
 
-    logger.info("Merged visible_when rules: %d", merged_rules)
+    logger.info("Об'єднано правил visible_when: %d", merged_rules)
 
 
 def run_collection(
@@ -205,7 +205,7 @@ def run_collection(
     with RieltorSession(
         creds=creds, headless=headless, slow_mo_ms=slow_mo_ms, debug=debug
     ) as sess:
-        logger.info("Login")
+        logger.info("Авторизація")
         sess.login()
         page = sess.page
         if page is None:
@@ -244,7 +244,7 @@ def run_collection(
                 subtype: str | None = None,
                 subtype_ui: str | None = None,
             ) -> Dict[str, Any]:
-                """Collect schema for a property type (and optional subtype) and save it."""
+                """Збирає схему для типу нерухомості (та опційного підтипу) і зберігає її."""
                 # discovery: seed address + optional smoke fill until schema stops growing
                 schema = collector.discover_schema_until_stable(
                     seed_address_city=seed_address_city,
@@ -262,7 +262,7 @@ def run_collection(
                     try:
                         cond = collector.probe_radios_dynamic()
                     except Exception as e:
-                        logger.warning("Radio probe failed: %s", e)
+                        logger.warning("Зондування радіокнопок не вдалось: %s", e)
 
                 # merge conditionals into meta (visible_when + add missing dynamic fields)
                 if cond:
@@ -291,12 +291,12 @@ def run_collection(
                 pt_path.write_text(
                     json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
                 )
-                logger.info("Saved schema: %s/%s -> %s", folder_name, filename, pt_path)
+                logger.info("Схему збережено: %s/%s -> %s", folder_name, filename, pt_path)
 
                 return payload
 
             for pt in property_types:
-                logger.info("=== PROPERTY TYPE: %s (deal: %s) ===", pt, deal_type_ui)
+                logger.info("=== ТИП НЕРУХОМОСТІ: %s (угода: %s) ===", pt, deal_type_ui)
                 collector.select_property_type(pt)
 
                 # Special handling for "Паркомісце" - has subtypes "Гараж" and "Паркомісце"
@@ -306,7 +306,7 @@ def run_collection(
                         ("parking", "Паркомісце"),
                     ]
                     for subtype_key, subtype_ui in parking_subtypes:
-                        logger.info("--- PARKING SUBTYPE: %s ---", subtype_ui)
+                        logger.info("--- ПІДТИП ПАРКУВАННЯ: %s ---", subtype_ui)
                         collector.select_parking_type(subtype_ui)
 
                         payload = collect_and_save_schema(pt, subtype_key, subtype_ui)
@@ -321,8 +321,8 @@ def run_collection(
     combined_path.write_text(
         json.dumps(dump, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    logger.info("Saved combined schema dump: %s", combined_path)
-    logger.info("Per-type schemas directory: %s", base_out_dir)
+    logger.info("Зведений дамп схем збережено: %s", combined_path)
+    logger.info("Директорія схем за типами: %s", base_out_dir)
     return str(combined_path)
 
 

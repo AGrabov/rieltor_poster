@@ -11,13 +11,13 @@ logger = setup_logger(__name__)
 class _CoreMixin:
     # ---------------- open / root ----------------
     def open(self) -> None:
-        logger.info("Open create page: %s", self.CREATE_URL)
+        logger.info("Відкриваємо сторінку створення: %s", self.CREATE_URL)
         self.page.goto(self.CREATE_URL, wait_until="domcontentloaded")
         self._wait_ready()
-        logger.info("Create page ready: %s", _norm(self.page.title() or ""))
+        logger.info("Сторінка створення готова: %s", _norm(self.page.title() or ""))
 
     def _wait_ready(self) -> None:
-        logger.debug("Wait ready (h5 'Нове оголошення' visible)")
+        logger.debug("Очікування готовності (h5 'Нове оголошення' visible)")
         self.page.locator(
             "xpath=//h5[normalize-space(.)='Нове оголошення' or .//*[normalize-space(.)='Нове оголошення']]"
         ).first.wait_for(state="visible", timeout=30_000)
@@ -25,7 +25,7 @@ class _CoreMixin:
             self.page.wait_for_load_state("networkidle", timeout=12_000)
         except Exception:
             pass
-        logger.debug("Ready: url=%s", self.page.url)
+        logger.debug("Готово: url=%s", self.page.url)
 
     def _offer_container(self) -> Locator:
         h5 = self.page.locator(
@@ -88,7 +88,7 @@ class _CoreMixin:
 
             if ui_overlays:
                 logger.debug(
-                    "%d UI overlay visible (dialogs=%d, listboxes=%d): closing with Escape",
+                    "%d UI-оверлей видимий (dialogs=%d, listboxes=%d): закриваємо через Escape",
                     ui_overlays,
                     dialogs,
                     listboxes,

@@ -119,7 +119,7 @@ class _CollapseMixin:
                     continue
 
                 if self._open_toggle_if_closed(h6):
-                    logger.debug("Expanded: %s", title)
+                    logger.debug("Розгорнуто: %s", title)
                     changed += 1
 
             total_opened += changed
@@ -127,10 +127,10 @@ class _CollapseMixin:
                 break
 
         if total_opened:
-            logger.info("Expanded %d collapsibles", total_opened)
+            logger.info("Розгорнуто %d блоків", total_opened)
 
     def open_all_blocks_sticky(self) -> None:
-        logger.debug("Open all blocks sticky")
+        logger.debug("Розгортання всіх блоків (sticky)")
         root = self._root()
         self._scroll_to_bottom()
         self.page.wait_for_timeout(self.ui_delay_ms + 250)

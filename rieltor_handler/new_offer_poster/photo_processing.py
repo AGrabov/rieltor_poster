@@ -21,13 +21,13 @@ ALLOWED_EXTENSIONS = {".jpg", ".jpeg"}
 
 def prepare_photos(paths: List[str]) -> List[str]:
     """
-    Подготавливает фотографии под требования сайта:
+    Підготовлює фотографії відповідно до вимог сайту:
     - jpg / jpeg
     - <= 10 MB
     - >= 1000x750
 
-    Возвращает список ПУТЕЙ к временным файлам,
-    которые можно безопасно передавать в input[type=file].
+    Повертає список ШЛЯХІВ до тимчасових файлів,
+    які можна безпечно передавати у input[type=file].
     """
     prepared: List[str] = []
 
@@ -36,7 +36,7 @@ def prepare_photos(paths: List[str]) -> List[str]:
             continue
 
         if not os.path.exists(src):
-            logger.warning("Photo not found: %s", src)
+            logger.warning("Фото не знайдено: %s", src)
             continue
 
         try:
@@ -44,7 +44,7 @@ def prepare_photos(paths: List[str]) -> List[str]:
             if out:
                 prepared.append(out)
         except Exception as e:
-            logger.exception("Failed to prepare photo %s: %s", src, e)
+            logger.exception("Не вдалось підготувати фото %s: %s", src, e)
 
     return prepared
 
@@ -60,7 +60,7 @@ def _prepare_single_photo(src: str) -> str | None:
         # Проверка минимального размера
         if width < MIN_WIDTH or height < MIN_HEIGHT:
             logger.info(
-                "Resizing photo %s from %sx%s to minimum %sx%s",
+                "Масштабування фото %s з %sx%s до мінімуму %sx%s",
                 src,
                 width,
                 height,
@@ -77,15 +77,15 @@ def _prepare_single_photo(src: str) -> str | None:
         _save_with_size_limit(img, out_path)
 
         size = os.path.getsize(out_path)
-        logger.info("Prepared photo: %s (%.2f MB)", out_path, size / 1024 / 1024)
+        logger.info("Фото підготовлено: %s (%.2f МБ)", out_path, size / 1024 / 1024)
 
         return out_path
 
 
 def _resize_to_minimum(img: Image.Image) -> Image.Image:
     """
-    Масштабирует изображение так, чтобы
-    ОБЕ стороны были >= минимальных.
+    Масштабує зображення так, щоб
+    ОБИДВі сторони були >= мінімальних.
     """
     w, h = img.size
     scale = max(MIN_WIDTH / w, MIN_HEIGHT / h)
@@ -95,8 +95,8 @@ def _resize_to_minimum(img: Image.Image) -> Image.Image:
 
 def _save_with_size_limit(img: Image.Image, path: str) -> None:
     """
-    Сохраняет JPEG, подбирая качество так,
-    чтобы файл был <= MAX_BYTES.
+    Зберігає JPEG, підбираючи якість так,
+    щоб файл був <= MAX_BYTES.
     """
     quality = 95
 
@@ -110,7 +110,7 @@ def _save_with_size_limit(img: Image.Image, path: str) -> None:
 
     # Последняя попытка — сохраняем как есть
     img.save(path, format="JPEG", quality=60, optimize=True)
-    logger.warning("Photo saved with minimal quality but still large: %s", path)
+    logger.warning("Фото збережено з мінімальною якістю, але розмір все ще великий: %s", path)
 
 
 def _output_name(src: str) -> str:

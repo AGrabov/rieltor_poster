@@ -234,7 +234,7 @@ class AutocompleteMixin:
 
         if not res or not res.get("ok"):
             logger.warning(
-                "Autocomplete: could not pick option for '%s' (visible=%s)",
+                "Autocomplete: не вдалось вибрати опцію для '%s' (видимих=%s)",
                 desired,
                 (res or {}).get("count"),
             )
@@ -242,7 +242,7 @@ class AutocompleteMixin:
 
         x, y = float(res["x"]), float(res["y"])
         logger.debug(
-            "Autocomplete: mouse click option at (%.1f, %.1f), mode=%s, text='%s'",
+            "Autocomplete: клік мишею на опцію (%.1f, %.1f), режим=%s, текст='%s'",
             x,
             y,
             res.get("mode"),
@@ -271,7 +271,7 @@ class AutocompleteMixin:
                 }""",
                 timeout=timeout_ms,
             )
-            logger.debug("Autocomplete: dropdown closed")
+            logger.debug("Autocomplete: випадаючий список закрито")
             return True
         except Exception:
             return False
@@ -334,7 +334,7 @@ class AutocompleteMixin:
                     cur = ""
                 if cur:
                     logger.debug(
-                        "Autocomplete accepted as free-text. desired='%s' current='%s'",
+                        "Autocomplete прийнято як вільний текст. desired='%s' current='%s'",
                         desired,
                         cur,
                     )
@@ -345,7 +345,7 @@ class AutocompleteMixin:
 
         if section is not None and next_key:
             if self._wait_next_field_visible(section, next_key, timeout_ms=5000):
-                logger.debug("Autocomplete confirmed by next field: %s", next_key)
+                logger.debug("Autocomplete підтверджено наступним полем: %s", next_key)
                 return True
 
         self.page.wait_for_timeout(150)
@@ -359,7 +359,7 @@ class AutocompleteMixin:
             des_l = desired.lower()
             if cur_l == des_l or cur_l.startswith(des_l) or des_l in cur_l:
                 logger.debug(
-                    "Autocomplete confirmed by input value. closed=%s desired='%s' current='%s'",
+                    "Autocomplete підтверджено значенням поля. closed=%s desired='%s' current='%s'",
                     closed,
                     desired,
                     cur,
@@ -368,14 +368,14 @@ class AutocompleteMixin:
 
         if allow_free_text and closed:
             logger.debug(
-                "Autocomplete treated as success by dropdown close (free-text). desired='%s' current='%s'",
+                "Autocomplete вважається успішним через закриття списку (вільний текст). desired='%s' current='%s'",
                 desired,
                 cur,
             )
             return True
 
         logger.warning(
-            "Autocomplete: not confirmed. closed=%s desired='%s' current='%s'",
+            "Autocomplete: не підтверджено. closed=%s desired='%s' current='%s'",
             closed,
             desired,
             cur,
@@ -396,7 +396,7 @@ class AutocompleteMixin:
         ctrl = self._find_control_by_label(section, label)
         if not ctrl:
             logger.warning(
-                "Autocomplete control not found for key='%s' label='%s'", key, label
+                "Autocomplete: елемент керування не знайдено для key='%s' label='%s'", key, label
             )
             return
 
@@ -407,7 +407,7 @@ class AutocompleteMixin:
         )
         desired = ("" if value is None else str(value)).strip()
         if not desired:
-            logger.info("Autocomplete skip '%s': empty desired value", key)
+            logger.info("Autocomplete пропуск '%s': бажане значення порожнє", key)
             return
 
         key_lower = key.lower().strip()
@@ -447,11 +447,11 @@ class AutocompleteMixin:
             if not next_key or self._wait_next_field_visible(
                 section, next_key, timeout_ms=1200
             ):
-                logger.info("Autocomplete skip '%s': already '%s'", key, cur_input)
+                logger.info("Autocomplete пропуск '%s': вже заповнено '%s'", key, cur_input)
                 return
 
         logger.info(
-            "Autocomplete fill '%s' = '%s'%s", key, desired, " (force)" if force else ""
+            "Autocomplete заповнення '%s' = '%s'%s", key, desired, " (примусово)" if force else ""
         )
 
         # Split house number into digit prefix and the rest (e.g. "20а" → "20", "а")
@@ -466,7 +466,7 @@ class AutocompleteMixin:
                 _house_rest = desired[len(_house_digit_prefix) :]
 
         def _clear_and_type(text: str | None = None) -> None:
-            """Clear input and type text. If text is None, uses full desired value."""
+            """Очищає поле введення та вводить текст. Якщо text=None, використовує повне бажане значення."""
             to_type = text if text is not None else desired
 
             # Click to focus (needed before fill/type)
@@ -504,18 +504,18 @@ class AutocompleteMixin:
             try:
                 inp.type(to_type, delay=25)
             except Exception as e:
-                logger.debug("inp.type() failed for '%s': %s", to_type, e)
+                logger.debug("inp.type() не вдалось для '%s': %s", to_type, e)
                 try:
                     inp.fill(to_type)
                 except Exception as e2:
-                    logger.warning("inp.fill() also failed for '%s': %s", to_type, e2)
+                    logger.warning("inp.fill() також не вдалось для '%s': %s", to_type, e2)
 
             # Verify text was actually typed
             try:
                 cur = (inp.input_value() or "").strip()
                 if not cur:
                     logger.warning(
-                        "Input empty after typing '%s', retrying with fill()", to_type
+                        "Поле порожнє після введення '%s', повторна спроба через fill()", to_type
                     )
                     try:
                         inp.fill(to_type)
@@ -546,7 +546,7 @@ class AutocompleteMixin:
         # For house: if digits-only didn't match, type full value and retry
         if is_house and _house_rest:
             logger.debug(
-                "House: digits-only didn't match, typing full value '%s'", desired
+                "Будинок: збіг тільки за цифрами не знайдено, вводимо повне значення '%s'", desired
             )
             _clear_and_type(desired)
             if _try_pick():
@@ -554,7 +554,7 @@ class AutocompleteMixin:
                 return
 
         logger.debug(
-            "Retry autocomplete selection (mouse) for '%s' = '%s'", key, desired
+            "Повторна спроба вибору autocomplete (мишею) для '%s' = '%s'", key, desired
         )
         try:
             inp.press("End")
@@ -575,7 +575,7 @@ class AutocompleteMixin:
 
         self._mark_touched(inp)
         logger.warning(
-            "Autocomplete failed to select '%s' for key='%s' next_key='%s' (current='%s')",
+            "Autocomplete не зміг вибрати '%s' для key='%s' next_key='%s' (current='%s')",
             desired,
             key,
             next_key,
@@ -589,7 +589,7 @@ class AutocompleteMixin:
         ctrl = self._find_control_by_label(section, label)
         if not ctrl:
             logger.warning(
-                "Autocomplete(multi) control not found for key=%s (label=%s)",
+                "Autocomplete(multi): елемент керування не знайдено для key=%s (label=%s)",
                 key,
                 label,
             )
@@ -611,13 +611,13 @@ class AutocompleteMixin:
             if not s:
                 continue
             if s.casefold() in existing:
-                logger.info("Autocomplete multi skip %s: already has '%s'", key, s)
+                logger.info("Autocomplete multi пропуск %s: вже є '%s'", key, s)
                 continue
             desired.append(s)
 
         if not desired:
             logger.info(
-                "Autocomplete multi skip %s: nothing to add (already filled)", key
+                "Autocomplete multi пропуск %s: нічого додавати (вже заповнено)", key
             )
             return
 
@@ -628,7 +628,7 @@ class AutocompleteMixin:
         )
 
         for v in desired:
-            logger.debug("Autocomplete multi add %s -> %s", key, v)
+            logger.debug("Autocomplete multi додавання %s -> %s", key, v)
             try:
                 inp.click()
             except Exception:
@@ -646,6 +646,6 @@ class AutocompleteMixin:
             if ok:
                 existing.add(v.casefold())
             else:
-                logger.warning("Autocomplete multi failed to add %s -> %s", key, v)
+                logger.warning("Autocomplete multi не вдалось додати %s -> %s", key, v)
 
         self._mark_touched(inp)

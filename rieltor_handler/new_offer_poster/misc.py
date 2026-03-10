@@ -7,7 +7,7 @@ from typing import Any, List
 
 def deal_text(offer_type: Any) -> str:
     """
-    Normalize deal type to UI button text.
+    Нормалізує тип угоди до тексту UI-кнопки.
     """
     if isinstance(offer_type, Enum):
         v = str(offer_type.value).lower()
@@ -23,8 +23,8 @@ def deal_text(offer_type: Any) -> str:
 
 def truthy_fields_as_keys(dc_obj) -> List[str]:
     """
-    Return list of dataclass field names where value is True.
-    Used for checkbox groups like without_power_supply.
+    Повертає список імен полів dataclass зі значенням True.
+    Використовується для груп чекбоксів на зразок without_power_supply.
     """
     if not is_dataclass(dc_obj):
         return []

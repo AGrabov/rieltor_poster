@@ -33,17 +33,17 @@ def _xpath_literal(s: str) -> str:
 
 
 def _key4(nav: str, section: str, label: str, widget: str) -> str:
-    """Stable string key for matching fields across runs."""
+    """Стабільний рядковий ключ для зіставлення полів між запусками."""
     return "||".join([_cf(nav), _cf(section), _cf(label), _cf(widget)])
 
 
 def _sig3(section: str, label: str, widget: str) -> str:
-    """Dedupe key independent of nav."""
+    """Ключ дедуплікації незалежно від nav."""
     return "||".join([_cf(section), _cf(label), _cf(widget)])
 
 
 def _slug(s: str) -> str:
-    """Filesystem-safe slug (keeps UA/CYR letters)."""
+    """Безпечний для файлової системи slug (зберігає UA/CYR літери)."""
     s = _norm(s)
     s = re.sub(r"\s+", "_", s)
     s = re.sub(r"[^0-9A-Za-zА-Яа-яІіЇїЄєҐґ_\-]+", "_", s)

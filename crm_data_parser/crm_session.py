@@ -1,9 +1,9 @@
-"""CRM session wrapper (Playwright-based).
+"""Обгортка сесії CRM на основі Playwright.
 
-Connects to crm-primes.realtsoft.net, handles login with email/password,
-and provides page navigation with error checking.
+Підключається до crm-primes.realtsoft.net, виконує вхід через email/пароль
+та забезпечує навігацію сторінками з перевіркою помилок.
 
-Usage:
+Використання:
     creds = CrmCredentials(email="...", password="...")
     with CrmSession(creds) as crm:
         crm.login()
@@ -35,13 +35,13 @@ class CrmCredentials:
 
 
 class CrmSession:
-    """Playwright session wrapper for CRM (realtsoft.net).
+    """Обгортка сесії Playwright для CRM (realtsoft.net).
 
-    Responsibilities:
-      - start/stop Playwright
-      - create browser/context/page
-      - login with email/password
-      - navigate with error checking
+    Відповідальності:
+      - запуск/зупинка Playwright
+      - створення browser/context/page
+      - вхід через email/пароль
+      - навігація з перевіркою помилок
     """
 
     BASE_URL = "https://crm-capital.realtsoft.net"
@@ -78,7 +78,7 @@ class CrmSession:
         self._context = self._browser.new_context()
         self.page = self._context.new_page()
         self.page.set_default_timeout(self.default_timeout_ms)
-        logger.debug("Playwright started (CRM session)")
+        logger.debug("Playwright запущено (CRM сесія)")
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -92,19 +92,19 @@ class CrmSession:
             finally:
                 if self._p:
                     self._p.stop()
-        logger.debug("Playwright stopped (CRM session)")
+        logger.debug("Playwright зупинено (CRM сесія)")
 
     def login(self) -> None:
-        """Login to CRM with email/password.
+        """Виконати вхід до CRM через email/пароль.
 
         Raises:
-            RuntimeError: If session not started or login failed.
+            RuntimeError: Якщо сесію не запущено або вхід не вдався.
         """
         if not self.page:
             raise RuntimeError("CRM session not started")
 
         p = self.page
-        logger.info("Navigating to CRM login: %s", self.LOGIN_URL)
+        logger.info("Перехід до сторінки входу CRM: %s", self.LOGIN_URL)
         p.goto(self.LOGIN_URL, wait_until="domcontentloaded")
 
         # Fill login form (email + password)
@@ -120,21 +120,21 @@ class CrmSession:
                 "Check email/password credentials."
             )
 
-        logger.info("CRM login complete, url: %s", p.url)
+        logger.info("Вхід до CRM виконано, url: %s", p.url)
 
     def navigate(self, path: str, wait_until: str = "domcontentloaded") -> None:
-        """Navigate to a CRM page by path.
+        """Перейти до сторінки CRM за шляхом.
 
         Args:
-            path: Relative path (e.g. "/estate/index") or full URL.
-            wait_until: When to consider navigation complete.
+            path: Відносний шлях (напр. "/estate/index") або повний URL.
+            wait_until: Коли вважати навігацію завершеною.
 
         Raises:
-            RuntimeError: If session not started.
+            RuntimeError: Якщо сесію не запущено.
         """
         if not self.page:
             raise RuntimeError("CRM session not started")
 
         url = path if path.startswith("http") else f"{self.BASE_URL}{path}"
-        logger.debug("Navigating to: %s", url)
+        logger.debug("Перехід до: %s", url)
         self.page.goto(url, wait_until=wait_until)

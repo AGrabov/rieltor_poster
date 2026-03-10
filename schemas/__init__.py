@@ -1,7 +1,7 @@
-"""Schema loader for Rieltor offer forms.
+"""Завантажувач схем для форм оголошень Rieltor.
 
-Loads JSON schemas from schemas/schema_dump/{sell|lease}/ and builds
-lookup dicts used by both html_parser and dict_filler.
+Завантажує JSON-схеми з schemas/schema_dump/{sell|lease}/ та будує
+словники пошуку, що використовуються як html_parser, так і dict_filler.
 """
 
 from __future__ import annotations
@@ -43,24 +43,24 @@ ADDRESS_LABELS = frozenset({
 
 @lru_cache(maxsize=16)
 def load_offer_schema(deal_type: str, property_type: str) -> dict:
-    """Load schema JSON and build lookup dicts.
+    """Завантажити JSON схеми та побудувати словники пошуку.
 
     Args:
-        deal_type: "Продаж" or "Оренда"
-        property_type: Schema filename stem, e.g. "Квартира", "Комерційна"
+        deal_type: "Продаж" або "Оренда"
+        property_type: Ім'я файлу схеми без розширення, напр. "Квартира", "Комерційна"
 
     Returns:
-        Dict with keys:
-          - ``fields``: list[dict] — raw field definitions from JSON
-          - ``navigation``: list[str] — section/tab order
-          - ``label_to_field``: dict[str, dict] — label_lower → field dict
-          - ``label_to_section``: dict[str, str] — label_lower → section name
-          - ``label_to_widget``: dict[str, str] — label_lower → widget type
-                                                   (with filler overrides applied)
+        Словник з ключами:
+          - ``fields``: list[dict] — необроблені визначення полів з JSON
+          - ``navigation``: list[str] — порядок секцій/вкладок
+          - ``label_to_field``: dict[str, dict] — label_lower → словник поля
+          - ``label_to_section``: dict[str, str] — label_lower → назва секції
+          - ``label_to_widget``: dict[str, str] — label_lower → тип віджета
+                                                   (з застосованими перевизначеннями filler)
 
     Raises:
-        FileNotFoundError: If the schema file doesn't exist.
-        ValueError: If deal_type is unknown.
+        FileNotFoundError: Якщо файл схеми не існує.
+        ValueError: Якщо deal_type невідомий.
     """
     folder = _DEAL_TYPE_FOLDER.get(deal_type.lower())
     if not folder:

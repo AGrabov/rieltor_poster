@@ -14,11 +14,11 @@ class AddressMixin:
 
     def _map_error_locator(self) -> Locator:
         """
-        ВАЖНО: ошибка лежит в более внешнем MuiBox-root, чем ближайший ancestor карты.
-        Поэтому:
-            - берем .mapboxgl-map
-            - поднимаемся к такому MuiBox-root, который УЖЕ содержит Mui-error
-            - и ищем ошибку внутри него
+        ВАЖЛИВО: помилка знаходиться у більш зовнішньому MuiBox-root, ніж найближчий ancestor карти.
+        Тому:
+            - беремо .mapboxgl-map
+            - піднімаємось до такого MuiBox-root, який вже містить Mui-error
+            - і шукаємо помилку всередині нього
         """
         mapbox = self.page.locator("css=.mapboxgl-map").first
         if mapbox.count() == 0:
@@ -70,11 +70,11 @@ class AddressMixin:
     def _force_reselect_house_number(
         self, sec: Locator, desired: str | None, house_label: str = "Будинок"
     ) -> None:
-        """Стабильная фиксация пина на карте.
+        """Стабільна фіксація піна на карті.
 
-        То, что работает руками: повторно выбрать номер дома из autocomplete.
-        Иногда UI не успевает обработать выбор с первого раза, поэтому делаем несколько попыток
-        и ждём исчезновения ошибки карты.
+        Те, що працює вручну: повторно вибрати номер будинку з autocomplete.
+        Іноді UI не встигає обробити вибір з першого разу, тому робимо кілька спроб
+        і чекаємо зникнення помилки карти.
         """
         house = (desired or "").strip()
         if not house:
@@ -91,12 +91,12 @@ class AddressMixin:
                 house = ""
 
         if not house:
-            logger.warning("Cannot reselect house_number: empty")
+            logger.warning("Неможливо повторно вибрати номер будинку: значення порожнє")
             return
 
         for attempt in range(1, 4):
             logger.warning(
-                "Reselect house_number='%s' to snap map pin to a building (attempt %s/3)",
+                "Повторний вибір номера будинку='%s' для прив'язки піна карти до будівлі (спроба %s/3)",
                 house,
                 attempt,
             )

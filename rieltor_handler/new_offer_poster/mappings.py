@@ -12,13 +12,13 @@ logger = setup_logger(__name__)
 
 class MappingMixin:
     """
-    Отвечает только за:
-        - преобразование значений в текст (_to_text)
-        - получение ожидаемого label по ключу (_expected_label)
-        - поиск контрола по label внутри секции (_find_control_by_label)
+    Відповідає лише за:
+        - перетворення значень у текст (_to_text)
+        - отримання очікуваного label за ключем (_expected_label)
+        - пошук елемента керування за label всередині секції (_find_control_by_label)
 
-    Ключи offer_data = украинские подписи из JSON-схемы (напр. "Число кімнат"),
-    поэтому _expected_label(key) просто возвращает key.
+    Ключі offer_data = українські підписи з JSON-схеми (напр. "Число кімнат"),
+    тому _expected_label(key) просто повертає key.
     """
 
     @staticmethod
@@ -28,16 +28,16 @@ class MappingMixin:
         return "" if v is None else str(v)
 
     def _expected_label(self, key: str) -> Optional[str]:
-        """Key IS the Ukrainian label in the new schema-driven format."""
+        """Ключ і є українським підписом у новому форматі зі схемою."""
         return key
 
     def _find_control_by_label(
         self, section: Locator, label_text: str
     ) -> Optional[Locator]:
         """
-        Надёжный способ: ищем label внутри section, потом поднимаемся до MuiFormControl-root
-        и берём типичный контрол:
-            - input (кроме radio/checkbox)
+        Надійний спосіб: шукаємо label всередині section, потім піднімаємось до MuiFormControl-root
+        і беремо типовий елемент керування:
+            - input (крім radio/checkbox)
             - textarea
             - role=combobox
             - div.MuiSelect-select[role=button]  (MUI Select)
@@ -110,7 +110,7 @@ class MappingMixin:
         if not form.count():
             return None
 
-        logger.debug("Find formcontrol by label: %s", label_text)
+        logger.debug("Пошук formcontrol за label: %s", label_text)
         group = form.locator("xpath=.//div[@role='radiogroup']").first
         if group.count():
             return group

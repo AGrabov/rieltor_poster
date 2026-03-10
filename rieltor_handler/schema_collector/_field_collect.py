@@ -31,7 +31,7 @@ class _FieldCollectMixin:
     def _collect_label_controls_in_scope(
         self, scope: Locator, nav_title: str
     ) -> List[FieldInfo]:
-        """Collect standalone checkboxes and radios (not inside radiogroups)."""
+        """Зібрати окремі прапорці та радіокнопки (не всередині radiogroup)."""
         out: List[FieldInfo] = []
 
         # Find all MuiFormControlLabel-root labels with checkbox/radio inputs
@@ -40,26 +40,26 @@ class _FieldCollectMixin:
         )
         label_count = labels.count()
         logger.debug(
-            "Found %d MuiFormControlLabel-root labels in %s", label_count, nav_title
+            "Знайдено %d міток MuiFormControlLabel-root у %s", label_count, nav_title
         )
 
         for i in range(label_count):
             lab = labels.nth(i)
             try:
                 if not lab.is_visible():
-                    logger.debug("Label %d not visible, skipping", i)
+                    logger.debug("Мітка %d не видима, пропускаємо", i)
                     continue
             except Exception:
                 pass
 
             # Skip if inside a radiogroup (those are collected separately)
             if lab.locator("xpath=ancestor::*[@role='radiogroup'][1]").count():
-                logger.debug("Label %d is inside radiogroup, skipping", i)
+                logger.debug("Мітка %d всередині radiogroup, пропускаємо", i)
                 continue
 
             txt = self._label_text_labelcontrol(lab)
             if not txt:
-                logger.debug("Label %d has no text, skipping", i)
+                logger.debug("Мітка %d без тексту, пропускаємо", i)
                 continue
 
             inp = lab.locator("css=input").first
@@ -81,7 +81,7 @@ class _FieldCollectMixin:
                 meta["aria_label"] = aria_label
 
             logger.debug(
-                "Found standalone %s: '%s' (section=%s)",
+                "Знайдено окремий %s: '%s' (section=%s)",
                 widget,
                 txt,
                 self._nearest_h6_title(lab) or nav_title,
@@ -105,7 +105,7 @@ class _FieldCollectMixin:
         )
         checkbox_count = checkboxes.count()
         logger.debug(
-            "Found %d MuiCheckbox-root labels in %s", checkbox_count, nav_title
+            "Знайдено %d міток MuiCheckbox-root у %s", checkbox_count, nav_title
         )
 
         already_found = {f.label.casefold() for f in out}
@@ -146,7 +146,7 @@ class _FieldCollectMixin:
                 meta["checked"] = True
 
             logger.debug(
-                "Found MuiCheckbox standalone: '%s' (section=%s)",
+                "Знайдено окремий MuiCheckbox: '%s' (section=%s)",
                 txt,
                 self._nearest_h6_title(lab) or nav_title,
             )
@@ -163,7 +163,7 @@ class _FieldCollectMixin:
                 )
             )
 
-        logger.debug("Total standalone controls in %s: %d", nav_title, len(out))
+        logger.debug("Всього окремих елементів у %s: %d", nav_title, len(out))
         return out
 
     def _collect_fields_in_scope(
@@ -171,9 +171,9 @@ class _FieldCollectMixin:
     ) -> List[FieldInfo]:
         out: List[FieldInfo] = []
 
-        logger.debug("Collect fields in scope: %s", nav_title)
+        logger.debug("Збір полів у scope: %s", nav_title)
         forms = self._collect_forms_in_scope(scope)
-        logger.debug("Found forms: %d", len(forms))
+        logger.debug("Знайдено форм: %d", len(forms))
 
         for idx, form in enumerate(forms):
             section = self._nearest_h6_title(form) or nav_title
@@ -325,9 +325,9 @@ class _FieldCollectMixin:
                 cached = self._select_options_cache.get(cache_key)
                 if cached is not None:
                     options = cached
-                    logger.debug("Select cache hit: %s", cache_key)
+                    logger.debug("Кеш select: влучання %s", cache_key)
                 else:
-                    logger.debug("Select cache miss: %s", cache_key)
+                    logger.debug("Кеш select: промах %s", cache_key)
                     options, select_meta = self._collect_select_options(form)
                     self._select_options_cache[cache_key] = options
                     # Merge select metadata (is_multiselect, etc.)
@@ -340,15 +340,15 @@ class _FieldCollectMixin:
                 cached = self._select_options_cache.get(cache_key)
                 if cached is not None:
                     options = cached
-                    logger.debug("Autocomplete cache hit: %s", cache_key)
+                    logger.debug("Кеш autocomplete: влучання %s", cache_key)
                 else:
-                    logger.debug("Autocomplete cache miss: %s", cache_key)
+                    logger.debug("Кеш autocomplete: промах %s", cache_key)
                     try:
                         options = self._collect_autocomplete_options(form)
                         self._select_options_cache[cache_key] = options
                     except Exception as e:
                         logger.warning(
-                            "Failed to collect autocomplete options for %s: %s",
+                            "Не вдалося зібрати варіанти autocomplete для %s: %s",
                             label,
                             e,
                         )
@@ -367,37 +367,37 @@ class _FieldCollectMixin:
             )
 
         out.extend(self._collect_label_controls_in_scope(scope, nav_title))
-        logger.debug("Collected fields: %s => %d", nav_title, len(out))
+        logger.debug("Зібрано полів: %s => %d", nav_title, len(out))
         return out
 
     # ---------------- schema dump ----------------
     def collect_schema_dynamic_h6(self) -> Dict[str, Any]:
-        """Collect schema by traversing current page.
+        """Зібрати схему шляхом обходу поточної сторінки.
 
-        Dedupe strategy:
-          1) strict key4 (nav, section, label, widget)
-          2) cross-nav key sig3 (section, label, widget) with meta.navs
+        Стратегія дедуплікації:
+          1) строгий ключ key4 (nav, section, label, widget)
+          2) крос-nav ключ sig3 (section, label, widget) з meta.navs
         """
         self.open_all_blocks_sticky()
 
         nav_items = self.list_navigation_items()
         all_fields: List[FieldInfo] = []
 
-        logger.info("Collect schema: nav_items=%d", len(nav_items))
+        logger.info("Збір схеми: nav_items=%d", len(nav_items))
 
         for title, occ in nav_items:
             if title in self._NAV_EXCLUDE_FIELDS:
                 continue
-            logger.debug("Collect nav: %s", title)
+            logger.debug("Збір nav: %s", title)
             scope = self._scope_for_nav_item(title, occ)
             if scope is None:
-                logger.debug("Nav scope not found: %s", title)
+                logger.debug("Nav scope не знайдено: %s", title)
                 continue
             self.page.wait_for_timeout(self.ui_delay_ms)
             fields = self._collect_fields_in_scope(scope, title)
             all_fields.extend(fields)
 
-        logger.info("Total collected fields (raw): %d", len(all_fields))
+        logger.info("Всього зібрано полів (raw): %d", len(all_fields))
 
         def _merge_opts(a: List[str], b: List[str]) -> List[str]:
             if not a:
@@ -440,7 +440,7 @@ class _FieldCollectMixin:
 
         uniq4 = [by_key4[k] for k in order4]
         logger.info(
-            "Fields unique by key4=%d (merged_dups=%d)", len(uniq4), merged_dups4
+            "Унікальних полів за key4=%d (об'єднано дублів=%d)", len(uniq4), merged_dups4
         )
 
         # 2) cross-nav merge by sig3
@@ -472,7 +472,7 @@ class _FieldCollectMixin:
 
         uniq = [by_sig[s] for s in order_sig]
         logger.info(
-            "Fields unique by sig3=%d (merged_cross_nav=%d)",
+            "Унікальних полів за sig3=%d (об'єднано крос-nav=%d)",
             len(uniq),
             merged_cross_nav,
         )
