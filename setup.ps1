@@ -50,11 +50,15 @@ Write-Step "Checking uv"
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Warn "uv not found -- installing..."
     Invoke-RestMethod https://astral.sh/uv/install.ps1 | Invoke-Expression
-    Assert-Exit
 
     $uvBin = "$env:USERPROFILE\.local\bin"
     if ($env:PATH -notlike "*$uvBin*") {
         $env:PATH = "$uvBin;$env:PATH"
+    }
+
+    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+        Write-Host "[FAIL] uv installation failed" -ForegroundColor Red
+        exit 1
     }
     Write-OK "uv installed: $(uv --version)"
 } else {
@@ -65,8 +69,12 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 
 Write-Step "Checking Python $PyVer"
 
-$pyPath = uv python find $PyVer 2>$null
-if (-not $pyPath) {
+$pyPath = $null
+try {
+    $pyPath = uv python find $PyVer 2>$null
+} catch { $pyPath = $null }
+
+if (-not $pyPath -or $LASTEXITCODE -ne 0) {
     Write-Warn "Python $PyVer not found -- installing via uv..."
     uv python install $PyVer; Assert-Exit
     Write-OK "Python $PyVer installed"
