@@ -77,9 +77,8 @@ class MappingMixin:
 
         ctrl = form.locator(
             "css="
-            "input:not([type='radio']):not([type='checkbox']), "
+            "input:not([type='radio']):not([type='checkbox']):not([aria-hidden='true']), "
             "textarea, "
-            "[role='combobox'], "
             "div.MuiSelect-select[role='button']"
         ).first
 

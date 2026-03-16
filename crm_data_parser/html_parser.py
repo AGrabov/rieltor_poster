@@ -471,11 +471,18 @@ class HTMLOfferParser:
                     if label_lower in _INTERNAL_LABELS:
                         continue
 
-                    # Special: "Наявність генератору або інвертору: Так" →
-                    # "Працює без світла": "Резервне живлення квартири (акумулятори)"
+                    # Special: "Наявність генератору або інвертору: Так" → "Працює без світла"
+                    # Option text differs by property type (e.g. Квартира vs Будинок)
                     if label_lower == "наявність генератору або інвертору":
                         if value_text.lower() == "так":
-                            result["Працює без світла"] = "Резервне живлення квартири (акумулятори)"
+                            # Pick the correct option from the loaded schema (differs per property type)
+                            _fi = self.label_to_field.get("працює без світла")
+                            _opts = _fi.get("options", []) if _fi else []
+                            _backup = next(
+                                (o for o in _opts if "резервне живлення" in o.lower()),
+                                "Резервне живлення квартири (акумулятори)",
+                            )
+                            result["Працює без світла"] = _backup
                         continue
 
                     # Look up field in schema by HTML label
