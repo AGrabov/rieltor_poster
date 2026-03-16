@@ -18,7 +18,7 @@ from offer_db import OfferDB
 # ── Конфіг ───────────────────────────────────────────────────────────
 
 LOG_FILE = Path(__file__).parent / "logs" / "rieltor.log"
-LOG_TAIL = 150
+LOG_TAIL = 100
 AUTO_REFRESH_SEC = 30
 STATUSES = ["new", "posted", "failed", "skipped"]
 STATUS_LABELS = {

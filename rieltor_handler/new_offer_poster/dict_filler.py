@@ -19,8 +19,11 @@ from .validation import FormValidationError, ValidationMixin
 
 logger = setup_logger(__name__)
 
-# Photo block keys (programmatic) → matched to "Блок N з 5: ..." sections in order
-_PHOTO_BLOCK_KEY_ORDER = ("apartment", "interior", "layout", "yard", "infrastructure")
+# Photo block keys (offer_data keys that contain photo/description dicts)
+_PHOTO_BLOCK_KEYS = frozenset({"apartment", "interior", "layout", "yard", "infrastructure"})
+
+# Section names used across all property type schemas for photos/description
+_PHOTO_SECTION_NAMES = ("Опис, фотографії, відеотур", "Фото, відео")
 
 # Keys in offer_data that are handled specially (not schema fields)
 _SPECIAL_KEYS = frozenset(
@@ -80,12 +83,17 @@ class DictOfferFormFiller(
         # Load schema and build lookups
         self._schema = load_offer_schema(deal_type, property_type)
 
-        # Build photo block key → section title mapping from navigation
+        # Map photo block keys → the actual photo/description section in the schema.
+        # All schemas use a single section (e.g. "Опис, фотографії, відеотур"),
+        # NOT multiple "Блок N з 5:" sections.
         self._photo_block_sections: dict[str, str] = {}
-        block_sections = [n for n in self._schema["navigation"] if n.startswith("Блок ")]
-        for i, section_name in enumerate(block_sections):
-            if i < len(_PHOTO_BLOCK_KEY_ORDER):
-                self._photo_block_sections[_PHOTO_BLOCK_KEY_ORDER[i]] = section_name
+        photo_section = next(
+            (n for n in self._schema["navigation"] if n in _PHOTO_SECTION_NAMES),
+            None,
+        )
+        if photo_section:
+            for key in _PHOTO_BLOCK_KEYS:
+                self._photo_block_sections[key] = photo_section
 
         logger.debug(
             "Схему завантажено: %d полів, фото-блоки: %s",

@@ -268,6 +268,7 @@ def phase2_post(
             poster.login()
 
             for idx, offer in enumerate(offers, 1):
+                offer_data: dict = {}
                 try:
                     offer_data = offer.offer_data
                     pt = offer_data.get("property_type", "Квартира")
@@ -308,6 +309,12 @@ def phase2_post(
                             offer.estate_id,
                             report,
                         )
+                        logger.error(
+                            "Дані об'єкта %d (article=%s):\n%s",
+                            offer.estate_id,
+                            offer.article,
+                            json.dumps(offer_data, ensure_ascii=False, indent=2),
+                        )
                         db.mark_failed(offer.estate_id, report)
                     else:
                         db.mark_posted(offer.estate_id, rieltor_id)
@@ -319,14 +326,32 @@ def phase2_post(
 
                 except FormValidationError as e:
                     logger.error("Помилка валідації для об'єкта %d: %s", offer.estate_id, e)
+                    logger.error(
+                        "Дані об'єкта %d (article=%s):\n%s",
+                        offer.estate_id,
+                        offer.article,
+                        json.dumps(offer_data, ensure_ascii=False, indent=2),
+                    )
                     db.mark_failed(offer.estate_id, e.errors)
 
                 except RieltorErrorPageException as e:
                     logger.error("Сторінка помилки Rieltor для об'єкта %d: %s", offer.estate_id, e)
+                    logger.error(
+                        "Дані об'єкта %d (article=%s):\n%s",
+                        offer.estate_id,
+                        offer.article,
+                        json.dumps(offer_data, ensure_ascii=False, indent=2),
+                    )
                     db.mark_failed(offer.estate_id, [{"error": str(e)}])
 
                 except Exception:
                     logger.exception("Непередбачена помилка при публікації об'єкта %d", offer.estate_id)
+                    logger.error(
+                        "Дані об'єкта %d (article=%s):\n%s",
+                        offer.estate_id,
+                        offer.article,
+                        json.dumps(offer_data, ensure_ascii=False, indent=2),
+                    )
                     db.mark_failed(offer.estate_id, [{"error": "unexpected error"}])
 
     logger.info("Фаза 2 завершена: %d оголошень опубліковано", posted)
