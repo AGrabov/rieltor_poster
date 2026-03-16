@@ -391,6 +391,40 @@ class AutocompleteMixin:
         )
         return False
 
+    # -------- debug helpers --------
+    _DEBUG_LOG_KEYS = frozenset({"вулиця", "район"})
+
+    def _debug_log_dropdown_options(self, key: str, stage: str) -> None:
+        """Log visible dropdown options for Вулиця and Район fields (debug only)."""
+        if key.lower().strip() not in self._DEBUG_LOG_KEYS:
+            return
+        try:
+            opts = self.page.evaluate(
+                """() => {
+                    const seen = new Set();
+                    const result = [];
+                    for (const sel of ['[role="option"]', '.MuiAutocomplete-option', '[role="listbox"] li']) {
+                        for (const el of document.querySelectorAll(sel)) {
+                            if (seen.has(el)) continue;
+                            seen.add(el);
+                            const cs = getComputedStyle(el);
+                            if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+                            const r = el.getBoundingClientRect();
+                            if (r.width < 5 || r.height < 5) continue;
+                            const txt = (el.innerText || '').trim();
+                            if (txt) result.push(txt);
+                        }
+                    }
+                    return result;
+                }"""
+            )
+            if opts:
+                logger.debug("'%s' [%s] опції (%d): %s", key, stage, len(opts), opts)
+            else:
+                logger.debug("'%s' [%s] — список порожній або ще не відкрито", key, stage)
+        except Exception as exc:
+            logger.debug("'%s' [%s] — не вдалося зчитати опції: %s", key, stage, exc)
+
     # -------- fill wrappers --------
     def _fill_autocomplete(
         self,
@@ -559,8 +593,10 @@ class AutocompleteMixin:
 
         # First attempt: type digits only (for house) or full text
         _clear_and_type()
+        self._debug_log_dropdown_options(key, "до вибору")
         if _try_pick():
             self._mark_touched(inp)
+            self._debug_log_dropdown_options(key, "після вибору")
             return
 
         # For house: if digits-only didn't match, type full value and retry
@@ -588,8 +624,10 @@ class AutocompleteMixin:
             except Exception:
                 pass
 
+        self._debug_log_dropdown_options(key, "повторна спроба")
         if _try_pick():
             self._mark_touched(inp)
+            self._debug_log_dropdown_options(key, "після вибору")
             return
 
         try:

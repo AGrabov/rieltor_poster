@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from typing import Dict, List
 
 from setup_logger import setup_logger
 
@@ -141,9 +140,12 @@ class DescriptionAnalyzer:
         """
         # 1) "мг" → "м²" FIRST so "212мгДілянка" → "212 м²Ділянка"
         text = re.sub(r'(\d)\s*мг\b', r'\1 м²', text)
-        # 2) Insert ". " at lowercase/digit/²→uppercase boundary:
-        #    "²" included because "м²Ділянка" appears after step 1
-        text = re.sub(r'([а-яіїєґ\d²])([А-ЯІЇЄҐ])', r'\1. \2', text)
+        # 2) Insert ". " at lowercase/digit/²→uppercase boundary ONLY when the uppercase
+        #    letter starts a real word (≥2 lowercase follow it).
+        #    "сотокПаркування" → "соток. Паркування" ✓
+        #    "кВт" (В followed by only 1 lowercase) → unchanged ✓
+        #    "м²Ділянка" → "м². Ділянка" ✓ (² in first char class)
+        text = re.sub(r'([а-яіїєґ\d²])([А-ЯІЇЄҐ][а-яіїєґ]{2,})', r'\1. \2', text)
         # 3) Normalize whitespace
         text = re.sub(r'[ \t]+', ' ', text)
         return text.strip()
@@ -528,9 +530,10 @@ class DescriptionAnalyzer:
                 "п'ять": 5,
             }
             bathroom_count = 0
-            # 1) Explicit number before санвузл: "2 санвузли", "два санвузли"
+            # 1) Explicit number before санвузл: "2 санвузли", "два санвузли", "3 с/в"
             num_match = re.search(
-                r"(\d+|один|одн\w*|два|двох|двома|три|трьох|трьома|чотири|п\'ять)\s+санвуз",
+                r"(\d+|один|одн\w*|два|двох|двома|три|трьох|трьома|чотири|п\'ять)"
+                r"\s*(?:санвуз|с\.?\s*/\s*в\.?(?:\b|$))",
                 text,
             )
             if num_match:
@@ -598,6 +601,51 @@ class DescriptionAnalyzer:
                     if self.debug:
                         logger.debug(f"Вилучено Висота стель={height}")
                     break
+
+        # --- Area sanity check ---
+        # Living area + kitchen area must not exceed total area.
+        # If they do, the sub-areas were likely misextracted from the description.
+        _total_lbl = "Загальна площа, м²"
+        _living_lbl = "Житлова площа, м²"
+        _kitchen_lbl = "Площа кухні, м²"
+
+        def _to_float(lbl: str) -> float | None:
+            val = extracted.get(lbl) or existing_data.get(lbl)
+            try:
+                return float(str(val).replace(",", ".")) if val is not None else None
+            except (ValueError, TypeError):
+                return None
+
+        _total = _to_float(_total_lbl)
+        _living = _to_float(_living_lbl)
+        _kitchen = _to_float(_kitchen_lbl)
+        if _total and (_living or _kitchen):
+            _sum = (_living or 0.0) + (_kitchen or 0.0)
+            if _sum > _total:
+                # Both sub-areas in extracted → scale proportionally to fit total
+                _both_extracted = _living_lbl in extracted and _kitchen_lbl in extracted
+                if _both_extracted and _living and _kitchen:
+                    _factor = _total / _sum
+                    extracted[_living_lbl] = str(round(_living * _factor, 1))
+                    extracted[_kitchen_lbl] = str(round(_kitchen * _factor, 1))
+                    logger.warning(
+                        "Площа: %.1f + %.1f > %.1f — масштабовано (k=%.3f): %.1f + %.1f",
+                        _living, _kitchen, _total, _factor,
+                        float(extracted[_living_lbl]), float(extracted[_kitchen_lbl]),
+                    )
+                else:
+                    # Only one sub-area is freshly extracted — recalculate it as remainder
+                    for _lbl, _val, _other in (
+                        (_living_lbl, _living, _kitchen),
+                        (_kitchen_lbl, _kitchen, _living),
+                    ):
+                        if _lbl in extracted and _val is not None:
+                            _recalc = max(0.0, _total - (_other or 0.0))
+                            logger.warning(
+                                "Площа: %s=%.1f перевищує загальну — перераховано як %.1f",
+                                _lbl, _val, _recalc,
+                            )
+                            extracted[_lbl] = str(round(_recalc, 1))
 
         return extracted
 
