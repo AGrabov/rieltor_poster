@@ -3,20 +3,19 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List
 
-from playwright.sync_api import Page, Locator
-
-from setup_logger import setup_logger
-
-from .structure import StructureMixin
-from .mappings import MappingMixin
-from .autocomplete import AutocompleteMixin
-from .fields import FieldsMixin
-from .address import AddressMixin
-from .photos import PhotosMixin, _LABEL_DESCRIPTION, _LABEL_VIDEO_URL
-from .validation import ValidationMixin, FormValidationError
-from .misc import deal_text
+from playwright.sync_api import Locator, Page
 
 from schemas import load_offer_schema
+from setup_logger import setup_logger
+
+from .address import AddressMixin
+from .autocomplete import AutocompleteMixin
+from .fields import FieldsMixin
+from .mappings import MappingMixin
+from .misc import deal_text
+from .photos import _LABEL_DESCRIPTION, _LABEL_VIDEO_URL, PhotosMixin
+from .structure import StructureMixin
+from .validation import FormValidationError, ValidationMixin
 
 logger = setup_logger(__name__)
 
@@ -82,10 +81,8 @@ class DictOfferFormFiller(
         self._schema = load_offer_schema(deal_type, property_type)
 
         # Build photo block key → section title mapping from navigation
-        self._photo_block_sections: Dict[str, str] = {}
-        block_sections = [
-            n for n in self._schema["navigation"] if n.startswith("Блок ")
-        ]
+        self._photo_block_sections: dict[str, str] = {}
+        block_sections = [n for n in self._schema["navigation"] if n.startswith("Блок ")]
         for i, section_name in enumerate(block_sections):
             if i < len(_PHOTO_BLOCK_KEY_ORDER):
                 self._photo_block_sections[_PHOTO_BLOCK_KEY_ORDER[i]] = section_name
@@ -102,9 +99,7 @@ class DictOfferFormFiller(
         self.page.goto(self.CREATE_URL, wait_until="domcontentloaded")
         # Wait for MUI to fully render (h6 sections + card buttons)
         try:
-            self.page.locator("h6", has_text="Тип угоди").first.wait_for(
-                state="visible", timeout=15_000
-            )
+            self.page.locator("h6", has_text="Тип угоди").first.wait_for(state="visible", timeout=15_000)
             self.page.wait_for_timeout(1500)
         except Exception:
             pass
@@ -131,9 +126,7 @@ class DictOfferFormFiller(
 
         # ── Phase 1: offer_type → property_type → address (strict order) ──
         if not self._is_empty_value(offer_data.get("offer_type")):
-            self._click_box_button_in_section(
-                root, "Тип угоди", deal_text(offer_data["offer_type"])
-            )
+            self._click_box_button_in_section(root, "Тип угоди", deal_text(offer_data["offer_type"]))
 
         if not self._is_empty_value(offer_data.get("property_type")):
             self._click_box_button_in_section(
@@ -180,15 +173,10 @@ class DictOfferFormFiller(
                 continue
 
             section = self._schema["label_to_section"].get(label_lower, "")
-            widget = self._schema["label_to_widget"].get(
-                label_lower, field_info.get("widget", "text")
-            )
+            widget = self._schema["label_to_widget"].get(label_lower, field_info.get("widget", "text"))
 
             # Open "Додаткові параметри" if needed (lazy, once)
-            if (
-                not state["additional_opened"]
-                and "Додаткові параметри" in self._schema["navigation"]
-            ):
+            if not state["additional_opened"] and "Додаткові параметри" in self._schema["navigation"]:
                 if self._is_additional_param(field_info):
                     self._click_section_toggle(root, "Додаткові параметри")
                     state["additional_opened"] = True
@@ -203,9 +191,7 @@ class DictOfferFormFiller(
         # the site's default "Є" which requires filling child fields
         _COMMISSION_LABEL = "Комісія з покупця/орендатора"
         if _COMMISSION_LABEL not in offer_data:
-            commission_field = self._schema["label_to_field"].get(
-                _COMMISSION_LABEL.lower().strip()
-            )
+            commission_field = self._schema["label_to_field"].get(_COMMISSION_LABEL.lower().strip())
             if commission_field:
                 self._set_commission_no(root, _COMMISSION_LABEL)
 
@@ -254,9 +240,7 @@ class DictOfferFormFiller(
     ) -> None:
         """Заповнює одне поле за допомогою обробника, специфічного для типу віджету."""
         if widget == "box_select":
-            self._click_box_button_in_section(
-                root, section, self._to_text(value).lower()
-            )
+            self._click_box_button_in_section(root, section, self._to_text(value).lower())
             return
 
         if widget == "text_autocomplete":
@@ -408,9 +392,7 @@ class DictOfferFormFiller(
 
     def _handle_map_error(self, root: Locator, address_data: dict) -> None:
         """Обробляє помилку піна карти — спроба прив'язати пін повторним вибором номера будинку."""
-        logger.warning(
-            "Видно помилку піна карти — спроба прив'язки через повторний вибір номера будинку"
-        )
+        logger.warning("Видно помилку піна карти — спроба прив'язки через повторний вибір номера будинку")
 
         if not address_data:
             return
@@ -425,9 +407,7 @@ class DictOfferFormFiller(
             sec_addr = self._section(root, "Адреса об'єкта")
             house = _get("Будинок")
             if house:
-                self._force_reselect_house_number(
-                    sec_addr, str(house), house_label="Будинок"
-                )
+                self._force_reselect_house_number(sec_addr, str(house), house_label="Будинок")
         except Exception:
             pass
 
@@ -444,6 +424,9 @@ class DictOfferFormFiller(
         і вже всередині неї шукаємо textarea.
         """
         text = (text or "").strip()
+        if len(text) > 250:
+            text = text[:250]
+            logger.warning("personal_notes обрізано до 250 символів")
         if not text:
             return
 
@@ -501,9 +484,7 @@ class DictOfferFormFiller(
         try:
             sec = self._section(root, "Основні параметри")
         except Exception:
-            logger.warning(
-                "Не вдалось знайти секцію 'Основні параметри' для радіокнопки комісії"
-            )
+            logger.warning("Не вдалось знайти секцію 'Основні параметри' для радіокнопки комісії")
             return
 
         lit = self._xpath_literal(label)
@@ -518,16 +499,12 @@ class DictOfferFormFiller(
             logger.warning("Обгортку радіокнопки комісії не знайдено для '%s'", label)
             return
 
-        nemaye = wrapper.locator(
-            "xpath=.//label[contains(normalize-space(.), 'Немає')]"
-        ).first
+        nemaye = wrapper.locator("xpath=.//label[contains(normalize-space(.), 'Немає')]").first
         if nemaye.count():
             nemaye.click()
             logger.info("Встановлено '%s' у 'Немає' (дані комісії не надано)", label)
         else:
-            logger.warning(
-                "Опція 'Немає' не знайдена у радіокнопці комісії для '%s'", label
-            )
+            logger.warning("Опція 'Немає' не знайдена у радіокнопці комісії для '%s'", label)
 
     # ── Photos ──
 
@@ -569,7 +546,7 @@ class DictOfferFormFiller(
 
     # ── Checklists ──
 
-    def _checklist_items(self, key: str, value: Any) -> List[str]:
+    def _checklist_items(self, key: str, value: Any) -> list[str]:
         """Перетворює значення чекліста на UI-підписи.
 
         У новому форматі зі схемою значення чеклістів у offer_data вже є
@@ -586,7 +563,7 @@ class DictOfferFormFiller(
         *,
         publish_immediately: bool,
         raise_on_errors: bool = False,
-    ) -> List[dict]:
+    ) -> list[dict]:
         """Спільна логіка відправки: збереження чернетки або публікація."""
         action = "publish" if publish_immediately else "save"
         btn_text = "Опублікувати" if publish_immediately else "Зберегти чернетку"
@@ -612,9 +589,7 @@ class DictOfferFormFiller(
         try:
             root_pre = self._new_offer_root()
             for e in self.collect_validation_report(root_pre):
-                pre_errors.add(
-                    (e.get("section", ""), e.get("field", ""), e.get("message", ""))
-                )
+                pre_errors.add((e.get("section", ""), e.get("field", ""), e.get("message", "")))
         except Exception:
             pass
 
@@ -641,10 +616,7 @@ class DictOfferFormFiller(
         root_check = self._new_offer_root()
         all_errors = self.collect_validation_report(root_check)
         new_errors = [
-            e
-            for e in all_errors
-            if (e.get("section", ""), e.get("field", ""), e.get("message", ""))
-            not in pre_errors
+            e for e in all_errors if (e.get("section", ""), e.get("field", ""), e.get("message", "")) not in pre_errors
         ]
         if new_errors:
             logger.warning("Помилки валідації на стороні клієнта після %s:", action)
@@ -718,26 +690,20 @@ class DictOfferFormFiller(
     def save(self) -> None:
         self._submit_and_get_report(publish_immediately=False, raise_on_errors=True)
 
-    def save_and_get_report(self, publish_immediately: bool = False) -> List[dict]:
-        return self._submit_and_get_report(
-            publish_immediately=publish_immediately, raise_on_errors=False
-        )
+    def save_and_get_report(self, publish_immediately: bool = False) -> list[dict]:
+        return self._submit_and_get_report(publish_immediately=publish_immediately, raise_on_errors=False)
 
     def publish(self) -> None:
         self._submit_and_get_report(publish_immediately=True, raise_on_errors=True)
 
-    def publish_and_get_report(self) -> List[dict]:
-        return self._submit_and_get_report(
-            publish_immediately=True, raise_on_errors=False
-        )
+    def publish_and_get_report(self) -> list[dict]:
+        return self._submit_and_get_report(publish_immediately=True, raise_on_errors=False)
 
     # ── Helpers ──
 
-    def _upload_file_in_section(
-        self, root: Locator, section: str, key: str, value: Any
-    ) -> None:
+    def _upload_file_in_section(self, root: Locator, section: str, key: str, value: Any) -> None:
         """Завантажує файл(и) у секції."""
-        files: List[str] = []
+        files: list[str] = []
         if isinstance(value, str):
             if value.strip():
                 files = [value.strip()]

@@ -4,9 +4,9 @@ from typing import Any, Dict, Set
 
 from playwright.sync_api import Locator
 
-from .helpers import _cf, _norm, _key4
-
 from setup_logger import setup_logger
+
+from .helpers import _cf, _key4, _norm
 
 logger = setup_logger(__name__)
 
@@ -29,10 +29,7 @@ class _SmokeFillMixin:
         for i in range(labs.count()):
             label = labs.nth(i)
             try:
-                t = _norm(
-                    label.locator("css=span.MuiFormControlLabel-label").inner_text()
-                    or ""
-                )
+                t = _norm(label.locator("css=span.MuiFormControlLabel-label").inner_text() or "")
             except Exception:
                 t = ""
             if _cf(t) == _cf(pref):
@@ -43,9 +40,7 @@ class _SmokeFillMixin:
                 return ok
         return False
 
-    def smoke_fill_visible_fields(
-        self, *, skip_nav_titles: Set[str] | None = None
-    ) -> int:
+    def smoke_fill_visible_fields(self, *, skip_nav_titles: set[str] | None = None) -> int:
         """Заповнити лише безпечні віджети для активації динамічних полів: text/textarea/select/radio.
         Пропускає прапорці та завантаження файлів.
         """
@@ -97,11 +92,7 @@ class _SmokeFillMixin:
                 continue
 
             if widget in ("text", "multiline_text"):
-                inp = (
-                    f.locator("css=input").first
-                    if widget == "text"
-                    else f.locator("css=textarea").first
-                )
+                inp = f.locator("css=input").first if widget == "text" else f.locator("css=textarea").first
                 if not inp.count():
                     continue
                 try:
@@ -152,17 +143,13 @@ class _SmokeFillMixin:
                     self.page.wait_for_timeout(self.ui_delay_ms + 300)
                     # Try to pick first option if any appear
                     debug_label = f"smoke_fill({label})"
-                    visible = self._wait_autocomplete_options(
-                        inp, timeout_s=2.0, debug_label=debug_label
-                    )
+                    visible = self._wait_autocomplete_options(inp, timeout_s=2.0, debug_label=debug_label)
                     if visible > 0:
-                        click_ok, clicked_text = (
-                            self._click_autocomplete_option_contains(
-                                inp,
-                                "",
-                                allow_first_fallback=True,
-                                debug_label=debug_label,
-                            )
+                        click_ok, clicked_text = self._click_autocomplete_option_contains(
+                            inp,
+                            "",
+                            allow_first_fallback=True,
+                            debug_label=debug_label,
                         )
                         if click_ok:
                             actions += 1
@@ -188,10 +175,10 @@ class _SmokeFillMixin:
         seed_address_city: str = "Київ",
         max_rounds: int = 3,
         smoke_fill: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Заповнити адресу-зерно -> зібрати -> (опціонально smoke fill -> зібрати) до стабілізації схеми."""
-        prev_keys: Set[str] = set()
-        last_schema: Dict[str, Any] = {}
+        prev_keys: set[str] = set()
+        last_schema: dict[str, Any] = {}
 
         for r in range(1, max_rounds + 1):
             logger.info("Раунд виявлення %d/%d", r, max_rounds)

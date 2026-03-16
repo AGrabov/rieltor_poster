@@ -22,9 +22,9 @@ CRM_BASE = "https://crm-primes.realtsoft.net"
 
 def download_estate_photos(
     page: Page,
-    photo_urls: List[str],
+    photo_urls: list[str],
     article: str,
-) -> List[str]:
+) -> list[str]:
     """Завантажити фотографії з CRM через автентифіковану Playwright-сесію.
 
     Args:
@@ -41,7 +41,7 @@ def download_estate_photos(
     dest_dir = PICS_DIR / str(article)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    local_paths: List[str] = []
+    local_paths: list[str] = []
     for i, url in enumerate(photo_urls):
         full_url = url if url.startswith("http") else f"{CRM_BASE}{url}"
         try:
@@ -52,13 +52,9 @@ def download_estate_photos(
                 filepath = dest_dir / filename
                 filepath.write_bytes(response.body())
                 local_paths.append(str(filepath))
-                logger.debug(
-                    "Завантажено фото %d/%d: %s", i + 1, len(photo_urls), filename
-                )
+                logger.debug("Завантажено фото %d/%d: %s", i + 1, len(photo_urls), filename)
             else:
-                logger.warning(
-                    "Не вдалося завантажити %s: HTTP %d", full_url, response.status
-                )
+                logger.warning("Не вдалося завантажити %s: HTTP %d", full_url, response.status)
         except Exception:
             logger.exception("Помилка завантаження фото: %s", full_url)
 

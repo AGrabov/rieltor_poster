@@ -4,18 +4,16 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from playwright.sync_api import Locator
 
-from .helpers import _xpath_literal, _norm
-
 from setup_logger import setup_logger
+
+from .helpers import _norm, _xpath_literal
 
 logger = setup_logger(__name__)
 
 
 class _WidgetMixin:
     # ---------------- widgets/options ----------------
-    def _open_listbox(
-        self, select_btn: Locator, menu_id: str | None
-    ) -> Optional[Locator]:
+    def _open_listbox(self, select_btn: Locator, menu_id: str | None) -> Locator | None:
         for _ in range(2):
             self._click_best_effort(select_btn)
             self.page.wait_for_timeout(self.ui_delay_ms)
@@ -23,9 +21,7 @@ class _WidgetMixin:
             if menu_id:
                 try:
                     lit = _xpath_literal(menu_id)
-                    lb = self.page.locator(
-                        f"xpath=//div[@id={lit}]//*[@role='listbox']"
-                    ).first
+                    lb = self.page.locator(f"xpath=//div[@id={lit}]//*[@role='listbox']").first
                     if lb.count():
                         lb.wait_for(state="visible", timeout=5000)
                         return lb
@@ -41,8 +37,8 @@ class _WidgetMixin:
                     pass
         return None
 
-    def _list_listbox_options(self, listbox: Locator) -> List[str]:
-        out: List[str] = []
+    def _list_listbox_options(self, listbox: Locator) -> list[str]:
+        out: list[str] = []
         opts = listbox.locator("[role='option']")
         for i in range(opts.count()):
             o = opts.nth(i)
@@ -53,8 +49,8 @@ class _WidgetMixin:
             if t:
                 out.append(t)
 
-        seen: Set[str] = set()
-        uniq: List[str] = []
+        seen: set[str] = set()
+        uniq: list[str] = []
         for t in out:
             k = t.casefold()
             if k in seen:
@@ -63,15 +59,13 @@ class _WidgetMixin:
             uniq.append(t)
         return uniq
 
-    def _radio_options(self, rg: Locator) -> List[str]:
-        out: List[str] = []
+    def _radio_options(self, rg: Locator) -> list[str]:
+        out: list[str] = []
         labels = rg.locator("xpath=.//label[.//input[@type='radio']]")
         for i in range(labels.count()):
             lbl = labels.nth(i)
             try:
-                t = _norm(
-                    lbl.locator("css=span.MuiFormControlLabel-label").inner_text() or ""
-                )
+                t = _norm(lbl.locator("css=span.MuiFormControlLabel-label").inner_text() or "")
             except Exception:
                 t = ""
             if not t:
@@ -82,8 +76,8 @@ class _WidgetMixin:
             if t:
                 out.append(t)
 
-        seen: Set[str] = set()
-        uniq: List[str] = []
+        seen: set[str] = set()
+        uniq: list[str] = []
         for t in out:
             k = t.casefold()
             if k in seen:
@@ -92,9 +86,7 @@ class _WidgetMixin:
             uniq.append(t)
         return uniq
 
-    def _collect_select_options(
-        self, form: Locator
-    ) -> Tuple[List[str], Dict[str, Any]]:
+    def _collect_select_options(self, form: Locator) -> tuple[list[str], dict[str, Any]]:
         """Відкрити listbox для select у цій формі та повернути тексти варіантів і метадані."""
         select_btn = form.locator("css=div.MuiSelect-select[role='button']").first
         if not select_btn.count():
@@ -112,7 +104,7 @@ class _WidgetMixin:
             return [], {}
 
         # Detect multiselect by checking for checkboxes
-        select_meta: Dict[str, Any] = {}
+        select_meta: dict[str, Any] = {}
         try:
             has_checkboxes = lb.locator("input[type='checkbox']").count() > 0
             if has_checkboxes:
@@ -133,9 +125,7 @@ class _WidgetMixin:
         self.page.wait_for_timeout(self.ui_delay_ms)
         return opts, select_meta
 
-    def _collect_autocomplete_options(
-        self, form: Locator, query: str = "а"
-    ) -> List[str]:
+    def _collect_autocomplete_options(self, form: Locator, query: str = "а") -> list[str]:
         """Активувати випадаючий список autocomplete запитом і зібрати видимі варіанти."""
         inp = form.locator("css=input").first
         if not inp.count():
@@ -178,7 +168,7 @@ class _WidgetMixin:
         self.page.wait_for_timeout(self.ui_delay_ms + 200)
 
         # Wait for options and collect them
-        options: List[str] = []
+        options: list[str] = []
         try:
             # Wait briefly for options to appear
             visible_cnt = 0
@@ -282,10 +272,8 @@ class _WidgetMixin:
 
         return options
 
-    def _detect_widget_and_options_formcontrol(
-        self, form: Locator
-    ) -> Tuple[str, List[str], Dict[str, Any]]:
-        meta: Dict[str, Any] = {}
+    def _detect_widget_and_options_formcontrol(self, form: Locator) -> tuple[str, list[str], dict[str, Any]]:
+        meta: dict[str, Any] = {}
 
         rg = form.locator("css=[role='radiogroup']").first
         if rg.count():
@@ -314,9 +302,7 @@ class _WidgetMixin:
         if form.locator("css=textarea").count():
             return "multiline_text", [], meta
 
-        if form.locator(
-            "css=input:not([type='radio']):not([type='checkbox']):not([type='file'])"
-        ).count():
+        if form.locator("css=input:not([type='radio']):not([type='checkbox']):not([type='file'])").count():
             inp = form.locator("css=input").first
             try:
                 meta["input_type"] = inp.get_attribute("type") or "text"

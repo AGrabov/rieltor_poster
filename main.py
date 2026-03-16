@@ -107,24 +107,12 @@ def phase1_collect(
         if deal_type:
             normalized = _normalize_deal_type(deal_type)
             if normalized:
-                items = [
-                    i
-                    for i in items
-                    if i.deal_type and i.deal_type.lower() == normalized.lower()
-                ]
-                logger.info(
-                    "Відфільтровано за deal_type=%s: %d елементів", normalized, len(items)
-                )
+                items = [i for i in items if i.deal_type and i.deal_type.lower() == normalized.lower()]
+                logger.info("Відфільтровано за deal_type=%s: %d елементів", normalized, len(items))
 
         if property_type:
-            items = [
-                i
-                for i in items
-                if i.property_type and i.property_type.lower() == property_type.lower()
-            ]
-            logger.info(
-                "Відфільтровано за property_type=%s: %d елементів", property_type, len(items)
-            )
+            items = [i for i in items if i.property_type and i.property_type.lower() == property_type.lower()]
+            logger.info("Відфільтровано за property_type=%s: %d елементів", property_type, len(items))
 
         if max_count:
             items = items[:max_count]
@@ -318,21 +306,15 @@ def phase2_post(
                     posted += 1
 
                 except FormValidationError as e:
-                    logger.error(
-                        "Помилка валідації для об'єкта %d: %s", offer.estate_id, e
-                    )
+                    logger.error("Помилка валідації для об'єкта %d: %s", offer.estate_id, e)
                     db.mark_failed(offer.estate_id, e.errors)
 
                 except RieltorErrorPageException as e:
-                    logger.error(
-                        "Сторінка помилки Rieltor для об'єкта %d: %s", offer.estate_id, e
-                    )
+                    logger.error("Сторінка помилки Rieltor для об'єкта %d: %s", offer.estate_id, e)
                     db.mark_failed(offer.estate_id, [{"error": str(e)}])
 
                 except Exception:
-                    logger.exception(
-                        "Непередбачена помилка при публікації об'єкта %d", offer.estate_id
-                    )
+                    logger.exception("Непередбачена помилка при публікації об'єкта %d", offer.estate_id)
                     db.mark_failed(offer.estate_id, [{"error": "unexpected error"}])
 
     logger.info("Фаза 2 завершена: %d оголошень опубліковано", posted)
@@ -401,9 +383,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Rieltor offer automation: CRM → parse → post",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument(
-        "--no-headless", action="store_true", help="Show browser window"
-    )
+    parser.add_argument("--headless", action="store_true", help="Run browser in headless mode (also set via HEADLESS=true env var)")
 
     sub = parser.add_subparsers(dest="command")
 
@@ -416,9 +396,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # post
     p_post = sub.add_parser("post", help="Phase 2: post from DB to Rieltor")
-    p_post.add_argument(
-        "--publish", action="store_true", help="Publish instead of draft"
-    )
+    p_post.add_argument("--publish", action="store_true", help="Publish instead of draft")
     p_post.add_argument("--max-count", type=int, help="Max offers to post")
     p_post.add_argument("--deal-type", help="Filter: sell or lease")
     p_post.add_argument("--property-type", help="Filter: Квартира, Будинок, etc.")
@@ -426,9 +404,7 @@ def build_parser() -> argparse.ArgumentParser:
     # post-one
     p_one = sub.add_parser("post-one", help="Post a single offer from JSON")
     p_one.add_argument("source", help="JSON string or path to .json file")
-    p_one.add_argument(
-        "--publish", action="store_true", help="Publish instead of draft"
-    )
+    p_one.add_argument("--publish", action="store_true", help="Publish instead of draft")
 
     return parser
 
@@ -440,7 +416,7 @@ def main() -> None:
     if args.debug:
         init_logging(level="DEBUG", filename="logs/rieltor.log")
 
-    headless = not args.no_headless
+    headless = os.getenv("HEADLESS", "").lower() == "true" or args.headless
 
     logger.info("=== Автоматизацію Rieltor запущено ===")
 

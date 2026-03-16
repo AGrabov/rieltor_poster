@@ -1,19 +1,20 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set, Tuple
 from collections import Counter
+from typing import Any, Dict, List, Optional, Set, Tuple
+
 from playwright.sync_api import Locator
 
-from .helpers import _cf, _norm, _xpath_literal, _key4
-
 from setup_logger import setup_logger
+
+from .helpers import _cf, _key4, _norm, _xpath_literal
 
 logger = setup_logger(__name__)
 
 
 class _RadioProbeMixin:
     # ---------------- RADIO probe ----------------
-    def _preferred_radio_value(self, values: List[str]) -> str:
+    def _preferred_radio_value(self, values: list[str]) -> str:
         for cand in ("Немає", "Нiмає", "Нет", "Ні", "No"):
             for v in values:
                 if _cf(v) == _cf(cand):
@@ -49,12 +50,12 @@ class _RadioProbeMixin:
         except Exception:
             return True
 
-    def _collect_field_nodes_in_scope(self, scope: Locator) -> List[Locator]:
+    def _collect_field_nodes_in_scope(self, scope: Locator) -> list[Locator]:
         nodes = scope.locator(
             "xpath=(.//div[contains(@class,'MuiFormControl-root') or contains(@class,'MuiTextField-root')]"
             " | .//label[contains(@class,'MuiFormControlLabel-root')][.//input[@type='checkbox' or @type='radio']])"
         )
-        out: List[Locator] = []
+        out: list[Locator] = []
         for i in range(nodes.count()):
             n = nodes.nth(i)
             try:
@@ -71,19 +72,14 @@ class _RadioProbeMixin:
             out.append(n)
         return out
 
-    def _sig_node(self, node: Locator, title_fallback: str) -> Tuple[str, str, str]:
+    def _sig_node(self, node: Locator, title_fallback: str) -> tuple[str, str, str]:
         try:
             if node.evaluate("(el)=>el.tagName==='LABEL'"):
                 sec = _norm(self._nearest_h6_title(node) or title_fallback)
-                label = _norm(
-                    self._label_text_labelcontrol(node)
-                    or self._fallback_label_from_context(node)
-                )
+                label = _norm(self._label_text_labelcontrol(node) or self._fallback_label_from_context(node))
                 itype = ""
                 try:
-                    itype = (
-                        node.locator("css=input").first.get_attribute("type") or ""
-                    ).casefold()
+                    itype = (node.locator("css=input").first.get_attribute("type") or "").casefold()
                 except Exception:
                     itype = ""
                 widget = "checkbox" if itype == "checkbox" else "radio"
@@ -92,28 +88,21 @@ class _RadioProbeMixin:
             pass
 
         sec = _norm(self._nearest_h6_title(node) or title_fallback)
-        lbl = _norm(
-            self._label_text_formcontrol(node)
-            or self._fallback_label_from_context(node)
-        )
+        lbl = _norm(self._label_text_formcontrol(node) or self._fallback_label_from_context(node))
         w, _, _ = self._detect_widget_and_options_formcontrol(node)
         return (sec, lbl, _norm(w).casefold())
 
     def _field_key_sig(self, nav: str, sec: str, lab: str, wid: str) -> str:
         return "||".join([_cf(nav), _cf(sec), _cf(lab), _cf(wid)])
 
-    def _sig_node_keyed(
-        self, node: Locator, title_fallback: str, nav: str
-    ) -> Tuple[str, str, str, str]:
+    def _sig_node_keyed(self, node: Locator, title_fallback: str, nav: str) -> tuple[str, str, str, str]:
         sec, lab, wid = self._sig_node(node, title_fallback)
         return sec, lab, wid, self._field_key_sig(nav, sec, lab, wid)
 
-    def _snapshot_scope(
-        self, scope: Locator, title_fallback: str, nav: str
-    ) -> Tuple[List[Dict[str, Any]], Counter]:
+    def _snapshot_scope(self, scope: Locator, title_fallback: str, nav: str) -> tuple[list[dict[str, Any]], Counter]:
         nodes = self._collect_field_nodes_in_scope(scope)
-        ordered: List[Dict[str, Any]] = []
-        keys: List[str] = []
+        ordered: list[dict[str, Any]] = []
+        keys: list[str] = []
         for n in nodes:
             sec, lab, wid, k = self._sig_node_keyed(n, title_fallback, nav)
             if not lab or self._is_helper_text(lab):
@@ -136,10 +125,7 @@ class _RadioProbeMixin:
             try:
                 inp = label.locator("css=input[type='radio']").first
                 if inp.count() and inp.is_checked():
-                    t = _norm(
-                        label.locator("css=span.MuiFormControlLabel-label").inner_text()
-                        or ""
-                    )
+                    t = _norm(label.locator("css=span.MuiFormControlLabel-label").inner_text() or "")
                     return t
             except Exception:
                 continue
@@ -151,32 +137,26 @@ class _RadioProbeMixin:
         for i in range(labels.count()):
             label = labels.nth(i)
             try:
-                t = _norm(
-                    label.locator("css=span.MuiFormControlLabel-label").inner_text()
-                    or ""
-                )
+                t = _norm(label.locator("css=span.MuiFormControlLabel-label").inner_text() or "")
             except Exception:
                 t = ""
             if _cf(t) == value_cf:
                 return self._set_radio_option(label)
         return False
 
-    def _radio_values(self, rg: Locator) -> List[str]:
-        out: List[str] = []
+    def _radio_values(self, rg: Locator) -> list[str]:
+        out: list[str] = []
         labels = rg.locator("xpath=.//label[.//input[@type='radio']]")
         for i in range(labels.count()):
             label = labels.nth(i)
             try:
-                t = _norm(
-                    label.locator("css=span.MuiFormControlLabel-label").inner_text()
-                    or ""
-                )
+                t = _norm(label.locator("css=span.MuiFormControlLabel-label").inner_text() or "")
             except Exception:
                 t = ""
             if t:
                 out.append(t)
-        seen: Set[str] = set()
-        uniq: List[str] = []
+        seen: set[str] = set()
+        uniq: list[str] = []
         for t in out:
             k = _cf(t)
             if k in seen:
@@ -185,11 +165,9 @@ class _RadioProbeMixin:
             uniq.append(t)
         return uniq
 
-    def _counter_delta(
-        self, base: Counter, after: Counter
-    ) -> Tuple[List[str], List[str]]:
-        added: List[str] = []
-        removed: List[str] = []
+    def _counter_delta(self, base: Counter, after: Counter) -> tuple[list[str], list[str]]:
+        added: list[str] = []
+        removed: list[str] = []
         allk = set(base.keys()) | set(after.keys())
         for k in allk:
             b = base.get(k, 0)
@@ -200,9 +178,7 @@ class _RadioProbeMixin:
                 removed.extend([k] * (b - a))
         return added, removed
 
-    def _local_probe_scope_for_rg(
-        self, rg: Locator, nav_scope: Locator, nav_title: str
-    ) -> Locator:
+    def _local_probe_scope_for_rg(self, rg: Locator, nav_scope: Locator, nav_title: str) -> Locator:
         sec_title = self._nearest_h6_title(rg)
         if sec_title:
             lit = _xpath_literal(sec_title)
@@ -222,9 +198,7 @@ class _RadioProbeMixin:
                 pass
         return nav_scope
 
-    def _find_select_form(
-        self, scope: Locator, nav_title: str, section_cf: str, label_cf: str
-    ) -> Optional[Locator]:
+    def _find_select_form(self, scope: Locator, nav_title: str, section_cf: str, label_cf: str) -> Locator | None:
         forms = scope.locator(
             "xpath=.//div[contains(@class,'MuiFormControl-root') or contains(@class,'MuiTextField-root')][.//div[contains(@class,'MuiSelect-select') and @role='button']]"
         )
@@ -246,7 +220,7 @@ class _RadioProbeMixin:
         return None
 
     def _cache_select_options_for_added(
-        self, local_scope: Locator, nav_title: str, added: List[Dict[str, Any]]
+        self, local_scope: Locator, nav_title: str, added: list[dict[str, Any]]
     ) -> None:
         for a in added:
             if _cf(a.get("widget", "")) != "select":
@@ -260,9 +234,7 @@ class _RadioProbeMixin:
             cached = self._select_options_cache.get(cache_key)
             if cached is not None:
                 a.setdefault("options", cached)
-                logger.debug(
-                    "Кеш added-select: влучання %s (opts=%d)", cache_key, len(cached)
-                )
+                logger.debug("Кеш added-select: влучання %s (opts=%d)", cache_key, len(cached))
                 continue
 
             form = self._find_select_form(local_scope, nav_title, sec_cf, lab_cf)
@@ -284,7 +256,7 @@ class _RadioProbeMixin:
                 a.setdefault("meta", {}).update(select_meta)
             logger.debug("Added-select збережено в кеш: %s (opts=%d)", cache_key, len(opts))
 
-    def probe_radios_dynamic(self) -> List[Dict[str, Any]]:
+    def probe_radios_dynamic(self) -> list[dict[str, Any]]:
         if not self.enable_radio_probe:
             logger.info("Зондування радіокнопок вимкнено")
             return []
@@ -292,7 +264,7 @@ class _RadioProbeMixin:
         logger.info("Початок зондування радіокнопок")
         self.open_all_blocks_sticky()
         nav_items = self.list_navigation_items()
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
 
         for title, occ in nav_items:
             if title in self._NAV_EXCLUDE_FIELDS:
@@ -358,16 +330,12 @@ class _RadioProbeMixin:
                 self.expand_all_collapsibles(local_scope, max_rounds=6)
                 self.page.wait_for_timeout(self.ui_delay_ms)
 
-                base_ordered, base_counter = self._snapshot_scope(
-                    local_scope, title, title
-                )
-                by_key_base: Dict[str, Dict[str, Any]] = {
-                    it["key"]: it for it in base_ordered
-                }
+                base_ordered, base_counter = self._snapshot_scope(local_scope, title, title)
+                by_key_base: dict[str, dict[str, Any]] = {it["key"]: it for it in base_ordered}
 
                 controller_field_key = _key4(title, host_section, label, "radio")
 
-                group_info: Dict[str, Any] = {
+                group_info: dict[str, Any] = {
                     "nav": title,
                     "section": host_section,
                     "label": label,
@@ -410,16 +378,10 @@ class _RadioProbeMixin:
                     self.expand_all_collapsibles(local_scope, max_rounds=6)
                     self.page.wait_for_timeout(self.ui_delay_ms)
 
-                    after_ordered, after_counter = self._snapshot_scope(
-                        local_scope, title, title
-                    )
-                    by_key_after: Dict[str, Dict[str, Any]] = {
-                        it["key"]: it for it in after_ordered
-                    }
+                    after_ordered, after_counter = self._snapshot_scope(local_scope, title, title)
+                    by_key_after: dict[str, dict[str, Any]] = {it["key"]: it for it in after_ordered}
 
-                    add_keys, rem_keys = self._counter_delta(
-                        base_counter, after_counter
-                    )
+                    add_keys, rem_keys = self._counter_delta(base_counter, after_counter)
 
                     added = [
                         by_key_after.get(

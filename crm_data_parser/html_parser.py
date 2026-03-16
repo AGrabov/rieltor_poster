@@ -147,9 +147,7 @@ class HTMLOfferParser:
         # Auto-detect deal type and property type from HTML
         self.deal_type = self._detect_deal_type()
         self.property_type = self._detect_property_type()
-        logger.info(
-            f"Визначено deal_type={self.deal_type}, property_type={self.property_type}"
-        )
+        logger.info(f"Визначено deal_type={self.deal_type}, property_type={self.property_type}")
 
         # Load schema based on detected types (uses centralized loader)
         self._schema_data = load_offer_schema(self.deal_type, self.property_type)
@@ -468,9 +466,7 @@ class HTMLOfferParser:
                     # "Працює без світла": "Резервне живлення квартири (акумулятори)"
                     if label_lower == "наявність генератору або інвертору":
                         if value_text.lower() == "так":
-                            result["Працює без світла"] = (
-                                "Резервне живлення квартири (акумулятори)"
-                            )
+                            result["Працює без світла"] = "Резервне живлення квартири (акумулятори)"
                         continue
 
                     # Look up field in schema by HTML label
@@ -519,10 +515,7 @@ class HTMLOfferParser:
                     # Check if this is an address field
                     field_info = self._look_up_field_by_html_label(label_text)
 
-                    if (
-                        field_info
-                        and field_info["label"].lower().strip() in ADDRESS_LABELS
-                    ):
+                    if field_info and field_info["label"].lower().strip() in ADDRESS_LABELS:
                         schema_label = field_info["label"]
                         value = value_text
 
@@ -550,9 +543,7 @@ class HTMLOfferParser:
                         val = cells[1].get_text(strip=True)
                         if "номер будинку" in lbl and val:
                             address["Будинок"] = val
-                            logger.debug(
-                                f"Вилучено address.Будинок={val} (з 'Номер будинку')"
-                            )
+                            logger.debug(f"Вилучено address.Будинок={val} (з 'Номер будинку')")
                             break
 
         return address if address else {}
@@ -573,9 +564,7 @@ class HTMLOfferParser:
             if rooms_text.isdigit():
                 rooms_field = self.label_to_field.get("число кімнат")
                 if rooms_field:
-                    result["Число кімнат"] = self._normalize_rooms(
-                        rooms_text, rooms_field.get("options", [])
-                    )
+                    result["Число кімнат"] = self._normalize_rooms(rooms_text, rooms_field.get("options", []))
 
             # Second value: floor / total floors
             floor_text = property_values[1].get_text(strip=True)
@@ -691,11 +680,7 @@ class HTMLOfferParser:
                 for row in section.select("table.detail-view tr"):
                     th = row.select_one("th")
                     td = row.select_one("td")
-                    if (
-                        th
-                        and td
-                        and "відповідальний" in th.get_text(strip=True).lower()
-                    ):
+                    if th and td and "відповідальний" in th.get_text(strip=True).lower():
                         link = td.select_one("a")
                         if link:
                             name = link.get_text(strip=True)
@@ -911,9 +896,7 @@ class HTMLOfferParser:
 
         # Match against options
         for option in options:
-            if str(num) in option and (
-                "кімнат" in option or "кімнати" in option or "кімната" in option
-            ):
+            if str(num) in option and ("кімнат" in option or "кімнати" in option or "кімната" in option):
                 return option
 
         # Fallback: generate standard format
@@ -1018,11 +1001,7 @@ class HTMLOfferParser:
 
             # Check in nested address (for address fields)
             if label_lower in ADDRESS_LABELS:
-                if (
-                    "address" in data
-                    and label in data["address"]
-                    and data["address"][label]
-                ):
+                if "address" in data and label in data["address"] and data["address"][label]:
                     continue
 
             missing.append(label)
@@ -1057,9 +1036,7 @@ class HTMLOfferParser:
                     living = round(float(total) - 1.4 * float(kitchen), 1)
                     if living > 0:
                         data["Житлова площа, м²"] = str(living)
-                        logger.debug(
-                            f"Обчислено Житлова площа: {total} - 1.4*{kitchen} = {living}"
-                        )
+                        logger.debug(f"Обчислено Житлова площа: {total} - 1.4*{kitchen} = {living}")
                 except (ValueError, TypeError):
                     pass
 

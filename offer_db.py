@@ -24,14 +24,14 @@ class OfferRecord:
 
     id: int
     estate_id: int
-    article: Optional[str]
-    property_type: Optional[str]
-    deal_type: Optional[str]
-    title: Optional[str]
+    article: str | None
+    property_type: str | None
+    deal_type: str | None
+    title: str | None
     status: str
     offer_data: dict
-    rieltor_offer_id: Optional[str]
-    errors: Optional[list]
+    rieltor_offer_id: str | None
+    errors: list | None
     created_at: str
     updated_at: str
 
@@ -58,7 +58,7 @@ class OfferDB:
 
     def __init__(self, db_path: Path = DB_PATH) -> None:
         self.db_path = db_path
-        self.conn: Optional[sqlite3.Connection] = None
+        self.conn: sqlite3.Connection | None = None
 
     def __enter__(self) -> OfferDB:
         self.conn = sqlite3.connect(str(self.db_path))
@@ -94,21 +94,19 @@ class OfferDB:
         self.conn.commit()
 
     def estate_exists(self, estate_id: int) -> bool:
-        row = self.conn.execute(
-            "SELECT 1 FROM offers WHERE estate_id = ?", (estate_id,)
-        ).fetchone()
+        row = self.conn.execute("SELECT 1 FROM offers WHERE estate_id = ?", (estate_id,)).fetchone()
         return row is not None
 
     def insert_offer(
         self,
         estate_id: int,
         offer_data: dict,
-        article: Optional[str] = None,
-        property_type: Optional[str] = None,
-        deal_type: Optional[str] = None,
-        title: Optional[str] = None,
+        article: str | None = None,
+        property_type: str | None = None,
+        deal_type: str | None = None,
+        title: str | None = None,
         status: str = "new",
-    ) -> Optional[int]:
+    ) -> int | None:
         """Вставити нове оголошення. Повертає rowid або None, якщо estate_id вже існує."""
         try:
             cur = self.conn.execute(
@@ -136,10 +134,10 @@ class OfferDB:
 
     def get_unprocessed(
         self,
-        deal_type: Optional[str] = None,
-        property_type: Optional[str] = None,
-        max_count: Optional[int] = None,
-    ) -> List[OfferRecord]:
+        deal_type: str | None = None,
+        property_type: str | None = None,
+        max_count: int | None = None,
+    ) -> list[OfferRecord]:
         """Повернути оголошення зі статусом 'new', з необов'язковими фільтрами."""
         query = "SELECT * FROM offers WHERE status = 'new'"
         params: list = []
@@ -170,9 +168,7 @@ class OfferDB:
             (rieltor_offer_id, estate_id),
         )
         self.conn.commit()
-        logger.info(
-            "Об'єкт %d позначено як опублікований (rieltor_id=%s)", estate_id, rieltor_offer_id
-        )
+        logger.info("Об'єкт %d позначено як опублікований (rieltor_id=%s)", estate_id, rieltor_offer_id)
 
     def mark_failed(self, estate_id: int, errors: Any) -> None:
         self.conn.execute(
@@ -196,8 +192,6 @@ class OfferDB:
         self.conn.commit()
         logger.info("Об'єкт %d позначено як пропущений: %s", estate_id, reason)
 
-    def summary(self) -> Dict[str, int]:
-        rows = self.conn.execute(
-            "SELECT status, COUNT(*) as cnt FROM offers GROUP BY status"
-        ).fetchall()
+    def summary(self) -> dict[str, int]:
+        rows = self.conn.execute("SELECT status, COUNT(*) as cnt FROM offers GROUP BY status").fetchall()
         return {r["status"]: r["cnt"] for r in rows}

@@ -115,8 +115,7 @@ class FieldExtractor:
             return spacy.load("uk_core_news_sm")
         except OSError:
             raise RuntimeError(
-                "Ukrainian spaCy model not found. Install it with:\n"
-                "python -m spacy download uk_core_news_sm"
+                "Ukrainian spaCy model not found. Install it with:\npython -m spacy download uk_core_news_sm"
             )
 
     def _load_schema(self, schema_name: str) -> dict:
@@ -124,10 +123,8 @@ class FieldExtractor:
         schema_path = self.SCHEMA_DIR / f"{schema_name}.json"
         if not schema_path.exists():
             available = [f.stem for f in self.SCHEMA_DIR.glob("*.json")]
-            raise FileNotFoundError(
-                f"Schema '{schema_name}' not found. Available schemas: {available}"
-            )
-        with open(schema_path, "r", encoding="utf-8") as f:
+            raise FileNotFoundError(f"Schema '{schema_name}' not found. Available schemas: {available}")
+        with open(schema_path, encoding="utf-8") as f:
             return json.load(f)
 
     def _parse_fields(self) -> dict[str, dict]:
@@ -434,16 +431,14 @@ class FieldExtractor:
                     values = value if isinstance(value, list) else [value]
                     for v in values:
                         if v not in options and str(v) not in [str(o) for o in options]:
-                            issues["invalid_options"].append(
-                                f"{field_data['label']}: '{v}' not in {options}"
-                            )
+                            issues["invalid_options"].append(f"{field_data['label']}: '{v}' not in {options}")
 
         return issues
 
 
 if __name__ == "__main__":
-    import sys
     import io
+    import sys
 
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 

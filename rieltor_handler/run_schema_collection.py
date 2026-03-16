@@ -1,22 +1,22 @@
 from __future__ import annotations
 
 try:
-    from .schema_collector.collector import OfferCreateSchemaCollector
-    from .schema_collector.helpers import _slug, _key4, _sig3
     from .rieltor_session import RieltorCredentials, RieltorSession
+    from .schema_collector.collector import OfferCreateSchemaCollector
+    from .schema_collector.helpers import _key4, _sig3, _slug
 except ImportError:
     import sys
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from rieltor_handler.schema_collector.collector import OfferCreateSchemaCollector
-    from rieltor_handler.schema_collector.helpers import _slug, _key4, _sig3
     from rieltor_handler.rieltor_session import RieltorCredentials, RieltorSession
+    from rieltor_handler.schema_collector.collector import OfferCreateSchemaCollector
+    from rieltor_handler.schema_collector.helpers import _key4, _sig3, _slug
 
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from setup_logger import init_logging
 
@@ -26,7 +26,7 @@ logger = init_logging(
 )
 
 
-def _attach_field_keys(schema: Dict[str, Any]) -> None:
+def _attach_field_keys(schema: dict[str, Any]) -> None:
     for f in schema.get("fields") or []:
         meta = f.get("meta") or {}
         meta.setdefault(
@@ -38,25 +38,20 @@ def _attach_field_keys(schema: Dict[str, Any]) -> None:
                 f.get("widget", ""),
             ),
         )
-        meta.setdefault(
-            "sig", _sig3(f.get("section", ""), f.get("label", ""), f.get("widget", ""))
-        )
+        meta.setdefault("sig", _sig3(f.get("section", ""), f.get("label", ""), f.get("widget", "")))
         f["meta"] = meta
 
 
-def _inject_conditionals_into_meta(
-    schema: Dict[str, Any], cond: List[Dict[str, Any]]
-) -> None:
-    """Вставляє правила visible_when у meta відповідних полів і забезпечує наявність умовних полів у схемі."""
+def _inject_conditionals_into_meta(schema: dict[str, Any], cond: list[dict[str, Any]]) -> None:
+    """Вставляє правила visible_when у meta відповідних полів і забезпечує
+    наявність умовних полів у схемі."""
     fields = schema.get("fields") or []
 
     # index by sig
-    by_sig: Dict[str, Dict[str, Any]] = {}
+    by_sig: dict[str, dict[str, Any]] = {}
     for f in fields:
         meta = f.get("meta") or {}
-        sig = meta.get("sig") or _sig3(
-            f.get("section", ""), f.get("label", ""), f.get("widget", "")
-        )
+        sig = meta.get("sig") or _sig3(f.get("section", ""), f.get("label", ""), f.get("widget", ""))
         by_sig[sig] = f
 
     # ensure added fields exist
@@ -104,9 +99,7 @@ def _inject_conditionals_into_meta(
             "label": g.get("label", ""),
             "widget": g.get("widget", "radio") or "radio",
             "field_key": g.get("controller_field_key")
-            or _key4(
-                g.get("nav", ""), g.get("section", ""), g.get("label", ""), "radio"
-            ),
+            or _key4(g.get("nav", ""), g.get("section", ""), g.get("label", ""), "radio"),
             "ord": g.get("controller_ord"),
         }
         for opt in g.get("options") or []:
@@ -127,9 +120,7 @@ def _inject_conditionals_into_meta(
                 vw = meta.get("visible_when") or []
                 rule = {"controller": controller, "value": val, "source": "radio_probe"}
                 js = json.dumps(rule, ensure_ascii=False, sort_keys=True)
-                seen = set(
-                    json.dumps(x, ensure_ascii=False, sort_keys=True) for x in vw
-                )
+                seen = set(json.dumps(x, ensure_ascii=False, sort_keys=True) for x in vw)
                 if js not in seen:
                     vw.append(rule)
                     meta["visible_when"] = vw
@@ -143,8 +134,8 @@ def run_collection(
     *,
     phone: str,
     password: str,
-    property_types: List[str] | str | None = None,
-    deal_types: List[str] | str | None = None,
+    property_types: list[str] | str | None = None,
+    deal_types: list[str] | str | None = None,
     headless: bool = False,
     slow_mo_ms: int = 0,
     out_path: str = "models/schema_dump.json",
@@ -200,11 +191,9 @@ def run_collection(
 
     base_out_dir.mkdir(parents=True, exist_ok=True)
 
-    dump: Dict[str, Any] = {}
+    dump: dict[str, Any] = {}
 
-    with RieltorSession(
-        creds=creds, headless=headless, slow_mo_ms=slow_mo_ms, debug=debug
-    ) as sess:
+    with RieltorSession(creds=creds, headless=headless, slow_mo_ms=slow_mo_ms, debug=debug) as sess:
         logger.info("Авторизація")
         sess.login()
         page = sess.page
@@ -226,9 +215,7 @@ def run_collection(
             folder_name = deal_type_folders.get(deal_type.lower(), deal_type.lower())
             deal_type_ui = "Продаж" if folder_name == "sell" else "Оренда"
 
-            logger.info(
-                "========== DEAL TYPE: %s (%s) ==========", deal_type_ui, folder_name
-            )
+            logger.info("========== DEAL TYPE: %s (%s) ==========", deal_type_ui, folder_name)
 
             # Create subfolder for this deal type
             out_dir = base_out_dir / folder_name
@@ -243,7 +230,7 @@ def run_collection(
                 property_type: str,
                 subtype: str | None = None,
                 subtype_ui: str | None = None,
-            ) -> Dict[str, Any]:
+            ) -> dict[str, Any]:
                 """Збирає схему для типу нерухомості (та опційного підтипу) і зберігає її."""
                 # discovery: seed address + optional smoke fill until schema stops growing
                 schema = collector.discover_schema_until_stable(
@@ -257,7 +244,7 @@ def run_collection(
                 schema = collector.collect_schema_dynamic_h6()
                 _attach_field_keys(schema)
 
-                cond: List[Dict[str, Any]] = []
+                cond: list[dict[str, Any]] = []
                 if enable_radio_probe:
                     try:
                         cond = collector.probe_radios_dynamic()
@@ -288,9 +275,7 @@ def run_collection(
                     filename = f"{_slug(property_type)}.json"
 
                 pt_path = out_dir / filename
-                pt_path.write_text(
-                    json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-                )
+                pt_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
                 logger.info("Схему збережено: %s/%s -> %s", folder_name, filename, pt_path)
 
                 return payload
@@ -318,9 +303,7 @@ def run_collection(
                     page.wait_for_timeout(ui_delay_ms)
 
     combined_path.parent.mkdir(parents=True, exist_ok=True)
-    combined_path.write_text(
-        json.dumps(dump, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    combined_path.write_text(json.dumps(dump, ensure_ascii=False, indent=2), encoding="utf-8")
     logger.info("Зведений дамп схем збережено: %s", combined_path)
     logger.info("Директорія схем за типами: %s", base_out_dir)
     return str(combined_path)

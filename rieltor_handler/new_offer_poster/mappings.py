@@ -27,13 +27,11 @@ class MappingMixin:
             return str(v.value)
         return "" if v is None else str(v)
 
-    def _expected_label(self, key: str) -> Optional[str]:
+    def _expected_label(self, key: str) -> str | None:
         """Ключ і є українським підписом у новому форматі зі схемою."""
         return key
 
-    def _find_control_by_label(
-        self, section: Locator, label_text: str
-    ) -> Optional[Locator]:
+    def _find_control_by_label(self, section: Locator, label_text: str) -> Locator | None:
         """
         Надійний спосіб: шукаємо label всередині section, потім піднімаємось до MuiFormControl-root
         і беремо типовий елемент керування:
@@ -75,9 +73,7 @@ class MappingMixin:
         if not label:
             return None
 
-        form = label.locator(
-            "xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]"
-        ).first
+        form = label.locator("xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]").first
 
         ctrl = form.locator(
             "css="
@@ -93,9 +89,7 @@ class MappingMixin:
         except Exception:
             return None
 
-    def _find_formcontrol_by_label(
-        self, sec: Locator, label_text: str
-    ) -> Locator | None:
+    def _find_formcontrol_by_label(self, sec: Locator, label_text: str) -> Locator | None:
         lit = (label_text or "").strip()
         if not lit:
             return None

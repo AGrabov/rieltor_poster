@@ -21,7 +21,7 @@ def deal_text(offer_type: Any) -> str:
     return v
 
 
-def truthy_fields_as_keys(dc_obj) -> List[str]:
+def truthy_fields_as_keys(dc_obj) -> list[str]:
     """
     Повертає список імен полів dataclass зі значенням True.
     Використовується для груп чекбоксів на зразок without_power_supply.
@@ -29,7 +29,7 @@ def truthy_fields_as_keys(dc_obj) -> List[str]:
     if not is_dataclass(dc_obj):
         return []
 
-    out: List[str] = []
+    out: list[str] = []
     for f in dc_obj.__dataclass_fields__.keys():
         if getattr(dc_obj, f, None) is True:
             out.append(f)

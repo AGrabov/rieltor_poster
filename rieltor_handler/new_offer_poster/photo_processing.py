@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
-import logging
 from typing import List
 
 from PIL import Image
@@ -19,7 +19,7 @@ MIN_HEIGHT = 750
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg"}
 
 
-def prepare_photos(paths: List[str]) -> List[str]:
+def prepare_photos(paths: list[str]) -> list[str]:
     """
     Підготовлює фотографії відповідно до вимог сайту:
     - jpg / jpeg
@@ -29,7 +29,7 @@ def prepare_photos(paths: List[str]) -> List[str]:
     Повертає список ШЛЯХІВ до тимчасових файлів,
     які можна безпечно передавати у input[type=file].
     """
-    prepared: List[str] = []
+    prepared: list[str] = []
 
     for src in paths:
         if not src:

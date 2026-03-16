@@ -21,14 +21,7 @@ def _xpath_literal(s: str) -> str:
         return f'"{s}"'
     parts = s.split("'")
     return (
-        "concat("
-        + ", ".join(
-            [
-                f"'{p}'" if i == len(parts) - 1 else f"'{p}', \"'\""
-                for i, p in enumerate(parts)
-            ]
-        )
-        + ")"
+        "concat(" + ", ".join([f"'{p}'" if i == len(parts) - 1 else f"'{p}', \"'\"" for i, p in enumerate(parts)]) + ")"
     )
 
 
@@ -58,5 +51,5 @@ class FieldInfo:
     label: str
     widget: str
     required: bool
-    options: List[str]
-    meta: Dict[str, Any]
+    options: list[str]
+    meta: dict[str, Any]

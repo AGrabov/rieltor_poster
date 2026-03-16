@@ -4,20 +4,20 @@ from typing import Any, Dict, List, Tuple
 
 from playwright.sync_api import Locator
 
-from .helpers import FieldInfo, _norm, _sig3, _key4
-
 from setup_logger import setup_logger
+
+from .helpers import FieldInfo, _key4, _norm, _sig3
 
 logger = setup_logger(__name__)
 
 
 class _FieldCollectMixin:
     # ---------------- field collection ----------------
-    def _collect_forms_in_scope(self, scope: Locator) -> List[Locator]:
+    def _collect_forms_in_scope(self, scope: Locator) -> list[Locator]:
         roots = scope.locator(
             "xpath=.//div[contains(@class,'MuiFormControl-root') or contains(@class,'MuiTextField-root')]"
         )
-        out: List[Locator] = []
+        out: list[Locator] = []
         for i in range(roots.count()):
             n = roots.nth(i)
             try:
@@ -28,20 +28,16 @@ class _FieldCollectMixin:
             out.append(n)
         return out
 
-    def _collect_label_controls_in_scope(
-        self, scope: Locator, nav_title: str
-    ) -> List[FieldInfo]:
+    def _collect_label_controls_in_scope(self, scope: Locator, nav_title: str) -> list[FieldInfo]:
         """Зібрати окремі прапорці та радіокнопки (не всередині radiogroup)."""
-        out: List[FieldInfo] = []
+        out: list[FieldInfo] = []
 
         # Find all MuiFormControlLabel-root labels with checkbox/radio inputs
         labels = scope.locator(
             "xpath=.//label[contains(@class,'MuiFormControlLabel-root')][.//input[@type='checkbox' or @type='radio']]"
         )
         label_count = labels.count()
-        logger.debug(
-            "Знайдено %d міток MuiFormControlLabel-root у %s", label_count, nav_title
-        )
+        logger.debug("Знайдено %d міток MuiFormControlLabel-root у %s", label_count, nav_title)
 
         for i in range(label_count):
             lab = labels.nth(i)
@@ -104,9 +100,7 @@ class _FieldCollectMixin:
             "xpath=.//label[contains(@class,'MuiFormControlLabel-root')][.//span[contains(@class,'MuiCheckbox-root')]]"
         )
         checkbox_count = checkboxes.count()
-        logger.debug(
-            "Знайдено %d міток MuiCheckbox-root у %s", checkbox_count, nav_title
-        )
+        logger.debug("Знайдено %d міток MuiCheckbox-root у %s", checkbox_count, nav_title)
 
         already_found = {f.label.casefold() for f in out}
 
@@ -127,9 +121,7 @@ class _FieldCollectMixin:
                 continue
 
             # Check if it's actually a checkbox (not radio)
-            checkbox_span = lab.locator(
-                "xpath=.//span[contains(@class,'MuiCheckbox-root')]"
-            ).first
+            checkbox_span = lab.locator("xpath=.//span[contains(@class,'MuiCheckbox-root')]").first
             if not checkbox_span.count():
                 continue
 
@@ -166,10 +158,8 @@ class _FieldCollectMixin:
         logger.debug("Всього окремих елементів у %s: %d", nav_title, len(out))
         return out
 
-    def _collect_fields_in_scope(
-        self, scope: Locator, nav_title: str
-    ) -> List[FieldInfo]:
-        out: List[FieldInfo] = []
+    def _collect_fields_in_scope(self, scope: Locator, nav_title: str) -> list[FieldInfo]:
+        out: list[FieldInfo] = []
 
         logger.debug("Збір полів у scope: %s", nav_title)
         forms = self._collect_forms_in_scope(scope)
@@ -371,7 +361,7 @@ class _FieldCollectMixin:
         return out
 
     # ---------------- schema dump ----------------
-    def collect_schema_dynamic_h6(self) -> Dict[str, Any]:
+    def collect_schema_dynamic_h6(self) -> dict[str, Any]:
         """Зібрати схему шляхом обходу поточної сторінки.
 
         Стратегія дедуплікації:
@@ -381,7 +371,7 @@ class _FieldCollectMixin:
         self.open_all_blocks_sticky()
 
         nav_items = self.list_navigation_items()
-        all_fields: List[FieldInfo] = []
+        all_fields: list[FieldInfo] = []
 
         logger.info("Збір схеми: nav_items=%d", len(nav_items))
 
@@ -399,7 +389,7 @@ class _FieldCollectMixin:
 
         logger.info("Всього зібрано полів (raw): %d", len(all_fields))
 
-        def _merge_opts(a: List[str], b: List[str]) -> List[str]:
+        def _merge_opts(a: list[str], b: list[str]) -> list[str]:
             if not a:
                 return list(b)
             if not b:
@@ -415,8 +405,8 @@ class _FieldCollectMixin:
             return outm
 
         # 1) strict dedupe by key4
-        by_key4: Dict[Tuple[str, str, str, str], FieldInfo] = {}
-        order4: List[Tuple[str, str, str, str]] = []
+        by_key4: dict[tuple[str, str, str, str], FieldInfo] = {}
+        order4: list[tuple[str, str, str, str]] = []
         merged_dups4 = 0
 
         for f in all_fields:
@@ -439,13 +429,11 @@ class _FieldCollectMixin:
                 ex.meta.setdefault(mk, mv)
 
         uniq4 = [by_key4[k] for k in order4]
-        logger.info(
-            "Унікальних полів за key4=%d (об'єднано дублів=%d)", len(uniq4), merged_dups4
-        )
+        logger.info("Унікальних полів за key4=%d (об'єднано дублів=%d)", len(uniq4), merged_dups4)
 
         # 2) cross-nav merge by sig3
-        by_sig: Dict[str, FieldInfo] = {}
-        order_sig: List[str] = []
+        by_sig: dict[str, FieldInfo] = {}
+        order_sig: list[str] = []
         merged_cross_nav = 0
 
         for f in uniq4:
@@ -478,9 +466,7 @@ class _FieldCollectMixin:
         )
 
         return {
-            "navigation": [
-                t for (t, _) in nav_items if t not in self._NAV_EXCLUDE_FROM_LIST
-            ],
+            "navigation": [t for (t, _) in nav_items if t not in self._NAV_EXCLUDE_FROM_LIST],
             "fields": [
                 {
                     "nav": f.nav,

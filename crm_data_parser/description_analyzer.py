@@ -10,7 +10,7 @@ logger = setup_logger(__name__)
 
 # Contextual regex patterns: schema_label_lower → list of (regex, matched_value)
 # These patterns look for specific phrases in description text.
-CONTEXTUAL_PATTERNS: Dict[str, List[tuple]] = {
+CONTEXTUAL_PATTERNS: dict[str, list[tuple]] = {
     "у квартирі є": [
         (r"холодильник", "Холодильник"),
         (r"телевізор", "Телевізор"),
@@ -116,12 +116,12 @@ class DescriptionAnalyzer:
     числових значень для видобування інформації з неструктурованого тексту опису.
     """
 
-    def __init__(self, schema: List[dict], debug: bool = False):
+    def __init__(self, schema: list[dict], debug: bool = False):
         self.schema = schema
         self.debug = debug
         self.label_to_field = self._create_label_mapping()
 
-    def _create_label_mapping(self) -> Dict[str, dict]:
+    def _create_label_mapping(self) -> dict[str, dict]:
         """Створити зворотний маппінг від label_lower до інформації поля."""
         mapping = {}
         for field in self.schema:
@@ -154,15 +154,11 @@ class DescriptionAnalyzer:
         extracted.update(numeric_matches)
 
         # 4) Simple keyword patterns (heating boolean, hot water)
-        pattern_matches = self._extract_keyword_patterns(
-            description_lower, existing_data
-        )
+        pattern_matches = self._extract_keyword_patterns(description_lower, existing_data)
         extracted.update(pattern_matches)
 
         if self.debug and extracted:
-            logger.debug(
-                f"DescriptionAnalyzer вилучив {len(extracted)} полів: {list(extracted.keys())}"
-            )
+            logger.debug(f"DescriptionAnalyzer вилучив {len(extracted)} полів: {list(extracted.keys())}")
 
         return extracted
 
@@ -300,9 +296,7 @@ class DescriptionAnalyzer:
                     extracted[schema_label] = matches[0]
 
             if self.debug:
-                logger.debug(
-                    f"Контекстний збіг {schema_label}={extracted[schema_label]}"
-                )
+                logger.debug(f"Контекстний збіг {schema_label}={extracted[schema_label]}")
 
         return extracted
 
@@ -432,10 +426,7 @@ class DescriptionAnalyzer:
                         break
 
         # --- Year built ---
-        if (
-            "Рік будівництва" not in existing_data
-            and "Рік будівництва" not in extracted
-        ):
+        if "Рік будівництва" not in existing_data and "Рік будівництва" not in extracted:
             year_patterns = [
                 r"(?:рік\s+)?(?:будівництва|побудови)[:\s]*(\d{4})",
                 r"(?:побудован[оаи]?|збудован[оаи]?)\s*(?:в|у)?\s*(\d{4})",
@@ -453,10 +444,7 @@ class DescriptionAnalyzer:
                         break
 
         # --- Bathroom count ---
-        if (
-            "Кількість санвузлів" not in existing_data
-            and "Кількість санвузлів" not in extracted
-        ):
+        if "Кількість санвузлів" not in existing_data and "Кількість санвузлів" not in extracted:
             _WORD_TO_NUM = {
                 "один": 1,
                 "одн": 1,
@@ -505,10 +493,7 @@ class DescriptionAnalyzer:
                     extracted["Кількість санвузлів"] = value
 
         # --- Balcony count ---
-        if (
-            "Кількість балконів" not in existing_data
-            and "Кількість балконів" not in extracted
-        ):
+        if "Кількість балконів" not in existing_data and "Кількість балконів" not in extracted:
             balcony_match = re.search(
                 r"(\d+)\s+(?:балкон|лоджі)",
                 text,
@@ -518,24 +503,14 @@ class DescriptionAnalyzer:
                 field_info = self.label_to_field.get("кількість балконів")
                 if field_info:
                     options = field_info.get("options", [])
-                    value = (
-                        count
-                        if count in options
-                        else next((o for o in options if count in o), count)
-                    )
+                    value = count if count in options else next((o for o in options if count in o), count)
                     extracted["Кількість балконів"] = value
             elif re.search(r"балкон|лоджі", text):
                 # At least one balcony mentioned without an explicit count
                 field_info = self.label_to_field.get("кількість балконів")
                 if field_info:
                     options = field_info.get("options", [])
-                    value = (
-                        "1"
-                        if "1" in options
-                        else options[1]
-                        if len(options) > 1
-                        else "1"
-                    )
+                    value = "1" if "1" in options else options[1] if len(options) > 1 else "1"
                     extracted["Кількість балконів"] = value
 
         # --- Ceiling height ---

@@ -1,5 +1,6 @@
 from ._address_seed import _AddressSeedMixin
 from ._collapse import _CollapseMixin
+from ._collector_base import _CollectorBase
 from ._core import _CoreMixin
 from ._deal_type import _DealTypeMixin
 from ._field_collect import _FieldCollectMixin
@@ -10,7 +11,6 @@ from ._property_type import _PropertyTypeMixin
 from ._radio_probe import _RadioProbeMixin
 from ._smoke_fill import _SmokeFillMixin
 from ._widget import _WidgetMixin
-from ._collector_base import _CollectorBase
 
 
 class OfferCreateSchemaCollector(

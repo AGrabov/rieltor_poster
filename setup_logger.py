@@ -1,10 +1,11 @@
 # setup_logger.py
 import logging
+import os
 from logging import Logger
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
 import colorlog
-import os
 
 APP_NAME = os.environ.get("APP_NAME", "")
 
@@ -18,10 +19,7 @@ class FlushFileHandler(RotatingFileHandler):
 def _has_file_handler(logger: Logger, filename: str) -> bool:
     target = str(Path(filename))
     for h in logger.handlers:
-        if (
-            isinstance(h, RotatingFileHandler)
-            and getattr(h, "baseFilename", None) == target
-        ):
+        if isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", None) == target:
             return True
     return False
 
@@ -29,16 +27,12 @@ def _has_file_handler(logger: Logger, filename: str) -> bool:
 def _has_console_handler(logger: Logger) -> bool:
     # StreamHandler, но не FileHandler
     for h in logger.handlers:
-        if isinstance(h, logging.StreamHandler) and not isinstance(
-            h, logging.FileHandler
-        ):
+        if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
             return True
     return False
 
 
-def init_logging(
-    level=os.environ.get("LOG_LEVEL", "INFO"), filename: str | None = None
-) -> Logger:
+def init_logging(level=os.environ.get("LOG_LEVEL", "INFO"), filename: str | None = None) -> Logger:
     """
     Викликати один раз у точці входу. Повторний виклик безпечний.
     """

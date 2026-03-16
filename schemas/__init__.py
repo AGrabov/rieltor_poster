@@ -35,10 +35,18 @@ WIDGET_OVERRIDES_BY_LABEL = {
 }
 
 # Labels that belong to the address section (for html_parser grouping)
-ADDRESS_LABELS = frozenset({
-    "місто", "район", "вулиця", "будинок",
-    "новобудова", "метро", "орієнтир", "область",
-})
+ADDRESS_LABELS = frozenset(
+    {
+        "місто",
+        "район",
+        "вулиця",
+        "будинок",
+        "новобудова",
+        "метро",
+        "орієнтир",
+        "область",
+    }
+)
 
 
 @lru_cache(maxsize=16)
@@ -64,27 +72,23 @@ def load_offer_schema(deal_type: str, property_type: str) -> dict:
     """
     folder = _DEAL_TYPE_FOLDER.get(deal_type.lower())
     if not folder:
-        raise ValueError(
-            f"Unknown deal type '{deal_type}'. "
-            f"Expected one of: {list(_DEAL_TYPE_FOLDER.keys())}"
-        )
+        raise ValueError(f"Unknown deal type '{deal_type}'. Expected one of: {list(_DEAL_TYPE_FOLDER.keys())}")
 
     schema_path = _SCHEMAS_DIR / folder / f"{property_type}.json"
     if not schema_path.exists():
         raise FileNotFoundError(
-            f"Schema file not found: {schema_path}\n"
-            f"deal_type={deal_type}, property_type={property_type}"
+            f"Schema file not found: {schema_path}\ndeal_type={deal_type}, property_type={property_type}"
         )
 
-    with open(schema_path, "r", encoding="utf-8") as f:
+    with open(schema_path, encoding="utf-8") as f:
         raw = json.load(f)
 
-    fields: List[dict] = raw.get("fields", [])
-    navigation: List[str] = raw.get("navigation", [])
+    fields: list[dict] = raw.get("fields", [])
+    navigation: list[str] = raw.get("navigation", [])
 
-    label_to_field: Dict[str, dict] = {}
-    label_to_section: Dict[str, str] = {}
-    label_to_widget: Dict[str, str] = {}
+    label_to_field: dict[str, dict] = {}
+    label_to_section: dict[str, str] = {}
+    label_to_widget: dict[str, str] = {}
 
     for field in fields:
         label = field.get("label", "")
@@ -96,9 +100,7 @@ def load_offer_schema(deal_type: str, property_type: str) -> dict:
         if label_lower not in label_to_field:
             label_to_field[label_lower] = field
             label_to_section[label_lower] = field.get("section", "")
-            label_to_widget[label_lower] = WIDGET_OVERRIDES_BY_LABEL.get(
-                label_lower, field.get("widget", "text")
-            )
+            label_to_widget[label_lower] = WIDGET_OVERRIDES_BY_LABEL.get(label_lower, field.get("widget", "text"))
 
     return {
         "fields": fields,

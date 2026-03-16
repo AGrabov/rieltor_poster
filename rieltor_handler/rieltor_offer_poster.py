@@ -13,10 +13,10 @@ from typing import List, Optional
 
 from playwright.sync_api import Page
 
+from setup_logger import setup_logger
+
 from .new_offer_poster import DictOfferFormFiller
 from .rieltor_session import RieltorCredentials, RieltorSession
-
-from setup_logger import setup_logger
 
 logger = setup_logger(__name__)
 
@@ -51,14 +51,14 @@ class RieltorOfferPoster:
         )
         self.property_type = property_type
         self.deal_type = deal_type
-        self.page: Optional[Page] = None
-        self.filler: Optional[DictOfferFormFiller] = None
+        self.page: Page | None = None
+        self.filler: DictOfferFormFiller | None = None
 
         if debug:
             logger.setLevel("DEBUG")
         self.debug = debug
 
-    def __enter__(self) -> "RieltorOfferPoster":
+    def __enter__(self) -> RieltorOfferPoster:
         self._session.__enter__()
         self.page = self._session.page
         if not self.page:
@@ -92,7 +92,7 @@ class RieltorOfferPoster:
             raise RuntimeError("Poster not started")
         self.filler.save()
 
-    def save_and_get_report(self) -> List[dict]:
+    def save_and_get_report(self) -> list[dict]:
         if not self.filler:
             raise RuntimeError("Poster not started")
         return self.filler.save_and_get_report()
@@ -102,12 +102,12 @@ class RieltorOfferPoster:
             raise RuntimeError("Poster not started")
         self.filler.publish()
 
-    def publish_and_get_report(self) -> List[dict]:
+    def publish_and_get_report(self) -> list[dict]:
         if not self.filler:
             raise RuntimeError("Poster not started")
         return self.filler.publish_and_get_report()
 
-    def collect_validation_report(self) -> List[dict]:
+    def collect_validation_report(self) -> list[dict]:
         if not self.filler:
             raise RuntimeError("Poster not started")
         root = self.filler._new_offer_root()
@@ -125,8 +125,9 @@ def main():
 
 
 if __name__ == "__main__":
-    from dotenv import load_dotenv
     import os
+
+    from dotenv import load_dotenv
 
     load_dotenv()
 

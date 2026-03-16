@@ -16,13 +16,10 @@ class RequiredFieldError(RuntimeError):
 class FormValidationError(RuntimeError):
     """Виникає, коли форма містить помилки валідації після збереження/перевірки."""
 
-    def __init__(self, errors: List[dict]):
+    def __init__(self, errors: list[dict]):
         self.errors = errors
         msg = "Помилки валідації форми: " + "; ".join(
-            [
-                f"{e.get('section', '')} | {e.get('field', '')}: {e.get('message', '')}"
-                for e in errors
-            ]
+            [f"{e.get('section', '')} | {e.get('field', '')}: {e.get('message', '')}" for e in errors]
         )
         super().__init__(msg)
 
@@ -54,9 +51,7 @@ class ValidationMixin:
 
         # label markers: asterisk / Mui-required
         try:
-            form = ctrl.locator(
-                "xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]"
-            ).first
+            form = ctrl.locator("xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]").first
             lbl = form.locator("css=label").first
             if lbl.count():
                 lbl_cls = lbl.get_attribute("class") or ""
@@ -77,9 +72,7 @@ class ValidationMixin:
         try:
             cls = ctrl.get_attribute("class") or ""
             role = ctrl.get_attribute("role") or ""
-            if "MuiSelect-select" in cls or (
-                role == "button" and "MuiSelect-select" in cls
-            ):
+            if "MuiSelect-select" in cls or (role == "button" and "MuiSelect-select" in cls):
                 t = (ctrl.inner_text() or "").strip()
                 return t
         except Exception:
@@ -147,9 +140,7 @@ class ValidationMixin:
             if not filled:
                 label_txt = ""
                 try:
-                    form = ctrl.locator(
-                        "xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]"
-                    ).first
+                    form = ctrl.locator("xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]").first
                     label = form.locator("css=label").first
                     if label.count():
                         label_txt = (label.inner_text() or "").strip()
@@ -159,14 +150,12 @@ class ValidationMixin:
 
         if errors:
             logger.error("Обов'язкові поля не заповнені: %s", errors)
-            raise RequiredFieldError(
-                "Не заповнені обов'язкові поля: " + ", ".join(errors)
-            )
+            raise RequiredFieldError("Не заповнені обов'язкові поля: " + ", ".join(errors))
 
     # -------- report from page after save --------
-    def collect_validation_report(self, root: Locator) -> List[dict]:
+    def collect_validation_report(self, root: Locator) -> list[dict]:
         """Збирає помилки валідації MUI у структурований звіт."""
-        errors: List[dict] = []
+        errors: list[dict] = []
 
         # 1) Helper-text errors
         helper_errors = root.locator(".MuiFormHelperText-root.Mui-error")
@@ -180,9 +169,7 @@ class ValidationMixin:
             section_name = ""
 
             try:
-                form = helper.locator(
-                    "xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]"
-                ).first
+                form = helper.locator("xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]").first
                 lbl = form.locator("css=label").first
                 if lbl.count():
                     field_label = (lbl.inner_text() or "").strip()
@@ -190,31 +177,23 @@ class ValidationMixin:
                 pass
 
             try:
-                sec = helper.locator(
-                    "xpath=ancestor::div[contains(@class,'MuiBox-root')][.//h6][1]"
-                ).first
+                sec = helper.locator("xpath=ancestor::div[contains(@class,'MuiBox-root')][.//h6][1]").first
                 h6 = sec.locator("css=h6").first
                 if h6.count():
                     section_name = (h6.inner_text() or "").strip()
             except Exception:
                 pass
 
-            errors.append(
-                {"section": section_name, "field": field_label, "message": msg}
-            )
+            errors.append({"section": section_name, "field": field_label, "message": msg})
 
         # 2) aria-invalid without helper
-        invalid_inputs = root.locator(
-            "input[aria-invalid='true'], textarea[aria-invalid='true']"
-        )
+        invalid_inputs = root.locator("input[aria-invalid='true'], textarea[aria-invalid='true']")
         for i in range(invalid_inputs.count()):
             inp = invalid_inputs.nth(i)
 
             # skip if already has helper error (to avoid dup)
             try:
-                form = inp.locator(
-                    "xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]"
-                ).first
+                form = inp.locator("xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]").first
                 if form.locator(".MuiFormHelperText-root.Mui-error").count():
                     continue
             except Exception:
@@ -224,9 +203,7 @@ class ValidationMixin:
             section_name = ""
 
             try:
-                form = inp.locator(
-                    "xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]"
-                ).first
+                form = inp.locator("xpath=ancestor::div[contains(@class,'MuiFormControl-root')][1]").first
                 lbl = form.locator("css=label").first
                 if lbl.count():
                     field_label = (lbl.inner_text() or "").strip()
@@ -234,21 +211,17 @@ class ValidationMixin:
                 pass
 
             try:
-                sec = inp.locator(
-                    "xpath=ancestor::div[contains(@class,'MuiBox-root')][.//h6][1]"
-                ).first
+                sec = inp.locator("xpath=ancestor::div[contains(@class,'MuiBox-root')][.//h6][1]").first
                 h6 = sec.locator("css=h6").first
                 if h6.count():
                     section_name = (h6.inner_text() or "").strip()
             except Exception:
                 pass
 
-            errors.append(
-                {"section": section_name, "field": field_label, "message": "invalid"}
-            )
+            errors.append({"section": section_name, "field": field_label, "message": "invalid"})
 
         # de-duplicate
-        uniq: List[dict] = []
+        uniq: list[dict] = []
         seen = set()
         for e in errors:
             k = (e.get("section", ""), e.get("field", ""), e.get("message", ""))

@@ -37,7 +37,7 @@ class _CollectorBase:
 
         # Cache select options to avoid reopening listboxes repeatedly.
         # Reset per property type in select_property_type().
-        self._select_options_cache: Dict[str, List[str]] = {}
+        self._select_options_cache: dict[str, list[str]] = {}
 
         self._epoch = 0
 

@@ -37,6 +37,7 @@ st.set_page_config(
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
+
 def get_summary() -> dict[str, int]:
     try:
         with OfferDB() as db:
@@ -142,12 +143,16 @@ with right:
         c1, c2, c3 = st.columns([2, 2, 1])
         with c1:
             max_pages = st.number_input(
-                "Макс. сторінок", min_value=0, value=0,
+                "Макс. сторінок",
+                min_value=0,
+                value=0,
                 help="0 = без обмежень",
             )
         with c2:
             max_count_c = st.number_input(
-                "Макс. об'єктів", min_value=0, value=0,
+                "Макс. об'єктів",
+                min_value=0,
+                value=0,
                 key="max_count_collect",
                 help="0 = без обмежень",
             )
@@ -155,14 +160,13 @@ with right:
             st.write("")
             st.write("")
             collect_btn = st.button(
-                "▶ Зібрати", use_container_width=True,
+                "▶ Зібрати",
+                use_container_width=True,
                 disabled=proc_is_running(st.session_state.collect_proc),
             )
 
         if collect_btn:
-            st.session_state.collect_proc = launch(
-                build_collect_cmd(max_pages or None, max_count_c or None)
-            )
+            st.session_state.collect_proc = launch(build_collect_cmd(max_pages or None, max_count_c or None))
             st.toast("Збір запущено!", icon="▶")
 
         if proc_is_running(st.session_state.collect_proc):
@@ -180,26 +184,28 @@ with right:
         p1, p2, p3 = st.columns([2, 2, 1])
         with p1:
             publish = st.checkbox(
-                "Публікувати", value=False,
+                "Публікувати",
+                value=False,
                 help="Без галочки — зберігається як чернетка",
             )
         with p2:
             max_count_p = st.number_input(
-                "Макс. об'єктів", min_value=0, value=0,
+                "Макс. об'єктів",
+                min_value=0,
+                value=0,
                 key="max_count_post",
                 help="0 = без обмежень",
             )
         with p3:
             st.write("")
             post_btn = st.button(
-                "▶ Опублікувати", use_container_width=True,
+                "▶ Опублікувати",
+                use_container_width=True,
                 disabled=proc_is_running(st.session_state.post_proc),
             )
 
         if post_btn:
-            st.session_state.post_proc = launch(
-                build_post_cmd(publish, max_count_p or None)
-            )
+            st.session_state.post_proc = launch(build_post_cmd(publish, max_count_p or None))
             st.toast("Публікацію запущено!", icon="▶")
 
         if proc_is_running(st.session_state.post_proc):
@@ -220,14 +226,13 @@ with right:
         with s2:
             st.write("")
             schema_btn = st.button(
-                "🔄 Оновити схеми", use_container_width=True,
+                "🔄 Оновити схеми",
+                use_container_width=True,
                 disabled=proc_is_running(st.session_state.schema_proc),
             )
 
         if schema_btn:
-            st.session_state.schema_proc = launch(
-                ["uv", "run", "python", "rieltor_handler/run_schema_collection.py"]
-            )
+            st.session_state.schema_proc = launch(["uv", "run", "python", "rieltor_handler/run_schema_collection.py"])
             st.toast("Збір схем запущено!", icon="🔄")
 
         if proc_is_running(st.session_state.schema_proc):
@@ -245,8 +250,12 @@ st.divider()
 st.subheader("Логи")
 
 log_lines = st.number_input(
-    "Рядків", min_value=20, max_value=500,
-    value=LOG_TAIL, step=50, label_visibility="collapsed",
+    "Рядків",
+    min_value=20,
+    max_value=500,
+    value=LOG_TAIL,
+    step=50,
+    label_visibility="collapsed",
 )
 st.code(read_log_tail(int(log_lines)), language=None)
 

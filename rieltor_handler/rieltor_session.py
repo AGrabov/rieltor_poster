@@ -58,16 +58,14 @@ class RieltorSession:
         #     logger.setLevel("DEBUG")
         self.debug = debug
 
-        self._p: Optional[Playwright] = None
-        self._browser: Optional[Browser] = None
-        self._context: Optional[BrowserContext] = None
-        self.page: Optional[Page] = None
+        self._p: Playwright | None = None
+        self._browser: Browser | None = None
+        self._context: BrowserContext | None = None
+        self.page: Page | None = None
 
-    def __enter__(self) -> "RieltorSession":
+    def __enter__(self) -> RieltorSession:
         self._p = sync_playwright().start()
-        self._browser = self._p.chromium.launch(
-            headless=self.headless, slow_mo=self.slow_mo_ms
-        )
+        self._browser = self._p.chromium.launch(headless=self.headless, slow_mo=self.slow_mo_ms)
         self._context = self._browser.new_context()
         self.page = self._context.new_page()
         self.page.set_default_timeout(self.default_timeout_ms)
@@ -136,9 +134,7 @@ class RieltorSession:
             return True
         return False
 
-    def navigate_with_error_check(
-        self, url: str, wait_until: str = "domcontentloaded"
-    ) -> None:
+    def navigate_with_error_check(self, url: str, wait_until: str = "domcontentloaded") -> None:
         """Перехід за URL з перевіркою на сторінку помилки.
 
         Args:
@@ -172,9 +168,7 @@ class RieltorSession:
 
         p.fill(
             "input[name='phone']",
-            self.creds.phone
-            if not self.creds.phone.startswith("+380")
-            else self.creds.phone.lstrip("+380"),
+            self.creds.phone if not self.creds.phone.startswith("+380") else self.creds.phone.lstrip("+380"),
         )
         p.fill("input[name='password']", self.creds.password)
         p.click("button[type='submit']")

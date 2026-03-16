@@ -45,8 +45,24 @@ build-backend = "hatchling.build"
 packages = ["crm_data_parser", "rieltor_handler", "schemas"]
 
 [tool.ruff]
-line-length = 100
-target-version = "py314"
+line-length = 120
+target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP"]
+select = ["E", "F", "W", "I", "UP"]
+ignore = [
+    "E501",   # line too long (покрыто line-length)
+    "E741",   # ambiguous variable name (l, O — часто в math/backtrader)
+    "F401",   # unused import (side-effect imports в backtrader)
+    "UP007",  # use X | Y instead of Optional — для совместимости
+    "UP035",  # deprecated typing imports — backtrader совместимость
+    "E402",   # module level import not at top (встречается в стратегиях)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"indicators/**" = ["E302", "E303"]  # Backtrader-style class spacing
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false

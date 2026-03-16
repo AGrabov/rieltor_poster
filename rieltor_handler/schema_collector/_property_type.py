@@ -4,9 +4,9 @@ from typing import Optional
 
 from playwright.sync_api import Locator
 
-from .helpers import _norm, _cf
-
 from setup_logger import setup_logger
+
+from .helpers import _cf, _norm
 
 logger = setup_logger(__name__)
 
@@ -31,17 +31,11 @@ class _PropertyTypeMixin:
             "xpath=.//div[contains(@class,'MuiBox-root')][.//img[@alt] and .//span and not(.//div[contains(@class,'MuiBox-root')][.//img[@alt] and .//span])]"
         )
 
-        chosen: Optional[Locator] = None
+        chosen: Locator | None = None
         for i in range(cards.count()):
             c = cards.nth(i)
             alt = _cf(c.locator("css=img[alt]").first.get_attribute("alt") or "")
-            spans = _cf(
-                " ".join(
-                    _norm(t)
-                    for t in c.locator("css=span").all_inner_texts()
-                    if _norm(t)
-                )
-            )
+            spans = _cf(" ".join(_norm(t) for t in c.locator("css=span").all_inner_texts() if _norm(t)))
             if (alt and target in alt) or (spans and target in spans):
                 chosen = c
                 break

@@ -18,12 +18,11 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 from bs4 import BeautifulSoup, Tag
 from playwright.sync_api import Page
-import os
 
 from setup_logger import setup_logger
 
@@ -46,12 +45,12 @@ class EstateListItem:
     estate_id: int
     title: str
     url: str
-    price: Optional[str] = None
-    category: Optional[str] = None
-    property_type: Optional[str] = None
-    deal_type: Optional[str] = None
-    city: Optional[str] = None
-    tags: List[str] = field(default_factory=list)
+    price: str | None = None
+    category: str | None = None
+    property_type: str | None = None
+    deal_type: str | None = None
+    city: str | None = None
+    tags: list[str] = field(default_factory=list)
     can_advertise: bool = False
     buyer_pays_commission: bool = False
     is_closed: bool = False
@@ -85,9 +84,7 @@ class EstateListCollector:
         if debug:
             logger.setLevel("DEBUG")
 
-    def collect_advertisable(
-        self, max_pages: Optional[int] = None
-    ) -> List[EstateListItem]:
+    def collect_advertisable(self, max_pages: int | None = None) -> list[EstateListItem]:
         """Зібрати всі рекламовані об'єкти з відфільтрованого списку CRM.
 
         Відкриває список об'єктів з фільтром "Можна рекламувати",
@@ -111,7 +108,7 @@ class EstateListCollector:
         self.page.goto(url, wait_until="domcontentloaded")
         self.page.wait_for_selector(".estate-list", timeout=15_000)
 
-        all_items: List[EstateListItem] = []
+        all_items: list[EstateListItem] = []
         page_num = 1
 
         while True:
@@ -119,9 +116,7 @@ class EstateListCollector:
             items = self.collect_page()
             active = [i for i in items if not i.is_closed and i.can_advertise]
             skipped_closed = sum(1 for i in items if i.is_closed)
-            skipped_no_ads = sum(
-                1 for i in items if not i.is_closed and not i.can_advertise
-            )
+            skipped_no_ads = sum(1 for i in items if not i.is_closed and not i.can_advertise)
             all_items.extend(active)
             logger.info(
                 "Сторінка %d: %d об'єктів (%d активних, %d закритих, %d не рекламованих), всього: %d",
@@ -147,7 +142,7 @@ class EstateListCollector:
         logger.info("Зібрано %d активних рекламованих об'єктів", len(all_items))
         return all_items
 
-    def collect_page(self) -> List[EstateListItem]:
+    def collect_page(self) -> list[EstateListItem]:
         """Розпарсити всі картки об'єктів на поточній сторінці.
 
         Returns:
@@ -156,7 +151,7 @@ class EstateListCollector:
         html = self.page.content()
         soup = BeautifulSoup(html, "html.parser")
 
-        items: List[EstateListItem] = []
+        items: list[EstateListItem] = []
         for elem in soup.select(".estate-item[data-key]"):
             try:
                 item = self._parse_estate_item(elem)
@@ -167,7 +162,7 @@ class EstateListCollector:
 
         return items
 
-    def get_estate_html(self, estate_id: int) -> Optional[str]:
+    def get_estate_html(self, estate_id: int) -> str | None:
         """Перейти на сторінку окремого об'єкта та повернути його HTML.
 
         Перевіряє наявність сповіщення "Причина закриття" — повертає None, якщо об'єкт закрито.
@@ -186,9 +181,7 @@ class EstateListCollector:
         html = self.page.content()
 
         if self._html_has_closure_alert(html):
-            logger.warning(
-                "Об'єкт %d закрито (знайдено сповіщення про закриття), пропускаємо", estate_id
-            )
+            logger.warning("Об'єкт %d закрито (знайдено сповіщення про закриття), пропускаємо", estate_id)
             return None
 
         return html
@@ -303,7 +296,7 @@ class EstateListCollector:
 
     # ── Internal ──
 
-    def _parse_estate_item(self, elem: Tag) -> Optional[EstateListItem]:
+    def _parse_estate_item(self, elem: Tag) -> EstateListItem | None:
         """Розпарсити один елемент .estate-item."""
         # Estate ID from data-key
         estate_id_str = elem.get("data-key", "")
@@ -313,9 +306,7 @@ class EstateListCollector:
 
         # Title from .estate-title a
         title_elem = elem.select_one(".estate-title a")
-        title = (
-            title_elem.get_text(strip=True) if title_elem else f"Estate #{estate_id}"
-        )
+        title = title_elem.get_text(strip=True) if title_elem else f"Estate #{estate_id}"
 
         # URL
         url = f"{CRM_BASE_URL}/estate/{estate_id}"
@@ -328,7 +319,7 @@ class EstateListCollector:
         extras = self._parse_extras(elem)
 
         # Tags
-        tags: List[str] = []
+        tags: list[str] = []
         for badge in elem.select(".estate-tags .badge"):
             tag_text = badge.get_text(strip=True)
             if tag_text:
@@ -339,16 +330,11 @@ class EstateListCollector:
         # Can advertise: blocked only if an explicit non-advertising tag is present.
         # Items fetched via ADVERTISABLE_FILTER are presumed advertisable by default —
         # no positive "реклам" tag is required.
-        not_advertisable = any(
-            "не реклам" in t or ("закрит" in t and "продаж" in t) for t in tags_lower
-        )
+        not_advertisable = any("не реклам" in t or ("закрит" in t and "продаж" in t) for t in tags_lower)
         can_advertise = not not_advertisable
 
         # Commission: "не платит" / "не платить" → seller does NOT pay → buyer pays
-        buyer_pays = any(
-            ("не плат" in t and "комісі" in t) or ("не плат" in t and "комисси" in t)
-            for t in tags_lower
-        )
+        buyer_pays = any(("не плат" in t and "комісі" in t) or ("не плат" in t and "комисси" in t) for t in tags_lower)
         # Also check for explicit "комиссию не платит" / "комісію не платить"
         if not buyer_pays:
             buyer_pays = any("не плат" in t for t in tags_lower)

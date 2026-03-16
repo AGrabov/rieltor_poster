@@ -4,29 +4,27 @@ from typing import Dict, List, Optional, Tuple
 
 from playwright.sync_api import Locator
 
-from .helpers import _norm, _cf
-
 from setup_logger import setup_logger
+
+from .helpers import _cf, _norm
 
 logger = setup_logger(__name__)
 
 
 class _NavigationMixin:
     # ---------------- navigation items (h6) ----------------
-    def list_navigation_items(self) -> List[Tuple[str, int]]:
+    def list_navigation_items(self) -> list[tuple[str, int]]:
         root = self._root()
         self.open_all_blocks_sticky()
 
         h6s = root.locator("css=h6")
-        seen: Dict[str, int] = {}
-        out: List[Tuple[str, int]] = []
+        seen: dict[str, int] = {}
+        out: list[tuple[str, int]] = []
 
         for i in range(h6s.count()):
             h = h6s.nth(i)
             try:
-                if h.locator(
-                    "xpath=ancestor::*[@role='dialog' or @role='listbox'][1]"
-                ).count():
+                if h.locator("xpath=ancestor::*[@role='dialog' or @role='listbox'][1]").count():
                     continue
             except Exception:
                 pass
@@ -44,8 +42,8 @@ class _NavigationMixin:
             seen[k] = occ + 1
             out.append((title, occ))
 
-        compact: List[Tuple[str, int]] = []
-        prev: Optional[str] = None
+        compact: list[tuple[str, int]] = []
+        prev: str | None = None
         for t, occ in out:
             if prev is not None and _cf(prev) == _cf(t):
                 continue
@@ -56,14 +54,14 @@ class _NavigationMixin:
         logger.debug("Список навігації: %s", [t for (t, _) in compact])
         return compact
 
-    def _h6_by_title_occ(self, title: str, occ: int) -> Optional[Locator]:
+    def _h6_by_title_occ(self, title: str, occ: int) -> Locator | None:
         root = self._root()
         h6s = root.locator("css=h6", has_text=title)
         if h6s.count() <= occ:
             return None
         return h6s.nth(occ)
 
-    def _scope_for_nav_item(self, title: str, occ: int) -> Optional[Locator]:
+    def _scope_for_nav_item(self, title: str, occ: int) -> Locator | None:
         h6 = self._h6_by_title_occ(title, occ)
         if not h6 or not h6.count():
             return None
@@ -88,9 +86,7 @@ class _NavigationMixin:
 
         box = h6.locator("xpath=ancestor::div[contains(@class,'MuiBox-root')][2]").first
         if not box.count():
-            box = h6.locator(
-                "xpath=ancestor::div[contains(@class,'MuiBox-root')][1]"
-            ).first
+            box = h6.locator("xpath=ancestor::div[contains(@class,'MuiBox-root')][1]").first
         if not box.count():
             return None
 
@@ -98,7 +94,7 @@ class _NavigationMixin:
         self.page.wait_for_timeout(self.ui_delay_ms)
         return box
 
-    def _find_nav_scope(self, title: str) -> Optional[Locator]:
+    def _find_nav_scope(self, title: str) -> Locator | None:
         items = self.list_navigation_items()
         for t, occ in items:
             if _cf(t) == _cf(title):

@@ -22,14 +22,10 @@ class AutocompleteMixin:
         except Exception:
             tag = ""
         if tag in ("input", "textarea"):
-            root = ctrl.locator(
-                "xpath=ancestor::*[contains(@class,'MuiAutocomplete-root')][1]"
-            ).first
+            root = ctrl.locator("xpath=ancestor::*[contains(@class,'MuiAutocomplete-root')][1]").first
             if root.count():
                 return root
-            root = ctrl.locator(
-                "xpath=ancestor::*[contains(@class,'MuiFormControl-root')][1]"
-            ).first
+            root = ctrl.locator("xpath=ancestor::*[contains(@class,'MuiFormControl-root')][1]").first
             if root.count():
                 return root
         return ctrl
@@ -59,9 +55,7 @@ class AutocompleteMixin:
         try:
             input_root = ctrl.locator(".MuiAutocomplete-inputRoot").first
             if input_root.count():
-                txt = " ".join(
-                    t.strip() for t in input_root.all_inner_texts() if t.strip()
-                ).strip()
+                txt = " ".join(t.strip() for t in input_root.all_inner_texts() if t.strip()).strip()
                 if txt:
                     try:
                         label_txt = ""
@@ -276,15 +270,11 @@ class AutocompleteMixin:
         except Exception:
             return False
 
-    def _wait_next_field_visible(
-        self, section: Locator, next_key: str, timeout_ms: int = 5000
-    ) -> bool:
+    def _wait_next_field_visible(self, section: Locator, next_key: str, timeout_ms: int = 5000) -> bool:
         next_label = self._expected_label(next_key) or next_key
         lit = self._xpath_literal(next_label)
         try:
-            section.locator(
-                f"xpath=.//label[contains(normalize-space(.), {lit})]"
-            ).first.wait_for(
+            section.locator(f"xpath=.//label[contains(normalize-space(.), {lit})]").first.wait_for(
                 state="visible",
                 timeout=timeout_ms,
             )
@@ -395,16 +385,10 @@ class AutocompleteMixin:
         label = self._expected_label(key) or str(value)
         ctrl = self._find_control_by_label(section, label)
         if not ctrl:
-            logger.warning(
-                "Autocomplete: елемент керування не знайдено для key='%s' label='%s'", key, label
-            )
+            logger.warning("Autocomplete: елемент керування не знайдено для key='%s' label='%s'", key, label)
             return
 
-        inp = (
-            ctrl.locator("css=input").first
-            if ctrl.locator("css=input").count()
-            else ctrl
-        )
+        inp = ctrl.locator("css=input").first if ctrl.locator("css=input").count() else ctrl
         desired = ("" if value is None else str(value)).strip()
         if not desired:
             logger.info("Autocomplete пропуск '%s': бажане значення порожнє", key)
@@ -444,15 +428,11 @@ class AutocompleteMixin:
 
         # SKIP только если НЕ force и текущее значение совпадает с desired
         if (not force) and cur_input and _matches(cur_input):
-            if not next_key or self._wait_next_field_visible(
-                section, next_key, timeout_ms=1200
-            ):
+            if not next_key or self._wait_next_field_visible(section, next_key, timeout_ms=1200):
                 logger.info("Autocomplete пропуск '%s': вже заповнено '%s'", key, cur_input)
                 return
 
-        logger.info(
-            "Autocomplete заповнення '%s' = '%s'%s", key, desired, " (примусово)" if force else ""
-        )
+        logger.info("Autocomplete заповнення '%s' = '%s'%s", key, desired, " (примусово)" if force else "")
 
         # Split house number into digit prefix and the rest (e.g. "20а" → "20", "а")
         import re as _re
@@ -514,9 +494,7 @@ class AutocompleteMixin:
             try:
                 cur = (inp.input_value() or "").strip()
                 if not cur:
-                    logger.warning(
-                        "Поле порожнє після введення '%s', повторна спроба через fill()", to_type
-                    )
+                    logger.warning("Поле порожнє після введення '%s', повторна спроба через fill()", to_type)
                     try:
                         inp.fill(to_type)
                     except Exception:
@@ -545,17 +523,13 @@ class AutocompleteMixin:
 
         # For house: if digits-only didn't match, type full value and retry
         if is_house and _house_rest:
-            logger.debug(
-                "Будинок: збіг тільки за цифрами не знайдено, вводимо повне значення '%s'", desired
-            )
+            logger.debug("Будинок: збіг тільки за цифрами не знайдено, вводимо повне значення '%s'", desired)
             _clear_and_type(desired)
             if _try_pick():
                 self._mark_touched(inp)
                 return
 
-        logger.debug(
-            "Повторна спроба вибору autocomplete (мишею) для '%s' = '%s'", key, desired
-        )
+        logger.debug("Повторна спроба вибору autocomplete (мишею) для '%s' = '%s'", key, desired)
         try:
             inp.press("End")
             inp.type(" ")
@@ -582,9 +556,7 @@ class AutocompleteMixin:
             cur,
         )
 
-    def _fill_autocomplete_multi(
-        self, section: Locator, key: str, values: Sequence[str]
-    ) -> None:
+    def _fill_autocomplete_multi(self, section: Locator, key: str, values: Sequence[str]) -> None:
         label = self._expected_label(key) or key
         ctrl = self._find_control_by_label(section, label)
         if not ctrl:
@@ -616,16 +588,10 @@ class AutocompleteMixin:
             desired.append(s)
 
         if not desired:
-            logger.info(
-                "Autocomplete multi пропуск %s: нічого додавати (вже заповнено)", key
-            )
+            logger.info("Autocomplete multi пропуск %s: нічого додавати (вже заповнено)", key)
             return
 
-        inp = (
-            ctrl.locator("css=input").first
-            if ctrl.locator("css=input").count()
-            else ctrl
-        )
+        inp = ctrl.locator("css=input").first if ctrl.locator("css=input").count() else ctrl
 
         for v in desired:
             logger.debug("Autocomplete multi додавання %s -> %s", key, v)

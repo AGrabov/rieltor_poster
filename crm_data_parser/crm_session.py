@@ -64,12 +64,12 @@ class CrmSession:
         if debug:
             logger.setLevel("DEBUG")
 
-        self._p: Optional[Playwright] = None
-        self._browser: Optional[Browser] = None
-        self._context: Optional[BrowserContext] = None
-        self.page: Optional[Page] = None
+        self._p: Playwright | None = None
+        self._browser: Browser | None = None
+        self._context: BrowserContext | None = None
+        self.page: Page | None = None
 
-    def __enter__(self) -> "CrmSession":
+    def __enter__(self) -> CrmSession:
         self._p = sync_playwright().start()
         self._browser = self._p.chromium.launch(
             headless=self.headless,
@@ -115,10 +115,7 @@ class CrmSession:
 
         # Verify login succeeded — should redirect away from login page
         if "/login" in (p.url or ""):
-            raise RuntimeError(
-                "CRM login failed — still on login page. "
-                "Check email/password credentials."
-            )
+            raise RuntimeError("CRM login failed — still on login page. Check email/password credentials.")
 
         logger.info("Вхід до CRM виконано, url: %s", p.url)
 
