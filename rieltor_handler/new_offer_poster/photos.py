@@ -80,8 +80,14 @@ class PhotosMixin:
 
         ctrl = self._find_control_by_label(sec, ui_label)
         if not ctrl:
-            logger.debug("PhotoBlock: елемент керування не знайдено для label='%s' (пропуск)", ui_label)
-            return
+            # Fallback: textarea без <label> (аналогічно personal_notes)
+            textarea = sec.locator("css=textarea:not([aria-hidden='true'])").first
+            if textarea.count() == 0:
+                textarea = sec.locator("css=textarea").first
+            if textarea.count() == 0:
+                logger.warning("PhotoBlock: елемент керування не знайдено для label='%s' (пропуск)", ui_label)
+                return
+            ctrl = textarea
 
         # если это wrapper — берём input/textarea
         try:

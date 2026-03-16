@@ -525,6 +525,10 @@ class HTMLOfferParser:
                             value = value.replace("вул.", "").strip()
                         elif label_lower == "новобудова" and value.startswith("ЖК "):
                             value = value.replace("ЖК ", "").strip()
+                        elif label_lower == "район":
+                            # Strip trailing "район" suffix so autocomplete can match
+                            # e.g. "Шевченківський район" → "Шевченківський"
+                            value = re.sub(r"\s+район\s*$", "", value, flags=re.IGNORECASE).strip()
 
                         # Метро and Орієнтир are multi-value
                         if label_lower in ("метро", "орієнтир"):
@@ -615,12 +619,27 @@ class HTMLOfferParser:
         # Look for "Додаткова інформація" section
         for elem in self.soup.find_all(["h3", "h4"]):
             if "додаткова інформація" in elem.get_text(strip=True).lower():
-                # Get next paragraph or div
+                # Collect all sibling content until the next section header
+                parts = []
+                for sib in elem.find_next_siblings():
+                    tag = getattr(sib, "name", None)
+                    if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                        break
+                    text = sib.get_text(separator=" ", strip=True)
+                    if text:
+                        parts.append(text)
+                if parts:
+                    full_text = "\n".join(parts)
+                    logger.debug(f"Вилучено опис: {len(full_text)} символів")
+                    return full_text
+
+                # Fallback: find_next("p") for older CRM layouts
                 next_elem = elem.find_next("p")
                 if next_elem:
                     text = next_elem.get_text(strip=True)
-                    logger.debug(f"Вилучено опис: {len(text)} символів")
-                    return text
+                    if text:
+                        logger.debug(f"Вилучено опис (fallback p): {len(text)} символів")
+                        return text
 
         return ""
 
