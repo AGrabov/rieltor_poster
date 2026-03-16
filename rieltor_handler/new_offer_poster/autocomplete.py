@@ -388,7 +388,15 @@ class AutocompleteMixin:
             logger.warning("Autocomplete: елемент керування не знайдено для key='%s' label='%s'", key, label)
             return
 
-        inp = ctrl.locator("css=input").first if ctrl.locator("css=input").count() else ctrl
+        # Prefer visible input: MUI Autocomplete may contain an aria-hidden hidden input
+        # that comes first in DOM order — typing into it produces no visible result.
+        _visible = ctrl.locator("css=input:not([aria-hidden='true'])").first
+        if _visible.count():
+            inp = _visible
+        elif ctrl.locator("css=input").count():
+            inp = ctrl.locator("css=input").first
+        else:
+            inp = ctrl
         desired = ("" if value is None else str(value)).strip()
         if not desired:
             logger.info("Autocomplete пропуск '%s': бажане значення порожнє", key)
@@ -591,7 +599,13 @@ class AutocompleteMixin:
             logger.info("Autocomplete multi пропуск %s: нічого додавати (вже заповнено)", key)
             return
 
-        inp = ctrl.locator("css=input").first if ctrl.locator("css=input").count() else ctrl
+        _visible = ctrl.locator("css=input:not([aria-hidden='true'])").first
+        if _visible.count():
+            inp = _visible
+        elif ctrl.locator("css=input").count():
+            inp = ctrl.locator("css=input").first
+        else:
+            inp = ctrl
 
         for v in desired:
             logger.debug("Autocomplete multi додавання %s -> %s", key, v)
