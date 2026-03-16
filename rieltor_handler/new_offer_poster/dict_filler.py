@@ -101,6 +101,27 @@ class DictOfferFormFiller(
             self._photo_block_sections,
         )
 
+    # ---------- description enrichment ----------
+    def _enrich_offer_data_from_description(self, offer_data: dict) -> None:
+        """Re-analyze description text to fill fields missed during CRM collection.
+
+        Runs DescriptionAnalyzer against the schema loaded for this property/deal type.
+        Only adds fields that are not already present in offer_data.
+        """
+        from crm_data_parser.description_analyzer import DescriptionAnalyzer
+
+        desc = (offer_data.get("apartment") or {}).get("description") or ""
+        if not desc:
+            return
+
+        analyzer = DescriptionAnalyzer(self._schema["fields"])
+        extra = analyzer.analyze(desc, offer_data)
+        merged = [k for k, v in extra.items() if k not in offer_data and v is not None]
+        for k in merged:
+            offer_data[k] = extra[k]
+        if merged:
+            logger.info("Аналіз опису при постингу: додано %d полів: %s", len(merged), merged)
+
     # ---------- public API ----------
     def open(self) -> None:
         """Відкриває сторінку створення оголошення."""
@@ -121,6 +142,9 @@ class DictOfferFormFiller(
                 зі схеми (напр. "Число кімнат", "Ціна") та спеціальні ключі
                 ("offer_type", "property_type", "address", фото-блоки).
         """
+        # Re-run description analysis to fill any fields missed during CRM collection
+        self._enrich_offer_data_from_description(offer_data)
+
         self.open()
         root = self._new_offer_root()
         self.last_saved_offer_id = offer_data.get("article")
