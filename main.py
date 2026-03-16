@@ -114,11 +114,11 @@ def phase1_collect(
             items = [i for i in items if i.property_type and i.property_type.lower() == property_type.lower()]
             logger.info("Відфільтровано за property_type=%s: %d елементів", property_type, len(items))
 
-        if max_count:
-            items = items[:max_count]
-            logger.info("Обмежено до %d елементів", len(items))
-
         for idx, item in enumerate(items, 1):
+            if max_count and saved >= max_count:
+                logger.info("Досягнуто ліміту %d нових збережених об'єктів, зупинка", max_count)
+                break
+
             if db.estate_exists(item.estate_id):
                 logger.info(
                     "[%d/%d] Об'єкт %d вже є в БД, пропускаємо",

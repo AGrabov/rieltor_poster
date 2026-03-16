@@ -28,6 +28,9 @@ STATUS_LABELS = {
     "skipped": "⚪ Пропущені",
 }
 
+PROPERTY_TYPES = ["Квартира", "Кімната", "Будинок", "Комерційна", "Ділянка", "Паркомісце"]
+DEAL_TYPES = ["Продаж", "Оренда"]
+
 st.set_page_config(
     page_title="Rieltor Dashboard",
     page_icon="🏠",
@@ -68,21 +71,39 @@ def launch(cmd: list[str]) -> subprocess.Popen:
     )
 
 
-def build_collect_cmd(max_pages: int | None, max_count: int | None) -> list[str]:
+def build_collect_cmd(
+    max_pages: int | None,
+    max_count: int | None,
+    property_type: str | None = None,
+    deal_type: str | None = None,
+) -> list[str]:
     cmd = ["uv", "run", "python", "main.py", "collect"]
     if max_pages:
         cmd += ["--max-pages", str(max_pages)]
     if max_count:
         cmd += ["--max-count", str(max_count)]
+    if deal_type:
+        cmd += ["--deal-type", deal_type]
+    if property_type:
+        cmd += ["--property-type", property_type]
     return cmd
 
 
-def build_post_cmd(publish: bool, max_count: int | None) -> list[str]:
+def build_post_cmd(
+    publish: bool,
+    max_count: int | None,
+    property_type: str | None = None,
+    deal_type: str | None = None,
+) -> list[str]:
     cmd = ["uv", "run", "python", "main.py", "post"]
     if publish:
         cmd += ["--publish"]
     if max_count:
         cmd += ["--max-count", str(max_count)]
+    if deal_type:
+        cmd += ["--deal-type", deal_type]
+    if property_type:
+        cmd += ["--property-type", property_type]
     return cmd
 
 
@@ -140,7 +161,7 @@ with right:
     # Фаза 1 — Collect
     with st.container(border=True):
         st.markdown("**Фаза 1 — Збір** (CRM → БД)")
-        c1, c2, c3 = st.columns([2, 2, 1])
+        c1, c2 = st.columns(2)
         with c1:
             max_pages = st.number_input(
                 "Макс. сторінок",
@@ -156,17 +177,32 @@ with right:
                 key="max_count_collect",
                 help="0 = без обмежень",
             )
-        with c3:
-            st.write("")
-            st.write("")
-            collect_btn = st.button(
-                "▶ Зібрати",
-                use_container_width=True,
-                disabled=proc_is_running(st.session_state.collect_proc),
+        f1, f2 = st.columns(2)
+        with f1:
+            collect_property_type = st.selectbox(
+                "Тип об'єкта",
+                options=["Всі"] + PROPERTY_TYPES,
+                key="collect_property_type",
             )
+        with f2:
+            collect_deal_type = st.selectbox(
+                "Тип угоди",
+                options=["Всі"] + DEAL_TYPES,
+                key="collect_deal_type",
+            )
+        collect_btn = st.button(
+            "▶ Зібрати",
+            use_container_width=True,
+            disabled=proc_is_running(st.session_state.collect_proc),
+        )
 
         if collect_btn:
-            st.session_state.collect_proc = launch(build_collect_cmd(max_pages or None, max_count_c or None))
+            st.session_state.collect_proc = launch(build_collect_cmd(
+                max_pages or None,
+                max_count_c or None,
+                property_type=collect_property_type if collect_property_type != "Всі" else None,
+                deal_type=collect_deal_type if collect_deal_type != "Всі" else None,
+            ))
             st.toast("Збір запущено!", icon="▶")
 
         if proc_is_running(st.session_state.collect_proc):
@@ -181,7 +217,7 @@ with right:
     # Фаза 2 — Post
     with st.container(border=True):
         st.markdown("**Фаза 2 — Публікація** (БД → Rieltor.ua)")
-        p1, p2, p3 = st.columns([2, 2, 1])
+        p1, p2 = st.columns(2)
         with p1:
             publish = st.checkbox(
                 "Публікувати",
@@ -196,16 +232,32 @@ with right:
                 key="max_count_post",
                 help="0 = без обмежень",
             )
-        with p3:
-            st.write("")
-            post_btn = st.button(
-                "▶ Опублікувати",
-                use_container_width=True,
-                disabled=proc_is_running(st.session_state.post_proc),
+        pf1, pf2 = st.columns(2)
+        with pf1:
+            post_property_type = st.selectbox(
+                "Тип об'єкта",
+                options=["Всі"] + PROPERTY_TYPES,
+                key="post_property_type",
             )
+        with pf2:
+            post_deal_type = st.selectbox(
+                "Тип угоди",
+                options=["Всі"] + DEAL_TYPES,
+                key="post_deal_type",
+            )
+        post_btn = st.button(
+            "▶ Опублікувати",
+            use_container_width=True,
+            disabled=proc_is_running(st.session_state.post_proc),
+        )
 
         if post_btn:
-            st.session_state.post_proc = launch(build_post_cmd(publish, max_count_p or None))
+            st.session_state.post_proc = launch(build_post_cmd(
+                publish,
+                max_count_p or None,
+                property_type=post_property_type if post_property_type != "Всі" else None,
+                deal_type=post_deal_type if post_deal_type != "Всі" else None,
+            ))
             st.toast("Публікацію запущено!", icon="▶")
 
         if proc_is_running(st.session_state.post_proc):
