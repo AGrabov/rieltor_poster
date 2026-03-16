@@ -32,9 +32,16 @@ def _has_console_handler(logger: Logger) -> bool:
     return False
 
 
-def init_logging(level=os.environ.get("LOG_LEVEL", "INFO"), filename: str | None = None) -> Logger:
+def init_logging(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    filename: str | None = None,
+    clear_on_start: bool = False,
+) -> Logger:
     """
     Викликати один раз у точці входу. Повторний виклик безпечний.
+
+    Args:
+        clear_on_start: якщо True — очищає лог-файл та бекапи перед запуском.
     """
     base = logging.getLogger(APP_NAME)
     log_lvl = getattr(logging, str(level).upper(), logging.INFO)
@@ -45,6 +52,21 @@ def init_logging(level=os.environ.get("LOG_LEVEL", "INFO"), filename: str | None
     if filename and not _has_file_handler(base, filename):
         path = Path(filename)
         path.parent.mkdir(parents=True, exist_ok=True)
+
+        if clear_on_start:
+            # Truncate the main log and remove backup files (.1, .2, ...)
+            try:
+                path.write_text("", encoding="utf-8")
+            except OSError:
+                pass
+            for i in range(1, 10):
+                backup = path.with_suffix(path.suffix + f".{i}")
+                try:
+                    backup.unlink()
+                except FileNotFoundError:
+                    break
+                except OSError:
+                    pass
 
         fh = FlushFileHandler(
             str(path),

@@ -33,6 +33,7 @@ load_dotenv()
 init_logging(
     level=os.getenv("LOG_LEVEL", "INFO"),
     filename="logs/rieltor.log",
+    clear_on_start=True,
 )
 logger = setup_logger(__name__)
 
