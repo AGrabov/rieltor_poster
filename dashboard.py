@@ -128,7 +128,7 @@ with header_right:
     with col_refresh:
         manual_refresh = st.button("⟳ Оновити", use_container_width=True)
     with col_auto:
-        auto_refresh = st.toggle("Авто 30с", value=False)
+        auto_refresh = st.toggle("Авто 30с", value=True)
 
 st.divider()
 
