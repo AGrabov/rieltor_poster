@@ -176,7 +176,26 @@ class AutocompleteMixin:
                     }
                   }
 
-                  // 2) House-normalized match: "20а" = "20-а" = "20 а" = "20А"
+                  // 2) Word-stem match: any word in desired shares ≥5-char prefix with
+                  //    any word in the option (handles e.g. "Нова Дарниця" → "Дарницький")
+                  const dWords = d.split(/\s+/).filter(w => w.length >= 5);
+                  if (dWords.length) {
+                    for (const o of opts) {
+                      const oWords = o.n.split(/\s+/);
+                      for (const dw of dWords) {
+                        for (const ow of oWords) {
+                          if (ow.length >= 5) {
+                            const len = Math.min(dw.length, ow.length, 6);
+                            if (dw.slice(0, len) === ow.slice(0, len)) {
+                              return mkResult(o, 'word_stem', opts.length);
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+
+                  // 4) House-normalized match: "20а" = "20-а" = "20 а" = "20А"
                   if (isHouse && dHouse) {
                     for (const o of opts) {
                       if (o.h === dHouse) {
@@ -190,7 +209,7 @@ class AutocompleteMixin:
                     }
                   }
 
-                  // 3) Digits-only prefix fallback
+                  // 5) Digits-only prefix fallback
                   if (dDigits) {
                     for (const o of opts) {
                       if (o.digits && o.digits.startsWith(dDigits)) {
@@ -406,6 +425,12 @@ class AutocompleteMixin:
         is_address = key_lower in ADDRESS_LABELS
         is_house = key_lower == _HOUSE_LABEL
 
+        # Detect readonly inputs (e.g. "Район" — click-to-open dropdown, no typing)
+        try:
+            _is_readonly = bool(inp.evaluate("el => !!el.readOnly"))
+        except Exception:
+            _is_readonly = False
+
         def _matches(cur: str) -> bool:
             cur = (cur or "").strip()
             if not cur:
@@ -457,11 +482,20 @@ class AutocompleteMixin:
             """Очищає поле введення та вводить текст. Якщо text=None, використовує повне бажане значення."""
             to_type = text if text is not None else desired
 
-            # Click to focus (needed before fill/type)
+            # Click to focus / open dropdown
             try:
                 inp.click()
             except Exception:
                 pass
+
+            # Read-only fields (e.g. "Район") open a pre-loaded dropdown on click.
+            # Typing/filling is not possible — just wait for the dropdown to appear.
+            if _is_readonly:
+                try:
+                    self.page.wait_for_timeout(600)
+                except Exception:
+                    pass
+                return
 
             # Clear via fill("") — dispatches proper React onChange events
             try:
@@ -538,13 +572,21 @@ class AutocompleteMixin:
                 return
 
         logger.debug("Повторна спроба вибору autocomplete (мишею) для '%s' = '%s'", key, desired)
-        try:
-            inp.press("End")
-            inp.type(" ")
-            self.page.wait_for_timeout(120)
-            inp.press("Backspace")
-        except Exception:
-            pass
+        if not _is_readonly:
+            try:
+                inp.press("End")
+                inp.type(" ")
+                self.page.wait_for_timeout(120)
+                inp.press("Backspace")
+            except Exception:
+                pass
+        else:
+            # Re-click to re-open the dropdown for another pick attempt
+            try:
+                inp.click()
+                self.page.wait_for_timeout(400)
+            except Exception:
+                pass
 
         if _try_pick():
             self._mark_touched(inp)
