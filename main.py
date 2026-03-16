@@ -111,7 +111,18 @@ def phase1_collect(
                 logger.info("Відфільтровано за deal_type=%s: %d елементів", normalized, len(items))
 
         if property_type:
-            items = [i for i in items if i.property_type and i.property_type.lower() == property_type.lower()]
+            from crm_data_parser.html_parser import CRM_TYPE_TO_SCHEMA
+            pt_lower = property_type.lower()
+
+            def _matches_property_type(item) -> bool:
+                crm_type = (item.property_type or "").lower()
+                # Direct match: e.g. "Будинок" == "будинок"
+                if crm_type == pt_lower:
+                    return True
+                # Schema match: e.g. "Таунхаус"/"Дуплекс" → "Будинок"
+                return CRM_TYPE_TO_SCHEMA.get(crm_type, "").lower() == pt_lower
+
+            items = [i for i in items if _matches_property_type(i)]
             logger.info("Відфільтровано за property_type=%s: %d елементів", property_type, len(items))
 
         for idx, item in enumerate(items, 1):
