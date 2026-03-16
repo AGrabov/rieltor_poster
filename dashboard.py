@@ -299,7 +299,17 @@ with right:
 # ── Логи ─────────────────────────────────────────────────────────────
 
 st.divider()
-st.subheader("Логи")
+log_header_left, log_header_right = st.columns([3, 1])
+with log_header_left:
+    st.subheader("Логи")
+with log_header_right:
+    st.write("")
+    if st.button("🗑 Очистити логи", use_container_width=True):
+        try:
+            LOG_FILE.write_text("", encoding="utf-8")
+            st.toast("Логи очищено", icon="🗑")
+        except Exception as e:
+            st.error(f"Помилка очищення: {e}")
 
 log_lines = st.number_input(
     "Рядків",
