@@ -130,6 +130,24 @@ class DescriptionAnalyzer:
                 mapping[label] = field
         return mapping
 
+    @staticmethod
+    def _preprocess_description(text: str) -> str:
+        """Нормалізувати текст опису перед аналізом.
+
+        Виправляє поширені помилки форматування в CRM-описах:
+        - «мг» замість «м²» після числа: "212мгДілянка" → "212 м²Ділянка"
+        - зрощені слова на межі малої/великої літери → вставляємо «. »:
+          "сотокПаркування" → "соток. Паркування"
+        """
+        # 1) "мг" → "м²" FIRST so "212мгДілянка" → "212 м²Ділянка"
+        text = re.sub(r'(\d)\s*мг\b', r'\1 м²', text)
+        # 2) Insert ". " at lowercase/digit/²→uppercase boundary:
+        #    "²" included because "м²Ділянка" appears after step 1
+        text = re.sub(r'([а-яіїєґ\d²])([А-ЯІЇЄҐ])', r'\1. \2', text)
+        # 3) Normalize whitespace
+        text = re.sub(r'[ \t]+', ' ', text)
+        return text.strip()
+
     def analyze(self, description: str, existing_data: dict) -> dict:
         """Проаналізувати текст опису та вилучити додаткові значення полів.
 
@@ -139,7 +157,7 @@ class DescriptionAnalyzer:
             return {}
 
         extracted = {}
-        description_lower = description.lower()
+        description_lower = self._preprocess_description(description).lower()
 
         # 1) Match against field options for select/radio/checklist widgets
         option_matches = self._match_field_options(description_lower, existing_data)
@@ -311,6 +329,15 @@ class DescriptionAnalyzer:
                 "Загальна площа, м²",
             ),
             (r"(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?)\s*загальн", "Загальна площа, м²"),
+            # House: "будинок площею 200 м²" / "будинок 200 м²"
+            (
+                r"будинок(?:\s+\w+){0,3}\s+площ\w*\s*[:\s\-–—]*(\d+[.,]?\d*)\s*(?:м²|кв\.?\s*м)",
+                "Загальна площа, м²",
+            ),
+            (
+                r"будинок\s+(\d+[.,]?\d*)\s*(?:м²|кв\.?\s*м)",
+                "Загальна площа, м²",
+            ),
             (r"житлов\w*\s+площ\w*[:\s\-–—]*(\d+[.,]?\d*)", "Житлова площа, м²"),
             (r"площ\w*\s+кухн\w*[:\s\-–—]*(\d+[.,]?\d*)", "Площа кухні, м²"),
             # "Кухня-вітальня — 15 м²" or "Кухня — 12 м²"
@@ -330,8 +357,12 @@ class DescriptionAnalyzer:
                 if match:
                     extracted[label] = match.group(1).replace(",", ".")
 
-        # Format: "85/50/12" (total/living/kitchen)
-        area_slash = re.search(r"(\d+)[/\\](\d+)[/\\](\d+)", text)
+        # Format: "85/50/12 м²" — unit required to avoid false matches in house descriptions
+        # (addresses like "5/7", floor fractions "2/2", parking "1/2" must not trigger this)
+        area_slash = re.search(
+            r"(\d+)[/\\](\d+)[/\\](\d+)\s*(?:м²|м\.?\s*кв\.?|кв\.?\s*м)",
+            text,
+        )
         if area_slash:
             for label, group in [
                 ("Загальна площа, м²", 1),
@@ -340,6 +371,45 @@ class DescriptionAnalyzer:
             ]:
                 if label not in existing_data and label not in extracted:
                     extracted[label] = area_slash.group(group)
+
+        # --- Plot area (соток / га) ---
+        _PLOT_AREA_LABELS = ("Площа ділянки, соток", "Загальна площа, соток")
+        plot_area_label = next(
+            (lbl for lbl in _PLOT_AREA_LABELS if lbl in self.label_to_field),
+            None,
+        )
+        if plot_area_label and plot_area_label not in existing_data and plot_area_label not in extracted:
+            sotky_patterns = [
+                r"площ\w*\s+ділянк\w*\s*[—–\-:]*\s*(\d+[.,]?\d*)\s*соток",
+                r"(\d+[.,]?\d*)\s*сотк\w+\s+(?:землі|ділянк\w*)",
+                r"(\d+[.,]?\d*)\s*соток\b",
+                r"(\d+[.,]?\d*)\s*сотки\b",
+            ]
+            ha_patterns = [
+                r"(\d+[.,]?\d*)\s*га\b",
+            ]
+            plot_value = None
+            for pat in sotky_patterns:
+                m = re.search(pat, text)
+                if m:
+                    # Skip "до N соток" / "від N соток" (expansion hints, not actual area)
+                    prefix = text[max(0, m.start() - 5):m.start()]
+                    if re.search(r'\bдо\b|\bвід\b', prefix):
+                        continue
+                    plot_value = m.group(1).replace(",", ".")
+                    break
+            if plot_value is None:
+                for pat in ha_patterns:
+                    m = re.search(pat, text)
+                    if m:
+                        ha = float(m.group(1).replace(",", "."))
+                        sotky = ha * 100
+                        plot_value = str(int(sotky)) if sotky == int(sotky) else str(round(sotky, 2))
+                        break
+            if plot_value is not None:
+                extracted[plot_area_label] = plot_value
+                if self.debug:
+                    logger.debug(f"Вилучено {plot_area_label}={plot_value}")
 
         # --- Floor ---
         if "Поверх" not in existing_data and "Поверх" not in extracted:
