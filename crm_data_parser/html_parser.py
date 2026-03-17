@@ -883,6 +883,19 @@ class HTMLOfferParser:
             if option.lower().strip() == text_lower:
                 return option
 
+        # Known CRM→Rieltor value overrides (CRM-specific terms not present in Rieltor schemas)
+        _OVERRIDES: dict[str, str] = {
+            "котедж": "Будинок",
+            "під чистову": "Без ремонту",
+            "чорновий ремонт": "Без ремонту",
+            "чорновий": "Без ремонту",
+        }
+        if text_lower in _OVERRIDES:
+            target = _OVERRIDES[text_lower]
+            for option in options:
+                if option == target:
+                    return option
+
         # Try partial match
         for option in options:
             if text_lower in option.lower() or option.lower() in text_lower:

@@ -45,6 +45,14 @@ _ПРИЗНАЧЕННЯ_DEFAULT_BY_PROPERTY: dict[str, str] = {
     "Ділянка": "Під забудову",
 }
 
+# CRM-specific values that don't match Rieltor options → map to closest equivalent
+_SELECT_VALUE_MAP: dict[str, str] = {
+    "котедж": "Будинок",
+    "під чистову": "Без ремонту",
+    "чорновий ремонт": "Без ремонту",
+    "чорновий": "Без ремонту",
+}
+
 
 class DictOfferFormFiller(
     StructureMixin,
@@ -144,6 +152,14 @@ class DictOfferFormFiller(
             )
             offer_data[fi["label"]] = vyd_default
             applied.append(f"{fi['label']}={vyd_default!r}")
+
+        # 4) "Площа ділянки, соток" — required for Будинок; use "1" when not in CRM/description
+        for _plot_lbl in ("Площа ділянки, соток", "Загальна площа, соток"):
+            fi = self._schema["label_to_field"].get(_plot_lbl.lower())
+            if fi and fi["label"] not in offer_data:
+                offer_data[fi["label"]] = "1"
+                applied.append(f"{fi['label']}='1' (placeholder — уточніть у CRM)")
+                break
 
         if applied:
             logger.info("Значення за замовчуванням: %s", applied)
@@ -353,7 +369,10 @@ class DictOfferFormFiller(
                 value = "Є" if value else "Немає"
             elif isinstance(value, list):
                 value = value[0] if value else ""
-            self._fill_select_or_text(root, section, key, self._to_text(value))
+            # Normalize known CRM-specific values to Rieltor equivalents
+            value_str = self._to_text(value)
+            value_str = _SELECT_VALUE_MAP.get(value_str.lower().strip(), value_str)
+            self._fill_select_or_text(root, section, key, value_str)
             return
 
         if widget in ("text", "multiline_text", "datetime"):

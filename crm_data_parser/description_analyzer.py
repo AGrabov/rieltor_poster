@@ -381,23 +381,26 @@ class DescriptionAnalyzer:
             None,
         )
         if plot_area_label and plot_area_label not in existing_data and plot_area_label not in extracted:
+            # (pattern, skip_on_do_vid_prefix)
+            # Contextual patterns with "землі/ділянки" are reliable even with до/від prefix
             sotky_patterns = [
-                r"площ\w*\s+ділянк\w*\s*[—–\-:]*\s*(\d+[.,]?\d*)\s*соток",
-                r"(\d+[.,]?\d*)\s*сотк\w+\s+(?:землі|ділянк\w*)",
-                r"(\d+[.,]?\d*)\s*соток\b",
-                r"(\d+[.,]?\d*)\s*сотки\b",
+                (r"площ\w*\s+ділянк\w*\s*[—–\-:]*\s*(\d+[.,]?\d*)\s*соток", False),
+                (r"(\d+[.,]?\d*)\s*сотк\w+\s+(?:землі|ділянк\w*)", False),
+                (r"(\d+[.,]?\d*)\s*соток\b", True),
+                (r"(\d+[.,]?\d*)\s*сотки\b", True),
             ]
             ha_patterns = [
                 r"(\d+[.,]?\d*)\s*га\b",
             ]
             plot_value = None
-            for pat in sotky_patterns:
+            for pat, check_prefix in sotky_patterns:
                 m = re.search(pat, text)
                 if m:
-                    # Skip "до N соток" / "від N соток" (expansion hints, not actual area)
-                    prefix = text[max(0, m.start() - 5):m.start()]
-                    if re.search(r'\bдо\b|\bвід\b', prefix):
-                        continue
+                    if check_prefix:
+                        # Skip "до N соток" / "від N соток" — vague expansion hints
+                        prefix = text[max(0, m.start() - 5):m.start()]
+                        if re.search(r'\bдо\b|\bвід\b', prefix):
+                            continue
                     plot_value = m.group(1).replace(",", ".")
                     break
             if plot_value is None:
