@@ -377,6 +377,22 @@ class FieldsMixin:
                 return
 
             opt = self._find_option_in_listbox(lb, desired)
+            if not opt and desired.isdigit():
+                # Numeric value exceeds available options → try last "і більше" ceiling option
+                try:
+                    all_texts = self._list_listbox_options(lb)
+                    ceiling_text = next(
+                        (t for t in reversed(all_texts) if "більше" in t.lower()), None
+                    )
+                    if ceiling_text:
+                        opt = self._find_option_in_listbox(lb, ceiling_text)
+                        if opt:
+                            logger.info(
+                                "Select ceiling fallback %s/%s: '%s' → '%s'",
+                                section, key, desired, ceiling_text,
+                            )
+                except Exception:
+                    pass
             if not opt:
                 logger.warning("Опцію '%s' не знайдено для %s/%s", desired, section, key)
                 try:

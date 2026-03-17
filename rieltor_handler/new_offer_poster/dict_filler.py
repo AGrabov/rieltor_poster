@@ -40,6 +40,11 @@ _SPECIAL_KEYS = frozenset(
     }
 )
 
+_ПРИЗНАЧЕННЯ_DEFAULT_BY_PROPERTY: dict[str, str] = {
+    "Комерційна": "Приміщення вільного призначення",
+    "Ділянка": "Під забудову",
+}
+
 
 class DictOfferFormFiller(
     StructureMixin,
@@ -102,6 +107,47 @@ class DictOfferFormFiller(
         )
 
     # ---------- description enrichment ----------
+    def _apply_required_defaults(self, offer_data: dict) -> None:
+        """Set safe default values for required fields absent from offer_data.
+
+        Only applies when the field exists in the current schema AND is not
+        already set (by CRM parser or description analysis).
+        Order matters: "Призначення" is resolved first so "Вид будівлі" can
+        use it to pick the right default.
+        """
+        applied = []
+
+        # 1) "Тип будови"
+        fi = self._schema["label_to_field"].get("тип будови")
+        if fi and fi["label"] not in offer_data:
+            offer_data[fi["label"]] = "Готова будівля"
+            applied.append(f"{fi['label']}='Готова будівля'")
+
+        # 2) "Призначення" — must be resolved before "Вид будівлі"
+        fi_pryz = self._schema["label_to_field"].get("призначення")
+        if fi_pryz and fi_pryz["label"] not in offer_data:
+            default = _ПРИЗНАЧЕННЯ_DEFAULT_BY_PROPERTY.get(self.property_type)
+            if default:
+                offer_data[fi_pryz["label"]] = default
+                applied.append(f"{fi_pryz['label']}={default!r}")
+
+        # 3) "Вид будівлі" — office → "Офісний центр", other commercial → "Окремо стояча будівля"
+        fi = self._schema["label_to_field"].get("вид будівлі")
+        if fi and fi["label"] not in offer_data:
+            призначення_val = ""
+            if fi_pryz:
+                призначення_val = str(offer_data.get(fi_pryz["label"], "")).lower()
+            vyd_default = (
+                "Офісний центр"
+                if "офіс" in призначення_val
+                else "Окремо стояча будівля"
+            )
+            offer_data[fi["label"]] = vyd_default
+            applied.append(f"{fi['label']}={vyd_default!r}")
+
+        if applied:
+            logger.info("Значення за замовчуванням: %s", applied)
+
     def _enrich_offer_data_from_description(self, offer_data: dict) -> None:
         """Re-analyze description text to fill fields missed during CRM collection.
 
@@ -144,6 +190,8 @@ class DictOfferFormFiller(
         """
         # Re-run description analysis to fill any fields missed during CRM collection
         self._enrich_offer_data_from_description(offer_data)
+        # Apply safe defaults for required fields still missing after analysis
+        self._apply_required_defaults(offer_data)
 
         self.open()
         root = self._new_offer_root()
@@ -272,6 +320,8 @@ class DictOfferFormFiller(
     ) -> None:
         """Заповнює одне поле за допомогою обробника, специфічного для типу віджету."""
         if widget == "box_select":
+            if isinstance(value, list):
+                value = value[0] if value else ""
             self._click_box_button_in_section(root, section, self._to_text(value).lower())
             return
 
@@ -299,6 +349,10 @@ class DictOfferFormFiller(
             return
 
         if widget == "select":
+            if isinstance(value, bool):
+                value = "Є" if value else "Немає"
+            elif isinstance(value, list):
+                value = value[0] if value else ""
             self._fill_select_or_text(root, section, key, self._to_text(value))
             return
 
