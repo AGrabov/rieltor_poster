@@ -111,4 +111,12 @@ class MappingMixin:
         group = form.locator("xpath=.//div[@role='radiogroup']").first
         if group.count():
             return group
+        # Fallback: MUI radio buttons without an explicit role='radiogroup' wrapper
+        # (e.g. "Комісія з покупця/орендатора" with Є/Немає inline radios).
+        # Return the whole form so _try_fill_radio_group can find the radio inputs.
+        try:
+            if form.locator("css=input[type='radio']").count():
+                return form
+        except Exception:
+            pass
         return None

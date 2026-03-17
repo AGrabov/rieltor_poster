@@ -11,6 +11,7 @@ logger = setup_logger(__name__)
 
 class AddressMixin:
     MAP_ERR_SUBSTR = "Мітка не вказує"
+    MAP_WRONG_CITY_SUBSTR = "іншому місті"
 
     def _map_error_locator(self) -> Locator:
         """

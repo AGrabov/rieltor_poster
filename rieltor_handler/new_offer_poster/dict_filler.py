@@ -453,6 +453,8 @@ class DictOfferFormFiller(
                 desired = "Так" if value else "Ні"
             else:
                 desired = self._to_text(value)
+            # Normalize CRM-specific values (e.g. "під чистову" → "Без ремонту")
+            desired = _SELECT_VALUE_MAP.get(desired.lower().strip(), desired)
             self._fill_select_or_text(root, section, key, desired)
             return
 
@@ -888,6 +890,52 @@ class DictOfferFormFiller(
                     err.get("field", ""),
                     err.get("message", ""),
                 )
+
+            # "Точка на карті знаходиться в іншому місті" — server rejects the street geocoding.
+            # Recovery: clear the Вулиця field and retry save with city-only address.
+            wrong_city = any(self.MAP_WRONG_CITY_SUBSTR in e.get("message", "") for e in report)
+            if wrong_city:
+                logger.warning(
+                    "Помилка карти 'іншому місті' — спроба збереження без вулиці"
+                )
+                try:
+                    root_retry = self._new_offer_root()
+                    sec_addr = self._section(root_retry, "Адреса об'єкта")
+                    # Click the MUI Autocomplete ×-clear button on the Вулиця field
+                    street_clear = sec_addr.locator(
+                        "xpath=.//label[contains(normalize-space(translate(., '*\u2009', '')), 'Вулиця')]"
+                        "/ancestor::div[contains(@class,'MuiFormControl-root')][1]"
+                        "//button[@aria-label='Clear' or @title='Clear']"
+                    ).first
+                    if street_clear.count():
+                        street_clear.click()
+                    else:
+                        # Fallback: directly clear the input
+                        ctrl = self._find_control_by_label(sec_addr, "Вулиця")
+                        if ctrl:
+                            inp = ctrl.locator("css=input:not([aria-hidden='true'])").first
+                            if inp.count():
+                                inp.click()
+                                inp.fill("")
+                    try:
+                        self.page.wait_for_timeout(800)
+                    except Exception:
+                        time.sleep(0.8)
+                    # Retry save
+                    retry_btn = self.page.locator(f"button:has-text('{btn_text}')").first
+                    retry_btn.scroll_into_view_if_needed()
+                    retry_btn.click()
+                    try:
+                        self.page.wait_for_url(self.MANAGEMENT_URL_GLOB, timeout=20_000)
+                    except Exception:
+                        pass
+                    if "/offers/management" in (self.page.url or ""):
+                        logger.info("Повторне збереження без вулиці — успішно")
+                        return []
+                    logger.warning("Повторне збереження без вулиці не допомогло")
+                except Exception:
+                    logger.warning("Не вдалось спробувати повторне збереження", exc_info=True)
+
             if raise_on_errors:
                 raise FormValidationError(report)
         else:
