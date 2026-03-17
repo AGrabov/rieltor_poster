@@ -53,9 +53,11 @@ class FieldsMixin:
         desired_n = self._norm_text(desired)
         if not desired_n:
             return None
+        desired_lower = desired_n.lower()
 
-        # 1) exact match (normalized)
+        # 1) exact match (normalized), with case-insensitive fallback
         opts = listbox.locator("[role='option']")
+        ci_match = None
         for i in range(opts.count()):
             o = opts.nth(i)
             try:
@@ -64,10 +66,21 @@ class FieldsMixin:
                 continue
             if t == desired_n:
                 return o
+            if ci_match is None and t.lower() == desired_lower:
+                ci_match = o
+        if ci_match is not None:
+            return ci_match
 
-        # 2) contains match
-        o = opts.filter(has_text=desired_n).first
-        return o if o.count() else None
+        # 2) contains match (case-insensitive via manual iteration)
+        for i in range(opts.count()):
+            o = opts.nth(i)
+            try:
+                t = self._norm_text(o.inner_text()).lower()
+            except Exception:
+                continue
+            if desired_lower in t:
+                return o
+        return None
 
     # -------- buttons / toggles --------
     def _click_box_button_in_section(self, root: Locator, section_h6: str, text: str) -> None:
@@ -296,11 +309,11 @@ class FieldsMixin:
                 return
 
             try:
-                cur = (select_btn.inner_text() or "").strip()
+                cur = self._norm_text(select_btn.inner_text() or "")
             except Exception:
                 cur = ""
 
-            if cur == desired:
+            if cur.lower() == desired.lower():
                 logger.info("Select пропуск %s/%s: вже '%s'", section, key, cur)
                 try:
                     self._mark_touched(form)
@@ -417,6 +430,16 @@ class FieldsMixin:
                     self.page.keyboard.press("Escape")
                 except Exception:
                     pass
+            # Verify selection was applied
+            try:
+                new_cur = self._norm_text(select_btn.inner_text() or "")
+                if new_cur.lower() != desired.lower():
+                    logger.warning(
+                        "Select %s/%s: після кліку значення '%s', очікувалось '%s'",
+                        section, key, new_cur, desired,
+                    )
+            except Exception:
+                pass
             return
 
         # ---------- Plain input / textarea ----------

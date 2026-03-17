@@ -183,6 +183,28 @@ class DictOfferFormFiller(
                 applied.append(f"{fi['label']}='1' (placeholder — уточніть у CRM)")
                 break
 
+        # 5) "Тип будинку" — default to "Будинок" (окремостоящий) when absent
+        fi = self._schema["label_to_field"].get("тип будинку")
+        if fi and fi["label"] not in offer_data:
+            offer_data[fi["label"]] = "Будинок"
+            applied.append(f"{fi['label']}='Будинок'")
+
+        # 6) "Поверховість" — default to 2 when absent; cap at 50 (site limit)
+        fi = self._schema["label_to_field"].get("поверховість")
+        if fi:
+            lbl = fi["label"]
+            if lbl not in offer_data:
+                offer_data[lbl] = 2
+                applied.append(f"{lbl}=2 (default)")
+            else:
+                try:
+                    floors = int(offer_data[lbl])
+                    if floors > 50:
+                        offer_data[lbl] = 2
+                        applied.append(f"{lbl}: {floors}→2 (перевищував ліміт 50)")
+                except (TypeError, ValueError):
+                    pass
+
         if applied:
             logger.info("Значення за замовчуванням: %s", applied)
 

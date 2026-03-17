@@ -377,7 +377,7 @@ class DescriptionAnalyzer:
         # --- Plot area (соток / га) ---
         _PLOT_AREA_LABELS = ("Площа ділянки, соток", "Загальна площа, соток")
         plot_area_label = next(
-            (lbl for lbl in _PLOT_AREA_LABELS if lbl in self.label_to_field),
+            (lbl for lbl in _PLOT_AREA_LABELS if lbl.lower() in self.label_to_field),
             None,
         )
         if plot_area_label and plot_area_label not in existing_data and plot_area_label not in extracted:

@@ -467,9 +467,10 @@ class HTMLOfferParser:
             amount, currency = self._parse_price(price_text)
             if amount is not None:
                 result["Ціна"] = amount
-            if currency:
-                result["Валюта"] = currency
-            logger.debug(f"Вилучено ціну: {amount} {currency}")
+                # Always set currency when price is found — prevents description_analyzer
+                # from overriding it with a currency mentioned in the listing text.
+                result["Валюта"] = currency if currency else "доларів"
+            logger.debug(f"Вилучено ціну: {amount} {result.get('Валюта')}")
 
         return result
 
@@ -533,7 +534,7 @@ class HTMLOfferParser:
                         # Use schema label as key
                         schema_label = field_info["label"]
                         normalized_value = self._normalize_value(field_info, value_text)
-                        if normalized_value is not None:
+                        if normalized_value is not None and normalized_value != "":
                             result[schema_label] = normalized_value
                             logger.debug(
                                 f"Вилучено '{schema_label}'={normalized_value} \
@@ -956,6 +957,10 @@ class HTMLOfferParser:
             if option.lower().strip() == text_lower:
                 return option
 
+        # "уточнити" means value is unconfirmed → skip the field entirely
+        if text_lower == "уточнити":
+            return ""
+
         # Known CRM→Rieltor value overrides (CRM-specific terms not present in Rieltor schemas)
         _OVERRIDES: dict[str, str] = {
             "котедж": "Будинок",
@@ -1052,11 +1057,12 @@ class HTMLOfferParser:
 
         # Detect currency
         currency = None
-        if "$" in text or "dollar" in text.lower():
+        text_lower = text.lower()
+        if "$" in text or "dollar" in text_lower or "usd" in text_lower:
             currency = "доларів"
-        elif "€" in text or "euro" in text.lower():
+        elif "€" in text or "euro" in text_lower or "eur" in text_lower or "євро" in text_lower:
             currency = "євро"
-        elif "грн" in text or "₴" in text or "uah" in text.lower():
+        elif "грн" in text or "₴" in text or "uah" in text_lower or "гривень" in text_lower:
             currency = "гривень"
 
         return amount, currency
@@ -1150,6 +1156,38 @@ class HTMLOfferParser:
         if "Ціна" in data and not data.get("Валюта"):
             data["Валюта"] = "доларів"
             logger.debug("Валюта встановлена за замовчуванням: 'доларів'")
+
+        # Fallback: estimate kitchen area from total area when both sub-areas are missing.
+        # Only applies to residential properties (Квартира, Будинок, Таунхаус).
+        _residential = {"квартира", "будинок", "таунхаус", "котедж"}
+        if (
+            not data.get("Площа кухні, м²")
+            and str(data.get("property_type", "")).lower() in _residential
+        ):
+            total = data.get("Загальна площа, м²")
+            if total:
+                try:
+                    total_f = float(total)
+                    if total_f <= 40:
+                        kitchen_est = 10
+                    elif total_f <= 60:
+                        kitchen_est = 12
+                    elif total_f <= 80:
+                        kitchen_est = 15
+                    elif total_f <= 100:
+                        kitchen_est = 20
+                    elif total_f <= 130:
+                        kitchen_est = 25
+                    else:
+                        kitchen_est = 30
+                    data["Площа кухні, м²"] = str(kitchen_est)
+                    logger.debug(
+                        "Площа кухні оцінена за замовчуванням: %s м² (загальна=%.1f)",
+                        kitchen_est,
+                        total_f,
+                    )
+                except (ValueError, TypeError):
+                    pass
 
         # Fallback: living area ≈ total area - (1.4 × kitchen area)
         # The multiplier accounts for corridors, hallways, bathrooms, etc.
