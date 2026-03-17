@@ -47,19 +47,22 @@ class MappingMixin:
         # IMPORTANT: avoid ambiguous "contains" matches.
         # Example: "Планування" must NOT match "Планування кімнат".
         # We try exact match (ignoring asterisks) first, then fall back to contains.
+        # Thin space U+2009 appears before required asterisks on rieltor.ua — strip it too.
         normalized = " ".join(raw.split())
-        normalized_no_ast = normalized.replace("*", "").strip()
+        normalized_no_ast = normalized.replace("*", "").replace("\u2009", "").strip()
         lit_exact = self._xpath_literal(normalized_no_ast)
-        lit_contains = self._xpath_literal(normalized)
+        lit_contains = self._xpath_literal(normalized_no_ast)
 
         label = None
+        # translate() strips '*' and thin-space (&#x2009;) from label text before comparing
+        _strip = f"translate(., '*\u2009', '')"
         candidates = [
-            # exact match by label text node
-            f"xpath=.//label[normalize-space(translate(text(), '*', ''))={lit_exact}]",
-            # exact match by full label text (may include nested spans)
-            f"xpath=.//label[normalize-space(translate(., '*', ''))={lit_exact}]",
-            # fallback contains
-            f"xpath=.//label[contains(normalize-space(translate(., '*', '')), {lit_contains})]",
+            # exact match by label text node (thin-space + asterisk stripped)
+            f"xpath=.//label[normalize-space(translate(text(), '*\u2009', ''))={lit_exact}]",
+            # exact match by full label text including nested spans
+            f"xpath=.//label[normalize-space({_strip})={lit_exact}]",
+            # fallback contains (still safe because lit_contains has asterisks/thin-space removed)
+            f"xpath=.//label[contains(normalize-space({_strip}), {lit_contains})]",
         ]
         for sel in candidates:
             loc = section.locator(sel).first
@@ -89,12 +92,13 @@ class MappingMixin:
             return None
 
     def _find_formcontrol_by_label(self, sec: Locator, label_text: str) -> Locator | None:
-        lit = (label_text or "").strip()
-        if not lit:
+        lit_raw = (label_text or "").strip().replace("*", "").replace("\u2009", "").strip()
+        if not lit_raw:
             return None
+        lit = self._xpath_literal(lit_raw)
 
         form = sec.locator(
-            f"xpath=.//div[contains(@class,'MuiFormControl-root')][.//label[contains(@class,'MuiFormLabel-root') and normalize-space(text())='{lit}']]"
+            f"xpath=.//div[contains(@class,'MuiFormControl-root')][.//label[contains(@class,'MuiFormLabel-root') and normalize-space(translate(text(), '*\u2009', ''))={lit}]]"
         ).first
         try:
             form.wait_for(state="visible", timeout=2500)

@@ -205,6 +205,49 @@ class DictOfferFormFiller(
                 except (TypeError, ValueError):
                     pass
 
+        # 7) Площа кухні / Житлова площа — estimate from total area for residential types.
+        # Mirrors the same logic in html_parser._fill_missing_with_defaults so that
+        # objects collected before the parser fix also get the estimates at post time.
+        _residential = {"квартира", "будинок", "таунхаус", "котедж"}
+        if str(self.property_type).lower() in _residential:
+            fi_kitchen = self._schema["label_to_field"].get("площа кухні, м²")
+            fi_total = self._schema["label_to_field"].get("загальна площа, м²")
+            fi_living = self._schema["label_to_field"].get("житлова площа, м²")
+            if fi_kitchen and fi_total:
+                kitchen_lbl = fi_kitchen["label"]
+                total_lbl = fi_total["label"]
+                if kitchen_lbl not in offer_data and total_lbl in offer_data:
+                    try:
+                        total_f = float(offer_data[total_lbl])
+                        if total_f <= 40:
+                            kitchen_est = 10
+                        elif total_f <= 60:
+                            kitchen_est = 12
+                        elif total_f <= 80:
+                            kitchen_est = 15
+                        elif total_f <= 100:
+                            kitchen_est = 20
+                        elif total_f <= 130:
+                            kitchen_est = 25
+                        else:
+                            kitchen_est = 30
+                        offer_data[kitchen_lbl] = str(kitchen_est)
+                        applied.append(f"{kitchen_lbl}='{kitchen_est}' (оцінено із {total_lbl}={total_f})")
+                    except (ValueError, TypeError):
+                        pass
+            if fi_living and fi_kitchen and fi_total:
+                living_lbl = fi_living["label"]
+                kitchen_lbl = fi_kitchen["label"]
+                total_lbl = fi_total["label"]
+                if living_lbl not in offer_data and total_lbl in offer_data and kitchen_lbl in offer_data:
+                    try:
+                        living = round(float(offer_data[total_lbl]) - 1.4 * float(offer_data[kitchen_lbl]), 1)
+                        if living > 0:
+                            offer_data[living_lbl] = str(living)
+                            applied.append(f"{living_lbl}='{living}' (обчислено)")
+                    except (ValueError, TypeError):
+                        pass
+
         if applied:
             logger.info("Значення за замовчуванням: %s", applied)
 
@@ -335,8 +378,13 @@ class DictOfferFormFiller(
             if commission_field:
                 self._set_commission_no(root, _COMMISSION_LABEL)
 
-        # Required validation
-        self._assert_required_filled(root)
+        # Required validation — log issues but continue so save is still attempted.
+        # A RequiredFieldError here often means a field like "Вулиця" was typed but
+        # not confirmed via dropdown; the server-side save report will capture it too.
+        try:
+            self._assert_required_filled(root)
+        except Exception as e:
+            logger.warning("Перевірка обов'язкових полів: %s (спроба зберегти все одно)", e)
 
         # Let the form settle before save (async validations, map pin, etc.)
         try:

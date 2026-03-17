@@ -71,15 +71,17 @@ class FieldsMixin:
         if ci_match is not None:
             return ci_match
 
-        # 2) contains match (case-insensitive via manual iteration)
-        for i in range(opts.count()):
-            o = opts.nth(i)
-            try:
-                t = self._norm_text(o.inner_text()).lower()
-            except Exception:
-                continue
-            if desired_lower in t:
-                return o
+        # 2) contains match — only for multi-char desired to avoid false positives
+        # (e.g. "Є" is a substring of "євро", "гривень" — skip contains for ≤2 chars)
+        if len(desired_lower) > 2:
+            for i in range(opts.count()):
+                o = opts.nth(i)
+                try:
+                    t = self._norm_text(o.inner_text()).lower()
+                except Exception:
+                    continue
+                if desired_lower in t:
+                    return o
         return None
 
     # -------- buttons / toggles --------
@@ -207,6 +209,16 @@ class FieldsMixin:
             inner = ctrl.locator("css=input, textarea").first
             if inner.count():
                 ctrl = inner
+
+        # If input lives inside a MUI Autocomplete (combobox), typing alone is not
+        # enough — the site requires choosing from the dropdown suggestions.
+        # Delegate to _fill_autocomplete which handles type → dropdown → click.
+        try:
+            if ctrl.evaluate("el => el.closest('.MuiAutocomplete-root') !== null"):
+                self._fill_autocomplete(sec, key, desired)
+                return
+        except Exception:
+            pass
 
         # SKIP только если уже стоит то же самое
         try:
@@ -430,10 +442,13 @@ class FieldsMixin:
                     self.page.keyboard.press("Escape")
                 except Exception:
                     pass
-            # Verify selection was applied
+            # Verify selection was applied.
+            # For multi-select fields (e.g. "У будинку є"), value accumulates:
+            # after clicking "Камін" when "Ванна" is already chosen the text becomes
+            # "Ванна, Камін" — check containment, not equality.
             try:
                 new_cur = self._norm_text(select_btn.inner_text() or "")
-                if new_cur.lower() != desired.lower():
+                if desired.lower() not in new_cur.lower():
                     logger.warning(
                         "Select %s/%s: після кліку значення '%s', очікувалось '%s'",
                         section, key, new_cur, desired,
