@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -36,6 +37,49 @@ init_logging(
     clear_on_start=True,
 )
 logger = setup_logger(__name__)
+
+
+# ── Legacy offer-data normalization ─────────────────────────────────
+
+def _normalize_offer_data(offer_data: dict) -> None:
+    """Fix legacy DB entries that were collected with old notes/description format.
+
+    Changes applied (idempotent — safe to call on already-normalized data):
+    1. personal_notes: remove "Артикул: #..." line.
+    2. personal_notes: strip email from Відповідальний contacts and remove
+       the surrounding parentheses — "(тел: X, email: Y)" → "тел: X".
+    3. description: append "Артикул: #..." if not already present there
+       (migrates article from old notes position to description).
+    """
+    article = offer_data.get("article")
+    notes = offer_data.get("personal_notes", "") or ""
+
+    # 1+2: fix notes
+    if notes:
+        cleaned: list[str] = []
+        for line in notes.splitlines():
+            # Drop the legacy "Артикул: #..." line
+            if re.match(r"^Артикул:\s*#", line.strip()):
+                continue
+            # Fix "Відповідальний: Name (тел: X, email: Y)" → "Відповідальний: Name тел: X"
+            if line.startswith("Відповідальний:"):
+                # Remove every ", email: ..." segment (with or without trailing close-paren)
+                line = re.sub(r",?\s*email:[^,)]*", "", line)
+                # Unwrap parentheses: "(тел: X)" → "тел: X"
+                line = re.sub(r"\s*\(([^)]*)\)", lambda m: " " + m.group(1).strip(), line)
+                line = line.rstrip(" ,")
+            cleaned.append(line)
+        offer_data["personal_notes"] = "\n".join(cleaned)
+
+    # 3: ensure article is in description
+    if article:
+        article_tag = f"Артикул: #{article}"
+        desc_block = offer_data.get("apartment") or {}
+        desc = desc_block.get("description", "") or ""
+        if article_tag not in desc:
+            if "apartment" not in offer_data:
+                offer_data["apartment"] = {}
+            offer_data["apartment"]["description"] = (desc + f"\n\n{article_tag}").strip()
 
 
 # ── Deal-type normalization ──────────────────────────────────────────
@@ -304,6 +348,7 @@ def phase2_post(
                         debug=debug,
                     )
 
+                    _normalize_offer_data(offer_data)
                     poster.create_offer_draft(offer_data)
 
                     if publish:
@@ -409,6 +454,7 @@ def post_single_offer(
         debug=debug,
     ) as poster:
         poster.login()
+        _normalize_offer_data(offer_data)
         poster.create_offer_draft(offer_data)
 
         if publish:
