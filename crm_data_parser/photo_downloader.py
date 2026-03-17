@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import io
 import shutil
+import zipfile
 from pathlib import Path, PurePosixPath
 from typing import List
 
@@ -65,6 +67,66 @@ def download_estate_photos(
         article,
     )
     return local_paths
+
+
+def download_watermark_zip(
+    page: Page,
+    watermark_url: str,
+    article: str,
+) -> list[str]:
+    """Завантажити всі фотографії з водяним знаком через ZIP-архів CRM.
+
+    Args:
+        page: Playwright Page з активною CRM-сесією (для cookies).
+        watermark_url: Відносний або абсолютний URL вигляду
+                       "/estate/12345/download-all-watermark-images".
+        article: Номер артикула об'єкта, використовується як назва підпапки.
+
+    Returns:
+        Список локальних шляхів до успішно розпакованих фотографій,
+        або порожній список у разі помилки.
+    """
+    full_url = watermark_url if watermark_url.startswith("http") else f"{CRM_BASE}{watermark_url}"
+    dest_dir = PICS_DIR / str(article)
+
+    try:
+        response = page.context.request.get(full_url)
+        if not response.ok:
+            logger.warning(
+                "Не вдалося завантажити watermark ZIP для %s: HTTP %d",
+                article,
+                response.status,
+            )
+            return []
+
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        local_paths: list[str] = []
+
+        with zipfile.ZipFile(io.BytesIO(response.body())) as zf:
+            image_names = sorted(
+                n for n in zf.namelist()
+                if not n.endswith("/") and Path(n).suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")
+            )
+            for i, name in enumerate(image_names):
+                ext = Path(name).suffix.lower() or ".jpg"
+                filename = f"photo_{i:03d}{ext}"
+                filepath = dest_dir / filename
+                filepath.write_bytes(zf.read(name))
+                local_paths.append(str(filepath))
+
+        logger.info(
+            "Завантажено %d фото (watermark ZIP) для артикула %s",
+            len(local_paths),
+            article,
+        )
+        return local_paths
+
+    except zipfile.BadZipFile:
+        logger.warning("Відповідь не є ZIP-архівом для %s, URL: %s", article, full_url)
+        return []
+    except Exception:
+        logger.exception("Помилка завантаження watermark ZIP для %s", article)
+        return []
 
 
 def cleanup_photos(article: str) -> None:

@@ -77,6 +77,7 @@ def phase1_collect(
         EstateListCollector,
         HTMLOfferParser,
         download_estate_photos,
+        download_watermark_zip,
     )
     from offer_db import OfferDB
 
@@ -167,9 +168,18 @@ def phase1_collect(
 
                 # Download photos while CRM session is active
                 article = offer_data.get("article", str(item.estate_id))
+                photo_dl_link = offer_data.get("photo_download_link")
                 photo_urls = offer_data.get("apartment", {}).get("photos", [])
-                if photo_urls:
+                if photo_dl_link:
+                    local_paths = download_watermark_zip(crm.page, photo_dl_link, article)
+                    if not local_paths and photo_urls:
+                        logger.warning("Watermark ZIP порожній, використовуємо окремі фото для %s", article)
+                        local_paths = download_estate_photos(crm.page, photo_urls, article)
+                elif photo_urls:
                     local_paths = download_estate_photos(crm.page, photo_urls, article)
+                else:
+                    local_paths = []
+                if local_paths:
                     if "apartment" not in offer_data:
                         offer_data["apartment"] = {}
                     offer_data["apartment"]["photos"] = local_paths

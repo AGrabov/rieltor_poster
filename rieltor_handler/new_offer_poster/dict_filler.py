@@ -19,6 +19,28 @@ from .validation import FormValidationError, ValidationMixin
 
 logger = setup_logger(__name__)
 
+_STREET_PREFIXES = (
+    "вулиця ", "вул. ", "вул.",
+    "проспект ", "просп. ", "просп.",
+    "бульвар ", "бульв. ", "бульв.",
+    "площа ", "пл. ", "пл.",
+    "провулок ", "пров. ", "пров.",
+    "шосе ",
+    "набережна ",
+    "узвіз ",
+)
+
+
+def _strip_street_prefix(value: str) -> str:
+    """Видалити тип вулиці з початку рядка (вул., просп., бульв. тощо)."""
+    s = value.strip()
+    s_lower = s.lower()
+    for prefix in _STREET_PREFIXES:
+        if s_lower.startswith(prefix.lower()):
+            return s[len(prefix):].strip()
+    return s
+
+
 # Photo block keys (offer_data keys that contain photo/description dicts)
 _PHOTO_BLOCK_KEYS = frozenset({"apartment", "interior", "layout", "yard", "infrastructure"})
 
@@ -423,12 +445,9 @@ class DictOfferFormFiller(
         subway = _get("Метро")
         guide = _get("Орієнтир")
 
-        # Normalize street and condo
+        # Normalize street prefix (вул., просп., бульв. тощо)
         if street:
-            s = str(street).strip()
-            if s.startswith("вул.") or s.startswith("вулиця "):
-                s = s.replace("вул.", "").replace("вулиця ", "").strip()
-            street = s
+            street = _strip_street_prefix(str(street))
 
         if condo:
             cc = str(condo).strip()
@@ -447,45 +466,64 @@ class DictOfferFormFiller(
 
         # 1) CITY
         if city:
-            next_key = "Новобудова" if condo else "Район"
-            self._fill_autocomplete(sec, "Місто", city, next_key=next_key)
+            self._fill_autocomplete(sec, "Місто", city)
 
-        # 2) CONDO COMPLEX (triggers autofill of district/street/house)
-        condo_used = False
         if condo:
+            # 2a) CONDO COMPLEX → triggers autofill of district/street/house
             self._fill_autocomplete(sec, "Новобудова", condo)
-            condo_used = True
             try:
                 self.page.wait_for_timeout(2000)
             except Exception:
                 time.sleep(1.5)
 
-        # 3) Early map error check — reselect house right after ЖК autofill
-        if condo_used and house and self._map_error_visible():
-            self._force_reselect_house_number(sec, house, house_label="Будинок")
+            # Early map error check after ЖК autofill
+            if house and self._map_error_visible():
+                self._force_reselect_house_number(sec, house, house_label="Будинок")
 
-        # 4) Fill remaining unfilled address fields
-        if region:
-            self._fill_autocomplete(sec, "Область", region)
+            # Fill any fields not auto-filled by ЖК selection
+            if region:
+                self._fill_autocomplete(sec, "Область", region)
 
-        district_ctrl = self._find_control_by_label(sec, "Район")
-        if district_ctrl and not self._control_has_value(district_ctrl):
-            if district:
-                self._fill_autocomplete(sec, "Район", district, next_key="Вулиця")
+            district_ctrl = self._find_control_by_label(sec, "Район")
+            if district_ctrl and not self._control_has_value(district_ctrl):
+                if district:
+                    self._fill_autocomplete(sec, "Район", district)
 
-        street_ctrl = self._find_control_by_label(sec, "Вулиця")
-        if street_ctrl and not self._control_has_value(street_ctrl):
+            street_ctrl = self._find_control_by_label(sec, "Вулиця")
+            if street_ctrl and not self._control_has_value(street_ctrl):
+                if street:
+                    self._fill_autocomplete(sec, "Вулиця", street)
+
+            house_ctrl = self._find_control_by_label(sec, "Будинок")
+            if house_ctrl and not self._control_has_value(house_ctrl):
+                if house:
+                    self._fill_autocomplete(sec, "Будинок", house)
+
+            if house and self._map_error_visible():
+                self._force_reselect_house_number(sec, house, house_label="Будинок")
+        else:
+            # 2b) No ЖК: fill street → house → wait → check district auto-fill
+            if region:
+                self._fill_autocomplete(sec, "Область", region)
             if street:
-                self._fill_autocomplete(sec, "Вулиця", street, next_key="Будинок")
-
-        house_ctrl = self._find_control_by_label(sec, "Будинок")
-        if house_ctrl and not self._control_has_value(house_ctrl):
+                self._fill_autocomplete(sec, "Вулиця", street)
             if house:
                 self._fill_autocomplete(sec, "Будинок", house)
 
-        # 5) Final map error check — reselect house if still broken
-        if house and self._map_error_visible():
-            self._force_reselect_house_number(sec, house, house_label="Будинок")
+            # Wait for district to auto-fill from geo-lookup
+            try:
+                self.page.wait_for_timeout(1500)
+            except Exception:
+                time.sleep(1.5)
+
+            # Fill district only if not auto-filled
+            district_ctrl = self._find_control_by_label(sec, "Район")
+            if district_ctrl and not self._control_has_value(district_ctrl):
+                if district:
+                    self._fill_autocomplete(sec, "Район", district)
+
+            if house and self._map_error_visible():
+                self._force_reselect_house_number(sec, house, house_label="Будинок")
 
         # 6) Multi-select fields
         if subway:

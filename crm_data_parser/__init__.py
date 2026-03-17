@@ -1,7 +1,7 @@
 from .crm_session import CrmCredentials, CrmSession
 from .estate_list_collector import EstateListCollector, EstateListItem
 from .html_parser import HTMLOfferParser
-from .photo_downloader import cleanup_photos, download_estate_photos
+from .photo_downloader import cleanup_photos, download_estate_photos, download_watermark_zip
 
 __all__ = [
     "CrmSession",
@@ -10,5 +10,6 @@ __all__ = [
     "EstateListCollector",
     "EstateListItem",
     "download_estate_photos",
+    "download_watermark_zip",
     "cleanup_photos",
 ]

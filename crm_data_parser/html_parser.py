@@ -103,6 +103,28 @@ _INFRA_TO_NEARBY = {
 }
 
 
+_STREET_PREFIXES = (
+    "вулиця ", "вул. ", "вул.",
+    "проспект ", "просп. ", "просп.",
+    "бульвар ", "бульв. ", "бульв.",
+    "площа ", "пл. ", "пл.",
+    "провулок ", "пров. ", "пров.",
+    "шосе ",
+    "набережна ",
+    "узвіз ",
+)
+
+
+def _strip_street_prefix(value: str) -> str:
+    """Видалити тип вулиці з початку рядка (вул., просп., бульв. тощо)."""
+    s = value.strip()
+    s_lower = s.lower()
+    for prefix in _STREET_PREFIXES:
+        if s_lower.startswith(prefix.lower()):
+            return s[len(prefix):].strip()
+    return s
+
+
 class HTMLOfferParser:
     """Розпарсити HTML об'єкта нерухомості та вилучити дані для dict_filler.
 
@@ -315,6 +337,10 @@ class HTMLOfferParser:
         if responsible is not None:
             result["responsible_person"] = responsible
 
+        owner = self._extract_owner()
+        if owner is not None:
+            result["owner"] = owner
+
         advertising = self._extract_advertising()
         if advertising is not None:
             result["advertising"] = advertising
@@ -369,18 +395,29 @@ class HTMLOfferParser:
                 result["apartment"] = {}
             result["apartment"]["description"] = description
 
-        # Estate note + extra info → personal_notes (private "Особисті нотатки")
-        notes_parts: list[str] = []
+        # Article → append to public description (not notes)
         if result.get("article"):
-            notes_parts.append(f"Артикул: #{result['article']}")
+            if "apartment" not in result:
+                result["apartment"] = {}
+            existing_desc = result["apartment"].get("description", "")
+            result["apartment"]["description"] = (
+                existing_desc + f"\n\nАртикул: #{result['article']}"
+            ).strip()
+
+        # Personal notes: CRM link → Відповідальний (name, phone only) → Власник (if available)
+        notes_parts: list[str] = []
         if result.get("public_link"):
             notes_parts.append(f"CRM: {result['public_link']}")
         if result.get("responsible_person"):
             rp = result["responsible_person"]
-            rp_text = f"Відповідальний: {rp['name']}"
-            if rp.get("contacts"):
-                rp_text += f" ({rp['contacts']})"
-            notes_parts.append(rp_text)
+            notes_parts.append(f"Відповідальний: {rp['name']}")
+            # contacts (phone only) added later by enrich_with_responsible_contacts()
+        if result.get("owner"):
+            ow = result["owner"]
+            ow_text = ow["name"]
+            if ow.get("phone"):
+                ow_text += f" {ow['phone']}"
+            notes_parts.append(f"Власник: {ow_text}")
         if note:
             notes_parts.append(note)
         if notes_parts:
@@ -537,10 +574,13 @@ class HTMLOfferParser:
 
                         # Clean up prefixes
                         label_lower = schema_label.lower().strip()
-                        if label_lower == "вулиця" and value.startswith("вул."):
-                            value = value.replace("вул.", "").strip()
-                        elif label_lower == "новобудова" and value.startswith("ЖК "):
-                            value = value.replace("ЖК ", "").strip()
+                        if label_lower == "вулиця":
+                            value = _strip_street_prefix(value)
+                        elif label_lower == "новобудова":
+                            if value.strip().lower() == "ні":
+                                continue  # treat "Ні" as no ЖК
+                            if value.startswith("ЖК "):
+                                value = value.replace("ЖК ", "").strip()
                         elif label_lower == "район":
                             # Strip trailing "район" suffix so autocomplete can match
                             # e.g. "Шевченківський район" → "Шевченківський"
@@ -727,6 +767,39 @@ class HTMLOfferParser:
                             if name:
                                 logger.debug(f"Вилучено відповідального (без посилання): {name}")
                                 return {"name": name, "profile_url": ""}
+        return None
+
+    def _extract_owner(self) -> dict[str, str] | None:
+        """Вилучити ім'я та телефон власника з розділу 'Контакти'.
+
+        Розділ 'Контакти' — це div.item-relation з h3 'Контакти'.
+        Кожен рядок таблиці має: [radio][ім'я+телефон][роль].
+        Шукаємо рядки з роллю 'Власник'.
+
+        Returns:
+            Словник {"name": str, "phone": str | None} або None.
+        """
+        for div in self.soup.select("div.item-relation"):
+            h3 = div.select_one("h3.item-relation-header")
+            if not h3 or "контакт" not in h3.get_text(strip=True).lower():
+                continue
+            for row in div.select("table tr"):
+                cells = row.select("td")
+                if len(cells) < 2:
+                    continue
+                role = cells[-1].get_text(strip=True).lower()
+                if "власник" not in role:
+                    continue
+                info_cell = cells[1]
+                divs = info_cell.select("div")
+                texts = [d.get_text(strip=True) for d in divs if d.get_text(strip=True)]
+                if any("немає доступу" in t.lower() for t in texts):
+                    return None
+                name = texts[0] if texts else None
+                phone = texts[1] if len(texts) > 1 else None
+                if name:
+                    logger.debug(f"Вилучено власника: {name}, тел: {phone}")
+                    return {"name": name, "phone": phone}
         return None
 
     def _extract_advertising(self) -> str | None:

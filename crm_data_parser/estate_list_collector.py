@@ -251,18 +251,18 @@ class EstateListCollector:
             logger.exception("Помилка отримання контактів відповідального")
 
     def _parse_user_contacts(self, html: str) -> str:
-        """Розпарсити телефон та email зі сторінки профілю користувача CRM.
+        """Розпарсити телефон зі сторінки профілю користувача CRM.
 
         Args:
             html: Повний HTML сторінки профілю користувача.
 
         Returns:
-            Рядок контактів вигляду "тел: +380..., email: user@example.com" або порожній рядок.
+            Рядок телефону вигляду "тел: +380..." або порожній рядок.
         """
         soup = BeautifulSoup(html, "html.parser")
         parts: list[str] = []
 
-        # Look for phone/email in the user profile detail table
+        # Look for phone in the user profile detail table
         for table in soup.select("table.detail-view"):
             for row in table.select("tr"):
                 th = row.select_one("th")
@@ -275,8 +275,6 @@ class EstateListCollector:
                     continue
                 if "телефон" in label or "phone" in label or "моб" in label:
                     parts.append(f"тел: {value}")
-                elif "email" in label or "пошта" in label or "e-mail" in label:
-                    parts.append(f"email: {value}")
 
         return ", ".join(parts)
 
@@ -288,9 +286,9 @@ class EstateListCollector:
             return
 
         notes = offer_data.get("personal_notes", "")
-        # Replace the "Відповідальний: Name" line with "Відповідальний: Name (contacts)"
+        # Replace "Відповідальний: Name" with "Відповідальний: Name тел: X"
         old_line = f"Відповідальний: {rp['name']}"
-        new_line = f"Відповідальний: {rp['name']} ({rp['contacts']})"
+        new_line = f"Відповідальний: {rp['name']} {rp['contacts']}"
         if old_line in notes and rp["contacts"] not in notes:
             offer_data["personal_notes"] = notes.replace(old_line, new_line)
 
