@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 from playwright.sync_api import Locator, Page
 
@@ -501,7 +501,7 @@ class DictOfferFormFiller(
             return
 
         if widget == "checklist":
-            items = self._checklist_items(key, value)
+            items = self._checklist_items(value)
             if items:
                 self._open_checklist_and_check(root, section, key, items)
             return
@@ -550,6 +550,13 @@ class DictOfferFormFiller(
         if street:
             street = _strip_street_prefix(str(street))
 
+        # Normalize house: strip leading "Будинок " so only number remains ("Будинок 6" → "6")
+        if house:
+            h = str(house).strip()
+            if h.lower().startswith("будинок "):
+                h = h[len("будинок "):].strip()
+            house = h
+
         if condo:
             cc = str(condo).strip()
             # "Так"/"Yes" означає лише прапорець новобудови, але не вказує назву ЖК —
@@ -579,9 +586,9 @@ class DictOfferFormFiller(
             # 2a) CONDO COMPLEX → triggers autofill of district/street/house
             self._fill_autocomplete(sec, "Новобудова", condo)
             try:
-                self.page.wait_for_timeout(2000)
+                self.page.wait_for_timeout(3500)
             except Exception:
-                time.sleep(1.5)
+                time.sleep(3)
 
             # Early map error check after ЖК autofill
             if house and self._map_error_visible():
@@ -797,7 +804,7 @@ class DictOfferFormFiller(
 
     # ── Checklists ──
 
-    def _checklist_items(self, key: str, value: Any) -> list[str]:
+    def _checklist_items(self, value: Any) -> list[str]:
         """Перетворює значення чекліста на UI-підписи.
 
         У новому форматі зі схемою значення чеклістів у offer_data вже є
@@ -852,7 +859,36 @@ class DictOfferFormFiller(
                 except Exception:
                     logger.warning("Не вдалось відновити Поверховість", exc_info=True)
 
-            # --- Відновлення 2: Обов'язкове поле порожнє ---
+            # --- Відновлення 2: Ціна / Валюта ---
+            # Окремий блок, бо значення з CRM може мати пробіли ("182 000"),
+            # які сайт відкидає — нормалізуємо перед повторним заповненням.
+            elif "ціна" in field.lower():
+                price_raw = offer_data.get("Ціна") or ""
+                if price_raw:
+                    # Видалити пробіли та нерозривні пробіли; замінити кому на крапку
+                    price_norm = str(price_raw).replace(" ", "").replace("\u00a0", "").replace(",", ".")
+                    try:
+                        sec_price = self._section(root, "Цінові параметри")
+                        price_ctrl = self._find_control_by_label(sec_price, "Ціна")
+                        if price_ctrl:
+                            inp = price_ctrl.locator("css=input:not([aria-hidden='true'])").first
+                            if inp.count():
+                                inp.click()
+                                inp.fill(price_norm)
+                                self._mark_touched(inp)
+                                fixed_any = True
+                                logger.warning(
+                                    "Відновлення: Ціна='%s' (нормалізовано з '%s')", price_norm, price_raw
+                                )
+                        currency_raw = offer_data.get("Валюта") or ""
+                        if currency_raw:
+                            self._fill_field_from_dict(
+                                root, "Цінові параметри", "Валюта", currency_raw, "select"
+                            )
+                    except Exception:
+                        logger.warning("Не вдалось відновити Ціна/Валюта", exc_info=True)
+
+            # --- Відновлення 3: Обов'язкове поле порожнє ---
             elif "необхідно заповнити" in msg or "необхідно вибрати" in msg:
                 # Відновлюємо лише обов'язкові поля (мають '*' у підписі на сайті).
                 # Необов'язкові поля (наприклад, "Тип будинку") пропускаємо.

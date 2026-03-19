@@ -400,7 +400,15 @@ class AutocompleteMixin:
                         cur,
                     )
                     try:
+                        inp.press("Escape")
+                    except Exception:
+                        pass
+                    try:
                         inp.press("Enter")
+                    except Exception:
+                        pass
+                    try:
+                        self.page.evaluate("() => { const el = document.activeElement; if (el) el.blur(); }")
                     except Exception:
                         pass
                     return True
@@ -751,11 +759,30 @@ class AutocompleteMixin:
             next_key,
             cur,
         )
-        # For address/house fields: press Enter to commit whatever is typed.
-        # Better to have an unconfirmed-but-typed value than an empty field.
+        # For address/house fields: commit whatever is typed.
+        # 1) Escape closes any open dropdown without clearing the typed text.
+        # 2) Enter selects the highlighted option if any, or confirms free text.
+        # 3) Click on the form heading (background) triggers blur, which MUI uses
+        #    to commit freeSolo values — more reliable than Enter alone.
         if is_address or is_house:
             try:
+                inp.press("Escape")
+            except Exception:
+                pass
+            try:
                 inp.press("Enter")
+            except Exception:
+                pass
+            try:
+                # Blur via JS — triggers MUI's onBlur which commits typed value
+                self.page.evaluate("() => { const el = document.activeElement; if (el) el.blur(); }")
+            except Exception:
+                pass
+            try:
+                # Fallback: click the form heading to physically move focus away
+                h5 = self.page.locator("h5").first
+                if h5.count():
+                    h5.click()
             except Exception:
                 pass
 
