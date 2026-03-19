@@ -118,8 +118,9 @@ class AutocompleteMixin:
 
                 const inAnchorBand = (r) => {
                   if (!anchor) return true;
-                  const bandTop = anchor.y + anchor.height - 6;
-                  const bandBottom = bandTop + 420;
+                  // Allow dropdowns opening both below AND above the anchor input
+                  const bandTop    = anchor.y - 430;
+                  const bandBottom = anchor.y + anchor.height + 430;
                   const cx = r.left + r.width / 2;
                   const ax = anchor.x + anchor.width / 2;
                   return r.top >= bandTop && r.top <= bandBottom && Math.abs(cx - ax) <= 520;
@@ -629,6 +630,24 @@ class AutocompleteMixin:
             self._mark_touched(inp)
             self._debug_log_dropdown_options(key, "після вибору")
             return
+
+        # Extra retry for "район": type a short stem (first 4 chars of first word)
+        # to broaden the API suggestion (e.g. "Оболонь" → "обол" → "Оболонський")
+        if key_lower == "район" and not _is_readonly:
+            first_word = desired.split()[0] if desired.split() else desired
+            stem = first_word[:4]
+            if stem and stem.lower() != desired[:4].lower() or len(desired) > 4:
+                logger.debug("Район: коротка основа '%s' для пошуку замість '%s'", stem, desired)
+                try:
+                    inp.click()
+                    inp.fill("")
+                    inp.type(stem, delay=25)
+                    self.page.wait_for_timeout(600)
+                except Exception:
+                    pass
+                if _try_pick():
+                    self._mark_touched(inp)
+                    return
 
         try:
             cur = (inp.input_value() or "").strip()

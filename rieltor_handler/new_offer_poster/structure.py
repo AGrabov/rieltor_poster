@@ -43,7 +43,10 @@ class StructureMixin:
 
     def _section(self, root: Locator, h6_text: str) -> Locator:
         h6 = root.locator("h6", has_text=h6_text).first
-        h6.wait_for(state="visible")
+        try:
+            h6.wait_for(state="visible", timeout=15_000)
+        except Exception:
+            pass
         return h6.locator("xpath=ancestor::div[contains(@class,'MuiBox-root')][2]").first
 
     @staticmethod

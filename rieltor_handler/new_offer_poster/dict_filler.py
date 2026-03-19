@@ -21,10 +21,10 @@ logger = setup_logger(__name__)
 
 _STREET_PREFIXES = (
     "вулиця ", "вул. ", "вул.",
-    "проспект ", "просп. ", "просп.",
+    "проспект ", "просп. ", "просп.", "пр-т ",
     "бульвар ", "бульв. ", "бульв.",
     "площа ", "пл. ", "пл.",
-    "провулок ", "пров. ", "пров.",
+    "провулок ", "пров. ", "пров.", "пер. ", "пер.",
     "шосе ",
     "набережна ",
     "узвіз ",
@@ -248,6 +248,15 @@ class DictOfferFormFiller(
                     except (ValueError, TypeError):
                         pass
 
+        # Warn when "Число кімнат" is absent for Квартира — cannot safely guess the value
+        fi_rooms = self._schema["label_to_field"].get("число кімнат")
+        if fi_rooms and fi_rooms["label"] not in offer_data:
+            if self.property_type.lower() == "квартира":
+                logger.warning(
+                    "Відсутнє поле '%s' для Квартири — форма може не пройти валідацію",
+                    fi_rooms["label"],
+                )
+
         if applied:
             logger.info("Значення за замовчуванням: %s", applied)
 
@@ -442,6 +451,10 @@ class DictOfferFormFiller(
             sec = self._section(root, section)
             items = value if isinstance(value, (list, tuple)) else [value]
             self._fill_autocomplete_multi(sec, key, [self._to_text(v) for v in items])
+            try:
+                self.page.keyboard.press("Escape")
+            except Exception:
+                pass
             return
 
         if widget == "checkbox":
@@ -516,6 +529,12 @@ class DictOfferFormFiller(
         region = _get("Область")
         subway = _get("Метро")
         guide = _get("Орієнтир")
+
+        if not house:
+            logger.warning(
+                "Адреса: номер будинку відсутній або порожній — "
+                "поле 'Будинок' не буде заповнено, можлива помилка валідації"
+            )
 
         # Normalize street prefix (вул., просп., бульв. тощо)
         if street:
