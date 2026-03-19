@@ -279,7 +279,7 @@ class AutocompleteMixin:
                     const got = pick(opts);
                     if (got) return resolve(got);
                     if (Date.now() - start > timeoutMs) return resolve({ ok:false, count: opts.length });
-                    requestAnimationFrame(tick);
+                    setTimeout(tick, 50);
                   };
                   tick();
                 });

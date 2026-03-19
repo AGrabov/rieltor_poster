@@ -198,6 +198,9 @@ class DictOfferFormFiller(
                 applied.append(f"{fi['label']}='{default_house_type}' (default)")
 
         # 6) "Поверховість" — default to 2 when absent; cap at 50 (site limit)
+        #    For house/cottage types the site additionally validates ≤ 6.
+        _HOUSE_MAX_FLOORS = 6
+        _HOUSE_FLOOR_TYPES = {"будинок", "котедж", "таунхаус", "дача"}
         fi = self._schema["label_to_field"].get("поверховість")
         if fi:
             lbl = fi["label"]
@@ -210,6 +213,14 @@ class DictOfferFormFiller(
                     if floors > 50:
                         offer_data[lbl] = 2
                         applied.append(f"{lbl}: {floors}→2 (перевищував ліміт 50)")
+                    elif (
+                        str(self.property_type).lower() in _HOUSE_FLOOR_TYPES
+                        and floors > _HOUSE_MAX_FLOORS
+                    ):
+                        offer_data[lbl] = _HOUSE_MAX_FLOORS
+                        applied.append(
+                            f"{lbl}: {floors}→{_HOUSE_MAX_FLOORS} (ліміт для {self.property_type})"
+                        )
                 except (TypeError, ValueError):
                     pass
 
@@ -790,6 +801,9 @@ class DictOfferFormFiller(
             if house and self._map_error_visible():
                 self._force_reselect_house_number(sec, house, house_label="Будинок")
 
+        # Check for error page before spending time on slow multi-selects
+        self._raise_if_error_page()
+
         # 6) Multi-select fields
         if subway:
             items = subway if isinstance(subway, (list, tuple)) else [subway]
@@ -797,6 +811,9 @@ class DictOfferFormFiller(
         if guide:
             items = guide if isinstance(guide, (list, tuple)) else [guide]
             self._fill_autocomplete_multi(sec, "Орієнтир", [str(v) for v in items])
+
+        # Check for error page that may have appeared during multi-select fills
+        self._raise_if_error_page()
 
         # 7) Cadastral number — plain text input, name="cadastralNumber"
         if cadastral:
@@ -811,8 +828,26 @@ class DictOfferFormFiller(
                 cadnum_str = None
         if cadastral and cadnum_str:
             try:
-                inp = sec.locator("css=input[name='cadastralNumber']").first
-                if inp.count():
+                _cad_selectors = [
+                    "css=input[name='cadastralNumber']",
+                    "css=input[id*='cadastral' i]",
+                    "css=input[placeholder*='кадастр' i]",
+                    "css=input[aria-label*='кадастр' i]",
+                ]
+                inp = None
+                for _sel in _cad_selectors:
+                    _candidate = sec.locator(_sel).first
+                    if _candidate.count():
+                        inp = _candidate
+                        break
+                if inp is None:
+                    for _sel in _cad_selectors:
+                        _candidate = root.locator(_sel).first
+                        if _candidate.count():
+                            inp = _candidate
+                            logger.debug("Кадастровий номер знайдено в root (не в sec): %s", _sel)
+                            break
+                if inp is not None:
                     inp.click()
                     inp.fill(cadnum_str)
                     logger.info("Кадастровий номер заповнено: %s", cadnum_str)

@@ -412,6 +412,7 @@ class FieldsMixin:
                 return
 
             opt = self._find_option_in_listbox(lb, desired)
+            ceiling_applied = False
             if not opt and desired.isdigit():
                 # Numeric value exceeds available options → try last "і більше" ceiling option
                 try:
@@ -422,6 +423,7 @@ class FieldsMixin:
                     if ceiling_text:
                         opt = self._find_option_in_listbox(lb, ceiling_text)
                         if opt:
+                            ceiling_applied = True
                             logger.info(
                                 "Select ceiling fallback %s/%s: '%s' → '%s'",
                                 section, key, desired, ceiling_text,
@@ -456,15 +458,17 @@ class FieldsMixin:
             # For multi-select fields (e.g. "У будинку є"), value accumulates:
             # after clicking "Камін" when "Ванна" is already chosen the text becomes
             # "Ванна, Камін" — check containment, not equality.
-            try:
-                new_cur = self._norm_text(select_btn.inner_text() or "")
-                if desired.lower() not in new_cur.lower():
-                    logger.warning(
-                        "Select %s/%s: після кліку значення '%s', очікувалось '%s'",
-                        section, key, new_cur, desired,
-                    )
-            except Exception:
-                pass
+            # Skip warning when ceiling fallback was intentionally applied.
+            if not ceiling_applied:
+                try:
+                    new_cur = self._norm_text(select_btn.inner_text() or "")
+                    if desired.lower() not in new_cur.lower():
+                        logger.warning(
+                            "Select %s/%s: після кліку значення '%s', очікувалось '%s'",
+                            section, key, new_cur, desired,
+                        )
+                except Exception:
+                    pass
             return
 
         # ---------- Plain input / textarea ----------
