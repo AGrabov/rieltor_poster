@@ -423,15 +423,20 @@ class HTMLOfferParser:
         if notes_parts:
             result["personal_notes"] = "\n".join(notes_parts)
 
-        # Analyze description for additional fields
+        # Analyze description for additional fields (description = source of truth).
+        # Pass empty existing_data so analyzer returns all extractable fields,
+        # then overwrite CRM data — except price/currency/deal-type which come
+        # from structured CRM extraction and are more reliable than free-form text.
+        _STRUCTURED_FIELDS = frozenset({"Ціна", "Валюта", "offer_type", "property_type"})
         if description or note:
             full_text = "\n\n".join([note or "", description or ""]).strip()
-            analyzed_data = self.analyzer.analyze(full_text, result)
+            analyzed_data = self.analyzer.analyze(full_text, {})
             for key, value in analyzed_data.items():
-                if key not in result and value is not None:
-                    result[key] = value
-                    if self.debug:
-                        logger.debug(f"Додано з аналізу опису: {key}={value}")
+                if key in _STRUCTURED_FIELDS or value is None:
+                    continue
+                if key in result and result[key] != value:
+                    logger.debug("Опис перезаписує CRM: %s='%s' → '%s'", key, result[key], value)
+                result[key] = value
 
         # Validate and fill defaults
         result = self._fill_missing_with_defaults(result)
@@ -1200,6 +1205,43 @@ class HTMLOfferParser:
                     if living > 0:
                         data["Житлова площа, м²"] = str(living)
                         logger.debug(f"Обчислено Житлова площа: {total} - 1.4*{kitchen} = {living}")
+                except (ValueError, TypeError):
+                    pass
+
+        # Fallback: estimate room count from total/living area when missing.
+        # Only for Квартира — it has "Число кімнат" as a required field.
+        if (
+            not data.get("Число кімнат")
+            and str(data.get("property_type", "")).lower() == "квартира"
+        ):
+            area_raw = data.get("Загальна площа, м²") or data.get("Житлова площа, м²")
+            if area_raw:
+                try:
+                    area = float(str(area_raw).replace(",", "."))
+                    if area <= 35:
+                        rooms = "1 кімната"
+                    elif area <= 55:
+                        rooms = "2 кімнати"
+                    elif area <= 80:
+                        rooms = "3 кімнати"
+                    elif area <= 100:
+                        rooms = "4 кімнати"
+                    else:
+                        rooms = "5 кімнат"
+                    # Align with schema options if available
+                    field_info = self.label_to_field.get("число кімнат")
+                    if field_info:
+                        options = field_info.get("options", [])
+                        if options and rooms not in options:
+                            num = rooms.split()[0]
+                            for opt in options:
+                                if num in opt:
+                                    rooms = opt
+                                    break
+                    data["Число кімнат"] = rooms
+                    logger.debug(
+                        "Число кімнат оцінено за площею %.1f м² → '%s'", area, rooms
+                    )
                 except (ValueError, TypeError):
                     pass
 

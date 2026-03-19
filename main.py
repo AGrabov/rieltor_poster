@@ -397,14 +397,42 @@ def phase2_post(
                     db.mark_failed(offer.estate_id, e.errors)
 
                 except RieltorErrorPageException as e:
-                    logger.error("Сторінка помилки Rieltor для об'єкта %d: %s", offer.estate_id, e)
-                    logger.error(
-                        "Дані об'єкта %d (article=%s):\n%s",
-                        offer.estate_id,
-                        offer.article,
-                        json.dumps(offer_data, ensure_ascii=False, indent=2),
+                    logger.warning(
+                        "Сторінка помилки для об'єкта %d, повторна спроба...", offer.estate_id
                     )
-                    db.mark_failed(offer.estate_id, [{"error": str(e)}])
+                    try:
+                        poster.filler = DictOfferFormFiller(
+                            poster.page,
+                            property_type=pt,
+                            deal_type=dt,
+                            debug=debug,
+                        )
+                        poster.create_offer_draft(offer_data)
+                        report = poster.publish_and_get_report() if publish else poster.save_and_get_report()
+                        rieltor_id = str(poster.last_saved_offer_id or "")
+                        if report:
+                            logger.warning(
+                                "Об'єкт %d (повтор): помилки валідації: %s",
+                                offer.estate_id,
+                                report,
+                            )
+                            db.mark_failed(offer.estate_id, report)
+                        else:
+                            db.mark_posted(offer.estate_id, rieltor_id)
+                            if offer.article:
+                                cleanup_photos(offer.article)
+                            posted += 1
+                    except Exception as retry_e:
+                        logger.error(
+                            "Повтор для об'єкта %d не вдався: %s", offer.estate_id, retry_e
+                        )
+                        logger.error(
+                            "Дані об'єкта %d (article=%s):\n%s",
+                            offer.estate_id,
+                            offer.article,
+                            json.dumps(offer_data, ensure_ascii=False, indent=2),
+                        )
+                        db.mark_failed(offer.estate_id, [{"error": str(e)}])
 
                 except Exception:
                     logger.exception("Непередбачена помилка при публікації об'єкта %d", offer.estate_id)

@@ -295,6 +295,14 @@ class DictOfferFormFiller(
         if self._is_error_page():
             url = self.page.url or "unknown"
             logger.error("Сайт повернув сторінку помилки: %s", url)
+            try:
+                btn = self.page.locator("button:has-text('На головну')").first
+                if btn.count() > 0:
+                    btn.click()
+                    self.page.wait_for_load_state("domcontentloaded", timeout=10_000)
+                    logger.info("Натиснуто 'На головну' після сторінки помилки")
+            except Exception:
+                pass
             raise RieltorErrorPageException(
                 f"Сайт повернув сторінку помилки за адресою {url}. "
                 "Сторінка недоступна або сесія закінчилась."
@@ -302,6 +310,12 @@ class DictOfferFormFiller(
 
     def open(self) -> None:
         """Відкриває сторінку створення оголошення."""
+        # Clear localStorage to prevent the site from restoring the previous offer's draft.
+        # Auth is stored in cookies on rieltor.ua, so clearing localStorage is safe.
+        try:
+            self.page.evaluate("() => window.localStorage.clear()")
+        except Exception:
+            pass
         self.page.goto(self.CREATE_URL, wait_until="domcontentloaded")
         self._raise_if_error_page()
         # Wait for MUI to fully render (h6 sections + card buttons)
