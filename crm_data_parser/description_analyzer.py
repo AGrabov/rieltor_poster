@@ -255,13 +255,11 @@ class DescriptionAnalyzer:
                 continue
 
             if widget in ["select", "radio"]:
-                for option in options:
-                    option_lower = option.lower()
-                    if self._option_in_text(option_lower, text):
-                        extracted[key] = option
-                        if self.debug:
-                            logger.debug(f"Знайдено збіг {key}={option} в описі")
-                        break
+                matches = [opt for opt in options if self._option_in_text(opt.lower(), text)]
+                if matches:
+                    extracted[key] = matches[-1]
+                    if self.debug:
+                        logger.debug(f"Знайдено збіг {key}={matches[-1]} в описі (з {len(matches)} збігів)")
 
             elif widget == "checklist":
                 matched_options = []
@@ -337,7 +335,7 @@ class DescriptionAnalyzer:
         # --- Areas ---
         area_patterns = [
             (
-                r"загальн\w*\s+площ\w*[:\s\-–—]*(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?|кв\.?\s*м)",
+                r"загальн\w*\s+площ\w*(?:\s+\w+)?\s*[:\s\-–—]*(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?|кв\.?\s*м)",
                 "Загальна площа, м²",
             ),
             (r"(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?)\s*загальн", "Загальна площа, м²"),
@@ -353,6 +351,11 @@ class DescriptionAnalyzer:
             # "площа квартири/будинку/приміщення — 85 м²"
             (
                 r"площ\w+\s+(?:квартир|будинку|кімнат|приміщенн)\w*\s*[—–\-:]+\s*(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?|кв\.?\s*м)",
+                "Загальна площа, м²",
+            ),
+            # "таунхаус/дуплекс площею 143 м²" / "таунхаус загальною площею 120 м²"
+            (
+                r"(?:таунхаус|дуплекс|котедж|вілла)\s+(?:загальною\s+)?площею\s*(\d+[.,]?\d*)\s*(?:м²|м2|м\.?\s*кв\.?|кв\.?\s*м)",
                 "Загальна площа, м²",
             ),
             (r"житлов\w*\s+площ\w*[:\s\-–—]*(\d+[.,]?\d*)", "Житлова площа, м²"),
