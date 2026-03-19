@@ -152,7 +152,7 @@ if "schema_proc" not in st.session_state:
 if "cadastral_proc" not in st.session_state:
     st.session_state.cadastral_proc = None
 if "headless" not in st.session_state:
-    st.session_state.headless = True
+    st.session_state.headless = False
 if "log_level" not in st.session_state:
     st.session_state.log_level = "INFO"
 
@@ -168,7 +168,7 @@ with header_right:
     with col_refresh:
         manual_refresh = st.button("⟳ Оновити", use_container_width=True)
     with col_auto:
-        auto_refresh = st.toggle("Авто 30с", value=True)
+        auto_refresh = st.toggle(f"Авто {AUTO_REFRESH_SEC}с", value=True)
 
 st.divider()
 
