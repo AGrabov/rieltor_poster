@@ -115,6 +115,8 @@ if "post_proc" not in st.session_state:
     st.session_state.post_proc = None
 if "schema_proc" not in st.session_state:
     st.session_state.schema_proc = None
+if "cadastral_proc" not in st.session_state:
+    st.session_state.cadastral_proc = None
 
 
 # ── Заголовок ─────────────────────────────────────────────────────────
@@ -268,6 +270,42 @@ with right:
                 st.success("✅ Публікацію завершено")
             else:
                 st.error(f"❌ Публікацію завершено з кодом {rc}")
+
+    # Кадастрові номери
+    with st.container(border=True):
+        cad1, cad2 = st.columns([3, 1])
+        with cad1:
+            st.markdown("**Кадастрові номери** (БД → kadastr.live)")
+            st.caption("Шукає кадастровий номер для об'єктів без нього (Будинок, Ділянка, Комерційна).")
+        with cad2:
+            max_count_cad = st.number_input(
+                "Макс.",
+                min_value=0,
+                value=0,
+                key="max_count_cadastral",
+                help="0 = без обмежень",
+            )
+        cadastral_btn = st.button(
+            "🗺 Знайти кадастрові номери",
+            use_container_width=True,
+            disabled=proc_is_running(st.session_state.cadastral_proc),
+        )
+
+        if cadastral_btn:
+            cmd = ["uv", "run", "python", "main.py", "cadastral"]
+            if max_count_cad:
+                cmd += ["--max-count", str(max_count_cad)]
+            st.session_state.cadastral_proc = launch(cmd)
+            st.toast("Пошук кадастрових номерів запущено!", icon="🗺")
+
+        if proc_is_running(st.session_state.cadastral_proc):
+            st.info("⏳ Пошук кадастрових номерів виконується...")
+        elif st.session_state.cadastral_proc is not None:
+            rc = st.session_state.cadastral_proc.returncode
+            if rc == 0:
+                st.success("✅ Пошук завершено")
+            else:
+                st.error(f"❌ Пошук завершився з кодом {rc}")
 
     # Оновлення схем
     with st.container(border=True):

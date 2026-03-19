@@ -26,9 +26,15 @@ from playwright.sync_api import Page
 
 from setup_logger import setup_logger
 
+from .cadastral_lookup import lookup_cadastral_number
+from .html_parser import CRM_TYPE_TO_SCHEMA
+
 logger = setup_logger(__name__)
 
 CRM_BASE_URL = "https://crm-capital.realtsoft.net"
+
+# Property schema types that have a "Кадастровий номер" field on rieltor.ua
+_CADASTRAL_SCHEMA_TYPES = frozenset({"будинок", "ділянка", "комерційна"})
 
 # Default commission settings (value + unit)
 # Unit options from schema: "%", "гривнях", "долларах"
@@ -249,6 +255,46 @@ class EstateListCollector:
                 self._update_notes_with_contacts(offer_data)
         except Exception:
             logger.exception("Помилка отримання контактів відповідального")
+
+    def enrich_with_cadastral_number(self, offer_data: dict) -> None:
+        """Додати кадастровий номер з kadastr.live, якщо CRM його не надав.
+
+        Працює лише для типів об'єктів, що мають поле «Кадастровий номер»
+        на rieltor.ua: Будинок, Ділянка, Комерційна.
+        Не перезаписує значення, яке вже прийшло з CRM.
+
+        Args:
+            offer_data: Словник, що будується для DictOfferFormFiller (змінюється на місці).
+        """
+        raw_type = (offer_data.get("property_type") or "").lower()
+        schema_type = CRM_TYPE_TO_SCHEMA.get(raw_type, raw_type).lower()
+        if schema_type not in _CADASTRAL_SCHEMA_TYPES:
+            return
+
+        address = offer_data.get("address") or {}
+        if address.get("Кадастровий номер"):
+            logger.debug("Кадастровий номер вже є в CRM, пропуск")
+            return
+
+        city = address.get("Місто") or ""
+        street = address.get("Вулиця") or ""
+        house = address.get("Будинок") or ""
+
+        cadnum = lookup_cadastral_number(city, street, house)
+        if cadnum:
+            offer_data.setdefault("address", {})["Кадастровий номер"] = cadnum
+            logger.info(
+                "Кадастровий номер для %s: %s",
+                offer_data.get("article", "?"),
+                cadnum,
+            )
+        else:
+            logger.info(
+                "Кадастровий номер не знайдено для '%s %s %s'",
+                city,
+                street,
+                house,
+            )
 
     def _parse_user_contacts(self, html: str) -> str:
         """Розпарсити телефон зі сторінки профілю користувача CRM.

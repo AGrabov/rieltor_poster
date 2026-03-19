@@ -16,6 +16,7 @@ from .misc import deal_text
 from .photos import _LABEL_DESCRIPTION, _LABEL_VIDEO_URL, PhotosMixin
 from .structure import StructureMixin
 from .validation import FormValidationError, ValidationMixin
+from ..rieltor_session import RieltorErrorPageException
 
 logger = setup_logger(__name__)
 
@@ -280,15 +281,36 @@ class DictOfferFormFiller(
             logger.info("Аналіз опису при постингу: додано %d полів: %s", len(merged), merged)
 
     # ---------- public API ----------
+    def _is_error_page(self) -> bool:
+        """Перевіряє, чи поточна сторінка є сторінкою помилки ('Щось пішло не так')."""
+        try:
+            return (
+                self.page.locator('img[alt="404 bot"]').count() > 0
+                or self.page.locator("text=Щось пішло не так").count() > 0
+            )
+        except Exception:
+            return False
+
+    def _raise_if_error_page(self) -> None:
+        if self._is_error_page():
+            url = self.page.url or "unknown"
+            logger.error("Сайт повернув сторінку помилки: %s", url)
+            raise RieltorErrorPageException(
+                f"Сайт повернув сторінку помилки за адресою {url}. "
+                "Сторінка недоступна або сесія закінчилась."
+            )
+
     def open(self) -> None:
         """Відкриває сторінку створення оголошення."""
         self.page.goto(self.CREATE_URL, wait_until="domcontentloaded")
+        self._raise_if_error_page()
         # Wait for MUI to fully render (h6 sections + card buttons)
         try:
             self.page.locator("h6", has_text="Тип угоди").first.wait_for(state="visible", timeout=15_000)
             self.page.wait_for_timeout(1500)
         except Exception:
             pass
+        self._raise_if_error_page()
         logger.info("Сторінку створення оголошення відкрито")
 
     def create_offer_draft(self, offer_data: dict) -> None:
@@ -1035,6 +1057,9 @@ class DictOfferFormFiller(
             self.page.wait_for_url(self.MANAGEMENT_URL_GLOB, timeout=60_000)
         except Exception:
             pass
+
+        # Error page can appear instead of redirect (server failure / stale session)
+        self._raise_if_error_page()
 
         if "/offers/management" in (self.page.url or ""):
             logger.info("Перенаправлено до управління оголошеннями: %s", self.page.url)

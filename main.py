@@ -209,6 +209,7 @@ def phase1_collect(
 
                 collector.enrich_with_commission(offer_data, item)
                 collector.enrich_with_responsible_contacts(offer_data)
+                collector.enrich_with_cadastral_number(offer_data)
 
                 # Download photos while CRM session is active
                 article = offer_data.get("article", str(item.estate_id))
@@ -349,6 +350,12 @@ def phase2_post(
                     )
 
                     _normalize_offer_data(offer_data)
+
+                    # Збагатити кадастровим номером якщо відсутній (phase 2 fallback)
+                    from crm_data_parser.cadastral_lookup import enrich_offer_data_with_cadastral
+                    if enrich_offer_data_with_cadastral(offer_data):
+                        db.update_offer_data(offer.estate_id, offer_data)
+
                     poster.create_offer_draft(offer_data)
 
                     if publish:
@@ -411,6 +418,59 @@ def phase2_post(
 
     logger.info("Фаза 2 завершена: %d оголошень опубліковано", posted)
     return posted
+
+
+# ── cadastral: fill missing cadastral numbers in DB ─────────────────
+
+
+def phase_cadastral(max_count: int | None = None) -> int:
+    """Знайти кадастрові номери для об'єктів у БД, де вони відсутні.
+
+    Працює для всіх статусів і всіх типів, що підтримують поле
+    «Кадастровий номер» (Будинок, Ділянка, Комерційна).
+
+    Returns:
+        Кількість записів, для яких знайдено та збережено номер.
+    """
+    from crm_data_parser.cadastral_lookup import enrich_offer_data_with_cadastral
+    from crm_data_parser.html_parser import CRM_TYPE_TO_SCHEMA
+    from offer_db import OfferDB
+
+    _CADASTRAL_SCHEMA_TYPES = frozenset({"будинок", "ділянка", "комерційна"})
+    cadastral_crm_types = [
+        crm for crm, schema in CRM_TYPE_TO_SCHEMA.items()
+        if schema.lower() in _CADASTRAL_SCHEMA_TYPES
+    ]
+
+    updated = 0
+    with OfferDB() as db:
+        offers = db.get_without_cadastral(property_types=cadastral_crm_types)
+        if max_count:
+            offers = offers[:max_count]
+
+        logger.info(
+            "Об'єктів без кадастрового номера: %d (перевіряємо %d)",
+            len(offers),
+            len(offers),
+        )
+
+        for offer in offers:
+            offer_data = offer.offer_data
+            article = offer.article or str(offer.estate_id)
+            addr = offer_data.get("address") or {}
+            logger.debug(
+                "Пошук кадастрового для %s (%s %s %s)",
+                article,
+                addr.get("Місто", ""),
+                addr.get("Вулиця", ""),
+                addr.get("Будинок", ""),
+            )
+            if enrich_offer_data_with_cadastral(offer_data):
+                db.update_offer_data(offer.estate_id, offer_data)
+                updated += 1
+
+    logger.info("Кадастрові номери оновлено: %d / %d", updated, len(offers))
+    return updated
 
 
 # ── post-one: single offer from JSON ────────────────────────────────
@@ -499,6 +559,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_one.add_argument("source", help="JSON string or path to .json file")
     p_one.add_argument("--publish", action="store_true", help="Publish instead of draft")
 
+    # cadastral
+    p_cad = sub.add_parser("cadastral", help="Fill missing cadastral numbers in DB")
+    p_cad.add_argument("--max-count", type=int, help="Max offers to process")
+
     return parser
 
 
@@ -541,6 +605,9 @@ def main() -> None:
                 headless=headless,
                 debug=args.debug,
             )
+
+        elif args.command == "cadastral":
+            phase_cadastral(max_count=args.max_count)
 
         else:
             # No subcommand = full pipeline (collect + post draft)

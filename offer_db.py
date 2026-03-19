@@ -192,6 +192,43 @@ class OfferDB:
         self.conn.commit()
         logger.info("Об'єкт %d позначено як пропущений: %s", estate_id, reason)
 
+    def update_offer_data(self, estate_id: int, offer_data: dict) -> None:
+        """Оновити поле offer_data (JSON) для існуючого запису."""
+        self.conn.execute(
+            """UPDATE offers
+               SET offer_data = ?, updated_at = datetime('now', 'localtime')
+               WHERE estate_id = ?""",
+            (json.dumps(offer_data, ensure_ascii=False), estate_id),
+        )
+        self.conn.commit()
+        logger.debug("offer_data оновлено для estate_id=%d", estate_id)
+
+    def get_without_cadastral(
+        self,
+        property_types: list[str] | None = None,
+    ) -> list[OfferRecord]:
+        """Повернути оголошення, у яких кадастровий номер відсутній або порожній.
+
+        Args:
+            property_types: Список типів об'єктів (нижній регістр) для фільтрації.
+                            None = усі типи.
+        """
+        query = """
+            SELECT * FROM offers
+            WHERE (
+                json_extract(offer_data, '$.address."Кадастровий номер"') IS NULL
+                OR json_extract(offer_data, '$.address."Кадастровий номер"') = ''
+            )
+        """
+        params: list = []
+        if property_types:
+            placeholders = ", ".join("?" * len(property_types))
+            query += f" AND LOWER(property_type) IN ({placeholders})"
+            params.extend(pt.lower() for pt in property_types)
+        query += " ORDER BY id"
+        rows = self.conn.execute(query, params).fetchall()
+        return [_row_to_record(r) for r in rows]
+
     def summary(self) -> dict[str, int]:
         rows = self.conn.execute("SELECT status, COUNT(*) as cnt FROM offers GROUP BY status").fetchall()
         return {r["status"]: r["cnt"] for r in rows}
