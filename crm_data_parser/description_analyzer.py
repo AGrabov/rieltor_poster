@@ -41,9 +41,19 @@ CONTEXTUAL_PATTERNS: dict[str, list[tuple]] = {
         (r"блочн\w+", "Блочна"),
     ],
     "загальний стан": [
-        (r"(?:з\s+)?ремонт(?:ом|у)|після\s+ремонту|авторськ\w+\s+ремонт", "З ремонтом"),
-        (r"без\s+ремонту", "Без ремонту"),
+        # "без ремонту" / "потребує ремонту" — перевіряємо ПЕРШИМ, щоб не перекрило "З ремонтом"
+        (r"без\s+ремонту|потребує\s+ремонту|ремонт\s+не\s+зроблен", "Без ремонту"),
         (r"частков\w+\s+ремонт", "Частковий ремонт"),
+        # "ремонтом" (орудний відмінок) — завжди "з ремонтом", не плутається з "без ремонту"
+        # Також явний префікс "з ремонт", "після ремонту", авторський/якісний/... ремонт
+        (
+            r"(?:з\s+)?ремонтом"
+            r"|після\s+ремонту"
+            r"|авторськ\w+(?:\s+\w+)?\s+ремонт"
+            r"|(?:якісн|дизайнерськ|сучасн|євро|гарн)\w*\s+(?:\w+\s+)?ремонт\b"
+            r"|ремонт\s+(?:висок|якісн|класу|преміум|дизайнерськ|сучасн)\w*",
+            "З ремонтом",
+        ),
     ],
     "санвузол": [
         (r"роздільн\w+\s+санвузол", "Роздільний"),
@@ -340,6 +350,11 @@ class DescriptionAnalyzer:
                 r"будинок\s+(\d+[.,]?\d*)\s*(?:м²|кв\.?\s*м)",
                 "Загальна площа, м²",
             ),
+            # "площа квартири/будинку/приміщення — 85 м²"
+            (
+                r"площ\w+\s+(?:квартир|будинку|кімнат|приміщенн)\w*\s*[—–\-:]+\s*(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?|кв\.?\s*м)",
+                "Загальна площа, м²",
+            ),
             (r"житлов\w*\s+площ\w*[:\s\-–—]*(\d+[.,]?\d*)", "Житлова площа, м²"),
             (r"площ\w*\s+кухн\w*[:\s\-–—]*(\d+[.,]?\d*)", "Площа кухні, м²"),
             # "Кухня-вітальня — 15 м²" or "Кухня — 12 м²"
@@ -418,12 +433,28 @@ class DescriptionAnalyzer:
 
         # --- Floor ---
         if "Поверх" not in existing_data and "Поверх" not in extracted:
-            floor_pattern = r"(\d+)\s*поверх\s*[/зі]+\s*(\d+)"
-            floor_match = re.search(floor_pattern, text)
+            # Pattern 1: "N поверх / M" or "N поверх з M" (without ordinal suffix)
+            floor_match = re.search(r"(\d+)\s*поверх\s*[/зі]+\s*(\d+)", text)
             if floor_match:
                 extracted["Поверх"] = floor_match.group(1)
-                if "Поверховість" not in existing_data:
+                if "Поверховість" not in existing_data and "Поверховість" not in extracted:
                     extracted["Поверховість"] = floor_match.group(2)
+
+            if "Поверх" not in extracted:
+                # Pattern 2: "12-й поверх із 31" (ordinal suffix before поверх)
+                floor_match2 = re.search(
+                    r"(\d+)\s*[-–—]?\s*[а-яіїєґ]{0,3}\s+поверх\s+(?:із?|з)\s+(\d+)", text
+                )
+                if floor_match2:
+                    extracted["Поверх"] = floor_match2.group(1)
+                    if "Поверховість" not in existing_data and "Поверховість" not in extracted:
+                        extracted["Поверховість"] = floor_match2.group(2)
+
+            if "Поверх" not in extracted:
+                # Pattern 3: "поверх - 4" or "поверх: 4" (floor number after keyword)
+                floor_match3 = re.search(r"поверх\s*[-–—:]\s*(\d+)", text)
+                if floor_match3:
+                    extracted["Поверх"] = floor_match3.group(1)
 
         # --- Room count ---
         if "Число кімнат" not in existing_data and "Число кімнат" not in extracted:

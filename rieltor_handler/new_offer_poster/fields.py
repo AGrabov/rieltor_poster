@@ -226,8 +226,14 @@ class FieldsMixin:
         except Exception:
             cur = ""
 
-        if cur == desired:
-            logger.info("Заповнення пропущено %s/%s: вже '%s'", section, key, cur)
+        if cur:
+            if cur == desired:
+                logger.info("Заповнення пропущено %s/%s: вже '%s'", section, key, cur)
+            else:
+                logger.info(
+                    "Заповнення пропущено %s/%s: поле вже містить '%s' (не перезаписуємо '%s')",
+                    section, key, cur, desired,
+                )
             self._mark_touched(ctrl)
             return
 

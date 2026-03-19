@@ -111,6 +111,7 @@ class DictOfferFormFiller(
         self.property_type = property_type
         self.deal_type = deal_type
         self.last_saved_offer_id: str | int | None = None
+        self._last_offer_data: dict | None = None
 
         if debug:
             logger.setLevel("DEBUG")
@@ -183,11 +184,9 @@ class DictOfferFormFiller(
                 applied.append(f"{fi['label']}='1' (placeholder — уточніть у CRM)")
                 break
 
-        # 5) "Тип будинку" — default to "Будинок" (окремостоящий) when absent
-        fi = self._schema["label_to_field"].get("тип будинку")
-        if fi and fi["label"] not in offer_data:
-            offer_data[fi["label"]] = "Будинок"
-            applied.append(f"{fi['label']}='Будинок'")
+        # 5) "Тип будинку" — не встановлюємо дефолт, бо жодне типове значення ('Будинок' тощо)
+        #    не входить до переліку сайту ('Чеський проект', 'Сталінка', 'Хрущівка' тощо).
+        #    Поле необов'язкове; якщо CRM не передав значення — залишаємо порожнім.
 
         # 6) "Поверховість" — default to 2 when absent; cap at 50 (site limit)
         fi = self._schema["label_to_field"].get("поверховість")
@@ -304,6 +303,8 @@ class DictOfferFormFiller(
         self._enrich_offer_data_from_description(offer_data)
         # Apply safe defaults for required fields still missing after analysis
         self._apply_required_defaults(offer_data)
+        # Store for use in error recovery at save/publish time
+        self._last_offer_data = offer_data
 
         self.open()
         root = self._new_offer_root()
@@ -385,7 +386,7 @@ class DictOfferFormFiller(
         if _COMMISSION_LABEL not in offer_data:
             commission_field = self._schema["label_to_field"].get(_COMMISSION_LABEL.lower().strip())
             if commission_field:
-                self._set_commission_no(root, _COMMISSION_LABEL)
+                self._set_commission_radio(root, _COMMISSION_LABEL, desired="Немає")
 
         # Required validation — log issues but continue so save is still attempted.
         # A RequiredFieldError here often means a field like "Вулиця" was typed but
@@ -436,6 +437,15 @@ class DictOfferFormFiller(
         widget: str | None,
     ) -> None:
         """Заповнює одне поле за допомогою обробника, специфічного для типу віджету."""
+        # Спеціальний випадок: "Комісія з покупця/орендатора" — радіокнопка (Є/Немає),
+        # а не MUI Select. Схема може неправильно визначити widget="select" через сусідній
+        # dropdown валюти, тому перехоплюємо до загальної диспетчеризації.
+        _COMMISSION_KEY_LOWER = "комісія з покупця/орендатора"
+        if key.lower().strip() == _COMMISSION_KEY_LOWER:
+            desired_radio = self._to_text(value).strip() or "Немає"
+            self._set_commission_radio(root, key, desired_radio)
+            return
+
         if widget == "box_select":
             if isinstance(value, list):
                 value = value[0] if value else ""
@@ -542,9 +552,15 @@ class DictOfferFormFiller(
 
         if condo:
             cc = str(condo).strip()
-            if cc.startswith("ЖК "):
-                cc = cc.replace("ЖК ", "").strip()
-            condo = cc
+            # "Так"/"Yes" означає лише прапорець новобудови, але не вказує назву ЖК —
+            # на сайті поле "Новобудова" є autocomplete з конкретними ЖК, тому
+            # значення без назви трактуємо як порожнє.
+            if cc.lower() in ("так", "yes", "true", "1"):
+                condo = None
+            else:
+                if cc.startswith("ЖК "):
+                    cc = cc.replace("ЖК ", "").strip()
+                condo = cc
 
         logger.info(
             "Заповнення адреси: місто=%s, ЖК=%s, район=%s, вулиця=%s, будинок=%s",
@@ -704,8 +720,8 @@ class DictOfferFormFiller(
 
     # ── Commission radio ──
 
-    def _set_commission_no(self, root: Locator, label: str) -> None:
-        """Встановлює радіокнопку комісії у 'Немає' прямим кліком по label.
+    def _set_commission_radio(self, root: Locator, label: str, desired: str = "Немає") -> None:
+        """Встановлює радіокнопку комісії у вказане значення ('Є' або 'Немає').
 
         Структура DOM: текст label знаходиться у <p>, що є сусідом
         MuiFormControl-root, обидва загорнуті у MuiBox-root:
@@ -733,12 +749,13 @@ class DictOfferFormFiller(
             logger.warning("Обгортку радіокнопки комісії не знайдено для '%s'", label)
             return
 
-        nemaye = wrapper.locator("xpath=.//label[contains(normalize-space(.), 'Немає')]").first
-        if nemaye.count():
-            nemaye.click()
-            logger.info("Встановлено '%s' у 'Немає' (дані комісії не надано)", label)
+        opt_lit = self._xpath_literal(desired)
+        option_btn = wrapper.locator(f"xpath=.//label[contains(normalize-space(.), {opt_lit})]").first
+        if option_btn.count():
+            option_btn.click()
+            logger.info("Встановлено '%s' у '%s'", label, desired)
         else:
-            logger.warning("Опція 'Немає' не знайдена у радіокнопці комісії для '%s'", label)
+            logger.warning("Опція '%s' не знайдена у радіокнопці комісії для '%s'", desired, label)
 
     # ── Photos ──
 
@@ -791,6 +808,101 @@ class DictOfferFormFiller(
         return []
 
     # ── Save / Publish ──
+
+    def _attempt_error_recovery(self, root, errors: list[dict]) -> bool:
+        """Спроба виправити відомі помилки валідації перед повторним збереженням.
+
+        Повертає True, якщо хоча б одну помилку вдалось виправити (варто повторити save).
+        Наслідує той самий паттерн, що й відновлення «wrong city» у _submit_and_get_report.
+        """
+        fixed_any = False
+        offer_data = self._last_offer_data or {}
+
+        for err in errors:
+            field = (err.get("field") or "").replace("*", "").strip()
+            msg = (err.get("message") or "").lower()
+            sec = err.get("section", "")
+
+            # --- Відновлення 1: Поверх > Поверховість ---
+            if "не може бути більше" in msg and "поверховість" in msg:
+                try:
+                    sec_obj = self._section(root, "Інформація про об'єкт")
+                    poverkh_lbl = self._expected_label("Поверх") or "Поверх"
+                    floor_ctrl = self._find_control_by_label(sec_obj, poverkh_lbl)
+                    floor_val = (self._filled_value_text(floor_ctrl) or "").strip() if floor_ctrl else ""
+                    if floor_val and floor_val.isdigit() and int(floor_val) > 0:
+                        logger.warning(
+                            "Відновлення: Поверх=%s > Поверховість → встановлюємо Поверховість=%s",
+                            floor_val,
+                            floor_val,
+                        )
+                        # Force-fill: clear field first so _fill_by_label won't skip
+                        try:
+                            sec_obj2 = self._section(root, "Інформація про об'єкт")
+                            pov_lbl = self._expected_label("Поверховість") or "Поверховість"
+                            pov_ctrl = self._find_control_by_label(sec_obj2, pov_lbl)
+                            if pov_ctrl:
+                                inp_pov = pov_ctrl.locator("css=input:not([aria-hidden='true'])").first
+                                if inp_pov.count():
+                                    inp_pov.click()
+                                    inp_pov.fill(floor_val)
+                        except Exception:
+                            self._fill_by_label(root, "Інформація про об'єкт", "Поверховість", floor_val)
+                        fixed_any = True
+                except Exception:
+                    logger.warning("Не вдалось відновити Поверховість", exc_info=True)
+
+            # --- Відновлення 2: Обов'язкове поле порожнє ---
+            elif "необхідно заповнити" in msg or "необхідно вибрати" in msg:
+                # Відновлюємо лише обов'язкові поля (мають '*' у підписі на сайті).
+                # Необов'язкові поля (наприклад, "Тип будинку") пропускаємо.
+                if "*" not in (err.get("field") or ""):
+                    continue
+                field_lower = field.lower().strip()
+
+                # Спеціальний випадок: Вулиця — повторне заповнення + Enter
+                if "вулиця" in field_lower:
+                    addr = offer_data.get("address") or {}
+                    street_raw = addr.get("Вулиця") or addr.get("вулиця")
+                    if street_raw:
+                        street = _strip_street_prefix(str(street_raw))
+                        try:
+                            sec_addr = self._section(root, "Адреса об'єкта")
+                            self._fill_autocomplete(sec_addr, "Вулиця", street, force=True)
+                            # Press Enter to confirm typed value
+                            inp_v = sec_addr.locator(
+                                "xpath=.//label[contains(normalize-space(translate(., '*\u2009', '')), 'Вулиця')]"
+                                "/ancestor::div[contains(@class,'MuiFormControl-root')][1]"
+                                "//input[not(@aria-hidden='true')]"
+                            ).first
+                            if inp_v.count():
+                                try:
+                                    inp_v.press("Enter")
+                                except Exception:
+                                    pass
+                            fixed_any = True
+                            logger.warning("Відновлення: повторне заповнення Вулиця='%s'", street)
+                        except Exception:
+                            logger.warning("Не вдалось повторно заповнити Вулиця", exc_info=True)
+                    continue
+
+                # Загальний випадок: поле є у схемі та offer_data
+                fi = self._schema["label_to_field"].get(field_lower)
+                if fi:
+                    lbl = fi["label"]
+                    val = offer_data.get(lbl)
+                    if val and not self._is_empty_value(val):
+                        widget = self._schema["label_to_widget"].get(field_lower, "text")
+                        try:
+                            logger.warning("Відновлення: повторне заповнення '%s'='%s'", lbl, val)
+                            self._fill_field_from_dict(root, sec, lbl, val, widget)
+                            fixed_any = True
+                        except Exception:
+                            logger.warning(
+                                "Не вдалось повторно заповнити '%s'", lbl, exc_info=True
+                            )
+
+        return fixed_any
 
     def _submit_and_get_report(
         self,
@@ -954,6 +1066,55 @@ class DictOfferFormFiller(
                     logger.warning("Повторне збереження без вулиці не допомогло")
                 except Exception:
                     logger.warning("Не вдалось спробувати повторне збереження", exc_info=True)
+
+            # Generic recovery: attempt to fix remaining errors and retry once
+            remaining = [
+                e for e in report
+                if self.MAP_WRONG_CITY_SUBSTR not in e.get("message", "")
+            ]
+            if remaining:
+                logger.warning(
+                    "Спроба відновлення після помилок валідації (%d помилок)", len(remaining)
+                )
+                try:
+                    root_rec = self._new_offer_root()
+                    recovered = self._attempt_error_recovery(root_rec, remaining)
+                except Exception:
+                    recovered = False
+                if recovered:
+                    try:
+                        self.page.wait_for_timeout(800)
+                    except Exception:
+                        time.sleep(0.8)
+                    retry_btn = self.page.locator(f"button:has-text('{btn_text}')").first
+                    try:
+                        retry_btn.scroll_into_view_if_needed()
+                        retry_btn.click()
+                    except Exception:
+                        pass
+                    try:
+                        self.page.wait_for_url(self.MANAGEMENT_URL_GLOB, timeout=20_000)
+                    except Exception:
+                        pass
+                    if "/offers/management" in (self.page.url or ""):
+                        logger.info("Збереження після відновлення — успішно")
+                        return []
+                    # Collect final report
+                    try:
+                        self.page.wait_for_timeout(900)
+                    except Exception:
+                        pass
+                    root_final = self._new_offer_root()
+                    report = self.collect_validation_report(root_final)
+                    if report:
+                        logger.warning("Залишились помилки валідації після відновлення:")
+                        for err in report:
+                            logger.error(
+                                "  [%s] %s — %s",
+                                err.get("section", ""),
+                                err.get("field", ""),
+                                err.get("message", ""),
+                            )
 
             if raise_on_errors:
                 raise FormValidationError(report)

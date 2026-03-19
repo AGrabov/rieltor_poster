@@ -12,6 +12,26 @@ logger = setup_logger(__name__)
 # House number label (for special digit-matching logic)
 _HOUSE_LABEL = "будинок"
 
+# Ukrainian + Latin vowels used for street stem extraction
+_UA_VOWELS = frozenset("аеєиіїоуюяАЕЄИІЇОУЮЯaeiouyAEIOUY")
+
+
+def _street_search_stem(name: str) -> str:
+    """Return first-syllable stem: consonants + first vowel, stop before second vowel.
+
+    Examples: "Малевича" → "Мале", "Болсунівська" → "Болсу", "Саксаганського" → "Сакса".
+    Minimum 3 chars returned; result is capped at 6 chars.
+    """
+    s = (name or "").strip()
+    vowel_count = 0
+    for i, ch in enumerate(s):
+        if ch in _UA_VOWELS:
+            vowel_count += 1
+            if vowel_count == 2:
+                stem = s[:i]
+                return stem if len(stem) >= 3 else s[:max(i, 3)]
+    return s[:6]
+
 
 class AutocompleteMixin:
     # -------- value detection (skip if already filled) --------
@@ -81,6 +101,7 @@ class AutocompleteMixin:
         allow_single_option: bool = False,
         anchor_box: dict | None = None,
         is_house: bool = False,
+        is_street: bool = False,
     ) -> bool:
         desired = (desired or "").strip()
         if not desired:
@@ -95,6 +116,7 @@ class AutocompleteMixin:
                 const allowSingle = params.allowSingle;
                 const anchor = params.anchor;
                 const isHouse = params.isHouse;
+                const isStreet = params.isStreet;
 
                 const start = Date.now();
                 const norm = (s) => (s || '').replace(/\\s+/g,' ').trim().toLowerCase();
@@ -219,6 +241,31 @@ class AutocompleteMixin:
                     }
                   }
 
+                  // 6) Fuzzy similarity — street fields only (prefix + char-bag)
+                  if (isStreet) {
+                    function fuzzyScore(a, b) {
+                      let pLen = 0;
+                      const minL = Math.min(a.length, b.length);
+                      while (pLen < minL && a[pLen] === b[pLen]) pLen++;
+                      const prefScore = pLen / Math.max(a.length, b.length, 1);
+                      const cnt = {};
+                      for (const c of a) cnt[c] = (cnt[c] || 0) + 1;
+                      let common = 0;
+                      for (const c of b) { if (cnt[c] > 0) { common++; cnt[c]--; } }
+                      const bagScore = common / Math.max(a.length, b.length, 1);
+                      return 0.6 * prefScore + 0.4 * bagScore;
+                    }
+                    let bestScore = 0, bestOpt = null;
+                    for (const o of opts) {
+                      const oFirstWord = o.n.split(/\s+/)[0];
+                      const score = fuzzyScore(d, oFirstWord);
+                      if (score > bestScore) { bestScore = score; bestOpt = o; }
+                    }
+                    if (bestScore >= 0.60 && bestOpt) {
+                      return mkResult(bestOpt, 'fuzzy_' + bestScore.toFixed(2), opts.length);
+                    }
+                  }
+
                   if (allowSingle && opts.length === 1) {
                     return mkResult(opts[0], 'single', 1);
                   }
@@ -243,6 +290,7 @@ class AutocompleteMixin:
                 "allowSingle": allow_single_option,
                 "anchor": anchor_box,
                 "isHouse": is_house,
+                "isStreet": is_street,
             },
         )
 
@@ -314,6 +362,8 @@ class AutocompleteMixin:
         allow_single_option: bool = False,
         allow_free_text: bool = False,
         is_house: bool = False,
+        is_address: bool = False,
+        is_street: bool = False,
     ) -> bool:
         desired = (desired_text or "").strip()
 
@@ -334,6 +384,7 @@ class AutocompleteMixin:
             allow_single_option=allow_single_option,
             anchor_box=anchor,
             is_house=is_house,
+            is_street=is_street,
         )
 
         if not picked:
@@ -348,6 +399,10 @@ class AutocompleteMixin:
                         desired,
                         cur,
                     )
+                    try:
+                        inp.press("Enter")
+                    except Exception:
+                        pass
                     return True
             return False
 
@@ -379,6 +434,18 @@ class AutocompleteMixin:
         if allow_free_text and closed:
             logger.debug(
                 "Autocomplete вважається успішним через закриття списку (вільний текст). desired='%s' current='%s'",
+                desired,
+                cur,
+            )
+            return True
+
+        # For address fields: if the dropdown closed after our mouse-click, accept the
+        # selection even when the input value differs from desired (e.g. "Болсунівська" →
+        # site shows "Болсуновська вул." — slightly different spelling but valid selection).
+        if is_address and closed:
+            logger.debug(
+                "Autocomplete прийнято через закриття списку (адресне поле). "
+                "closed=True desired='%s' current='%s'",
                 desired,
                 cur,
             )
@@ -579,6 +646,8 @@ class AutocompleteMixin:
             except Exception:
                 pass
 
+        is_street = key_lower == "вулиця"
+
         def _try_pick() -> bool:
             allow_single = is_address
             allow_free = is_house
@@ -590,7 +659,27 @@ class AutocompleteMixin:
                 allow_single_option=allow_single,
                 allow_free_text=allow_free,
                 is_house=is_house,
+                is_address=is_address,
+                is_street=is_street,
             )
+
+        # For street fields: first try a short stem to get broader server suggestions,
+        # then fall through to full-name attempt if stem pick fails.
+        if is_street and not _is_readonly:
+            stem = _street_search_stem(desired)
+            if stem and stem != desired:
+                logger.debug("Вулиця: введення стему '%s' замість повного '%s'", stem, desired)
+                try:
+                    inp.click()
+                    inp.fill("")
+                    inp.type(stem, delay=30)
+                    self.page.wait_for_timeout(1000)
+                except Exception:
+                    pass
+                if _try_pick():
+                    self._mark_touched(inp)
+                    return
+                # Stem pick failed — clear before full-name attempt below
 
         # First attempt: type digits only (for house) or full text
         _clear_and_type()
@@ -662,6 +751,13 @@ class AutocompleteMixin:
             next_key,
             cur,
         )
+        # For address/house fields: press Enter to commit whatever is typed.
+        # Better to have an unconfirmed-but-typed value than an empty field.
+        if is_address or is_house:
+            try:
+                inp.press("Enter")
+            except Exception:
+                pass
 
     def _fill_autocomplete_multi(self, section: Locator, key: str, values: Sequence[str]) -> None:
         label = self._expected_label(key) or key
