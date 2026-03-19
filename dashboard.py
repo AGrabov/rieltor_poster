@@ -85,18 +85,24 @@ def stop_proc(proc: subprocess.Popen | None) -> None:
             pass
 
 
-def launch(cmd: list[str]) -> subprocess.Popen:
+LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"]
+
+
+def launch(cmd: list[str], log_level: str = "INFO") -> subprocess.Popen:
+    env = {**os.environ, "LOG_LEVEL": log_level}
     return subprocess.Popen(
         cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         cwd=str(Path(__file__).parent),
+        env=env,
     )
 
 
 def build_collect_cmd(
     max_pages: int | None,
     max_count: int | None,
+    headless: bool = True,
     property_type: str | None = None,
     deal_type: str | None = None,
 ) -> list[str]:
@@ -109,12 +115,15 @@ def build_collect_cmd(
         cmd += ["--deal-type", deal_type]
     if property_type:
         cmd += ["--property-type", property_type]
+    if headless:
+        cmd += ["--headless"]
     return cmd
 
 
 def build_post_cmd(
     publish: bool,
     max_count: int | None,
+    headless: bool = True,
     property_type: str | None = None,
     deal_type: str | None = None,
 ) -> list[str]:
@@ -127,6 +136,8 @@ def build_post_cmd(
         cmd += ["--deal-type", deal_type]
     if property_type:
         cmd += ["--property-type", property_type]
+    if headless:
+        cmd += ["--headless"]
     return cmd
 
 
@@ -140,6 +151,10 @@ if "schema_proc" not in st.session_state:
     st.session_state.schema_proc = None
 if "cadastral_proc" not in st.session_state:
     st.session_state.cadastral_proc = None
+if "headless" not in st.session_state:
+    st.session_state.headless = True
+if "log_level" not in st.session_state:
+    st.session_state.log_level = "INFO"
 
 
 # ── Заголовок ─────────────────────────────────────────────────────────
@@ -164,6 +179,19 @@ left, right = st.columns([1, 2], gap="large")
 # ── Статистика ────────────────────────────────────────────────────────
 
 with left:
+    st.subheader("Налаштування")
+    with st.container(border=True):
+        st.session_state.headless = st.toggle(
+            "Headless (браузер без UI)",
+            value=st.session_state.headless,
+            help="Увімкнено — браузер не відображається. Вимкніть для відлагодження.",
+        )
+        st.session_state.log_level = st.selectbox(
+            "Рівень логування",
+            options=LOG_LEVELS,
+            index=LOG_LEVELS.index(st.session_state.log_level),
+        )
+
     st.subheader("Статистика")
     summary = get_summary()
     total = sum(summary.values())
@@ -222,12 +250,16 @@ with right:
         )
 
         if collect_btn:
-            st.session_state.collect_proc = launch(build_collect_cmd(
-                max_pages or None,
-                max_count_c or None,
-                property_type=collect_property_type if collect_property_type != "Всі" else None,
-                deal_type=collect_deal_type if collect_deal_type != "Всі" else None,
-            ))
+            st.session_state.collect_proc = launch(
+                build_collect_cmd(
+                    max_pages or None,
+                    max_count_c or None,
+                    headless=st.session_state.headless,
+                    property_type=collect_property_type if collect_property_type != "Всі" else None,
+                    deal_type=collect_deal_type if collect_deal_type != "Всі" else None,
+                ),
+                log_level=st.session_state.log_level,
+            )
             st.toast("Збір запущено!", icon="▶")
 
         if proc_is_running(st.session_state.collect_proc):
@@ -284,12 +316,16 @@ with right:
         )
 
         if post_btn:
-            st.session_state.post_proc = launch(build_post_cmd(
-                publish,
-                max_count_p or None,
-                property_type=post_property_type if post_property_type != "Всі" else None,
-                deal_type=post_deal_type if post_deal_type != "Всі" else None,
-            ))
+            st.session_state.post_proc = launch(
+                build_post_cmd(
+                    publish,
+                    max_count_p or None,
+                    headless=st.session_state.headless,
+                    property_type=post_property_type if post_property_type != "Всі" else None,
+                    deal_type=post_deal_type if post_deal_type != "Всі" else None,
+                ),
+                log_level=st.session_state.log_level,
+            )
             st.toast("Публікацію запущено!", icon="▶")
 
         if proc_is_running(st.session_state.post_proc):
@@ -332,7 +368,7 @@ with right:
             cmd = ["uv", "run", "python", "main.py", "cadastral"]
             if max_count_cad:
                 cmd += ["--max-count", str(max_count_cad)]
-            st.session_state.cadastral_proc = launch(cmd)
+            st.session_state.cadastral_proc = launch(cmd, log_level=st.session_state.log_level)
             st.toast("Пошук кадастрових номерів запущено!", icon="🗺")
 
         if proc_is_running(st.session_state.cadastral_proc):
@@ -366,7 +402,10 @@ with right:
             )
 
         if schema_btn:
-            st.session_state.schema_proc = launch(["uv", "run", "python", "rieltor_handler/run_schema_collection.py"])
+            st.session_state.schema_proc = launch(
+                ["uv", "run", "python", "rieltor_handler/run_schema_collection.py"],
+                log_level=st.session_state.log_level,
+            )
             st.toast("Збір схем запущено!", icon="🔄")
 
         if proc_is_running(st.session_state.schema_proc):

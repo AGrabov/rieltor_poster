@@ -351,12 +351,19 @@ class DictOfferFormFiller(
             url = self.page.url or ""
             if "/error" in url or "/404" in url:
                 return True
-            if self.page.locator('img[alt="404 bot"]').count() > 0:
+            # The error page always shows a "На головну" button — most reliable indicator.
+            if self.page.locator("button:has-text('На головну')").count() > 0:
                 return True
-            # Check for the error heading text (case-insensitive substring match)
-            for text in ("Щось пішло не так", "Something went wrong", "404"):
-                if self.page.get_by_text(text, exact=False).count() > 0:
+            # Also catch the 404 image alt attribute.
+            if self.page.locator('[alt="404 bot"]').count() > 0:
+                return True
+            # Fallback: scan raw page text (handles React multi-node text rendering).
+            try:
+                content = self.page.content()
+                if "Щось пішло не так" in content or "404 bot" in content:
                     return True
+            except Exception:
+                pass
             return False
         except Exception:
             return False
@@ -441,6 +448,9 @@ class DictOfferFormFiller(
             self._fill_address_from_dict(root, address_data)
             state["address_filled"] = True
 
+        # Check after address fill — server errors sometimes surface here.
+        self._raise_if_error_page()
+
         # ── Phase 2: all remaining fields ──
         for key, value in offer_data.items():
             if self._is_empty_value(value):
@@ -455,6 +465,7 @@ class DictOfferFormFiller(
                 if not state["photos_filled"]:
                     self._fill_photos_from_dict(root, offer_data)
                     state["photos_filled"] = True
+                    self._raise_if_error_page()
                 continue
 
             # ── Special: personal_notes ──
