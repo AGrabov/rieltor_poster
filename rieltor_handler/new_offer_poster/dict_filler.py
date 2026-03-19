@@ -390,9 +390,11 @@ class DictOfferFormFiller(
             section = self._schema["label_to_section"].get(label_lower, "")
             widget = self._schema["label_to_widget"].get(label_lower, field_info.get("widget", "text"))
 
-            # Open "Додаткові параметри" if needed (lazy, once)
+            # Open "Додаткові параметри" if needed (lazy, once).
+            # Triggered for: fields in "Інформація про об'єкт" with index ≥ 16
+            # AND for fields whose schema section is literally "Додаткові параметри".
             if not state["additional_opened"] and "Додаткові параметри" in self._schema["navigation"]:
-                if self._is_additional_param(field_info):
+                if self._is_additional_param(field_info) or section == "Додаткові параметри":
                     self._click_section_toggle(root, "Додаткові параметри")
                     state["additional_opened"] = True
 
@@ -507,6 +509,14 @@ class DictOfferFormFiller(
             if isinstance(value, bool):
                 value = "Є" if value else "Немає"
             elif isinstance(value, list):
+                if len(value) > 1:
+                    # Multi-value: open listbox once and select all items at once
+                    items = [
+                        _SELECT_VALUE_MAP.get(self._to_text(v).lower().strip(), self._to_text(v))
+                        for v in value
+                    ]
+                    self._open_checklist_and_check(root, section, key, items)
+                    return
                 value = value[0] if value else ""
             # Normalize known CRM-specific values to Rieltor equivalents
             value_str = self._to_text(value)
@@ -760,21 +770,24 @@ class DictOfferFormFiller(
                     └── MuiFormControl-root
                           └── radiogroup
         """
-        try:
-            sec = self._section(root, "Основні параметри")
-        except Exception:
-            logger.warning("Не вдалось знайти секцію 'Основні параметри' для радіокнопки комісії")
-            return
-
         lit = self._xpath_literal(label)
-        # Find the outer MuiBox-root that contains both the <p> label and a radiogroup
-        wrapper = sec.locator(
-            f"xpath=.//div[contains(@class,'MuiBox-root')]"
-            f"[.//p[contains(normalize-space(.), {lit})]]"
-            f"[.//div[@role='radiogroup']]"
-        ).first
+        # Search "Основні параметри" (Комерційна) then "Цінові параметри" (Квартира)
+        wrapper = None
+        for section_name in ("Основні параметри", "Цінові параметри"):
+            try:
+                sec = self._section(root, section_name)
+            except Exception:
+                continue
+            candidate = sec.locator(
+                f"xpath=.//div[contains(@class,'MuiBox-root')]"
+                f"[.//p[contains(normalize-space(.), {lit})]]"
+                f"[.//div[@role='radiogroup']]"
+            ).first
+            if candidate.count() > 0:
+                wrapper = candidate
+                break
 
-        if wrapper.count() == 0:
+        if wrapper is None or wrapper.count() == 0:
             logger.warning("Обгортку радіокнопки комісії не знайдено для '%s'", label)
             return
 

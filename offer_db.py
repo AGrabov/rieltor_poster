@@ -223,8 +223,10 @@ class OfferDB:
         params: list = []
         if property_types:
             placeholders = ", ".join("?" * len(property_types))
-            query += f" AND LOWER(property_type) IN ({placeholders})"
-            params.extend(pt.lower() for pt in property_types)
+            # SQLite LOWER() is ASCII-only — Cyrillic stays uppercase.
+            # Compare as-is (property_type stores title-case schema names).
+            query += f" AND property_type IN ({placeholders})"
+            params.extend(property_types)
         query += " ORDER BY id"
         rows = self.conn.execute(query, params).fetchall()
         return [_row_to_record(r) for r in rows]
