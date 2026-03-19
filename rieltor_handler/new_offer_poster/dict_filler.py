@@ -584,6 +584,7 @@ class DictOfferFormFiller(
         region = _get("Область")
         subway = _get("Метро")
         guide = _get("Орієнтир")
+        cadastral = _get("Кадастровий номер")
 
         if not house:
             logger.warning(
@@ -691,6 +692,20 @@ class DictOfferFormFiller(
         if guide:
             items = guide if isinstance(guide, (list, tuple)) else [guide]
             self._fill_autocomplete_multi(sec, "Орієнтир", [str(v) for v in items])
+
+        # 7) Cadastral number — plain text input, name="cadastralNumber"
+        if cadastral:
+            cadnum_str = str(cadastral).strip()
+            try:
+                inp = sec.locator("css=input[name='cadastralNumber']").first
+                if inp.count():
+                    inp.click()
+                    inp.fill(cadnum_str)
+                    logger.info("Кадастровий номер заповнено: %s", cadnum_str)
+                else:
+                    logger.warning("Поле 'cadastralNumber' не знайдено в адресній секції")
+            except Exception:
+                logger.exception("Помилка заповнення кадастрового номера '%s'", cadnum_str)
 
     def _handle_map_error(self, root: Locator, address_data: dict) -> None:
         """Обробляє помилку піна карти — спроба прив'язати пін повторним вибором номера будинку."""
