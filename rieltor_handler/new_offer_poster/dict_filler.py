@@ -400,6 +400,19 @@ class DictOfferFormFiller(
 
             self._fill_field_from_dict(root, section, key, value, widget)
 
+        # ── Fill "Опис" as a regular schema field when it lives outside the photo section.
+        # For Квартира/Будинок it's inside "Опис, фотографії, відеотур" (handled by photos).
+        # For Комерційна/Кімната/Ділянка/Паркомісце it's in "Інформація про об'єкт" and
+        # must be filled here — _fill_photos_from_dict can't reach it.
+        _desc_field = self._schema["label_to_field"].get("опис")
+        if _desc_field:
+            _desc_section = self._schema["label_to_section"].get("опис", "")
+            if _desc_section not in _PHOTO_SECTION_NAMES:
+                _desc_text = ((offer_data.get("apartment") or {}).get("description") or "").strip()
+                if _desc_text:
+                    logger.debug("Опис як звичайне поле (секція '%s')", _desc_section)
+                    self._fill_field_from_dict(root, _desc_section, "Опис", _desc_text, "multiline_text")
+
         # Map error handling (only if address was filled)
         if state["address_filled"] and self._map_error_visible():
             self._handle_map_error(root, offer_data.get("address", {}))

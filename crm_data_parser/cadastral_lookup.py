@@ -11,7 +11,8 @@ from setup_logger import setup_logger
 
 logger = setup_logger(__name__)
 
-_CADNUM_RE = re.compile(r"^\d{10}:\d{2}:\d{3}:\d{4}$")
+_CADNUM_RE = re.compile(r"^\d{10}:\d{2}:\d{3}:\d{4}$")  # full-string match (for API results)
+_CADNUM_IN_TEXT_RE = re.compile(r"\d{10}:\d{2}:\d{3}:\d{4}")  # substring search (for descriptions)
 _SEARCH_URL = "https://kadastr.live/search/{}/"
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; rieltor-bot/1.0)"}
 _KK_SEARCH_URL = "https://kadastrova-karta.com/search"
@@ -224,6 +225,23 @@ def enrich_offer_data_with_cadastral(offer_data: dict) -> bool:
     address = offer_data.get("address") or {}
     if address.get("Кадастровий номер"):
         return False
+
+    # ── Крок 0: шукаємо кадастровий номер у тексті опису/нотаток ──────
+    _texts = [
+        (offer_data.get("apartment") or {}).get("description") or "",
+        offer_data.get("personal_notes") or "",
+    ]
+    for _text in _texts:
+        _match = _CADNUM_IN_TEXT_RE.search(_text)
+        if _match:
+            cadnum = _match.group()
+            offer_data.setdefault("address", {})["Кадастровий номер"] = cadnum
+            logger.info(
+                "Кадастровий номер знайдено в описі для %s: %s",
+                offer_data.get("article") or offer_data.get("property_type", "?"),
+                cadnum,
+            )
+            return True
 
     cadnum = lookup_cadastral_number(
         city=address.get("Місто") or "",
