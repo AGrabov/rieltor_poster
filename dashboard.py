@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from collections import deque
@@ -60,6 +61,28 @@ def read_log_tail(n: int = LOG_TAIL) -> str:
 
 def proc_is_running(proc: subprocess.Popen | None) -> bool:
     return proc is not None and proc.poll() is None
+
+
+def stop_proc(proc: subprocess.Popen | None) -> None:
+    """Kill the process and all its children (cross-platform)."""
+    if not proc or proc.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            import signal
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except Exception:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
 
 
 def launch(cmd: list[str]) -> subprocess.Popen:
@@ -208,7 +231,14 @@ with right:
             st.toast("Збір запущено!", icon="▶")
 
         if proc_is_running(st.session_state.collect_proc):
-            st.info("⏳ Збір виконується...")
+            _col_info, _col_stop = st.columns([3, 1])
+            with _col_info:
+                st.info("⏳ Збір виконується...")
+            with _col_stop:
+                if st.button("⏹ Зупинити", key="stop_collect", use_container_width=True):
+                    stop_proc(st.session_state.collect_proc)
+                    st.toast("Збір зупинено", icon="⏹")
+                    st.rerun()
         elif st.session_state.collect_proc is not None:
             rc = st.session_state.collect_proc.returncode
             if rc == 0:
@@ -263,7 +293,14 @@ with right:
             st.toast("Публікацію запущено!", icon="▶")
 
         if proc_is_running(st.session_state.post_proc):
-            st.info("⏳ Публікація виконується...")
+            _col_info, _col_stop = st.columns([3, 1])
+            with _col_info:
+                st.info("⏳ Публікація виконується...")
+            with _col_stop:
+                if st.button("⏹ Зупинити", key="stop_post", use_container_width=True):
+                    stop_proc(st.session_state.post_proc)
+                    st.toast("Публікацію зупинено", icon="⏹")
+                    st.rerun()
         elif st.session_state.post_proc is not None:
             rc = st.session_state.post_proc.returncode
             if rc == 0:
@@ -299,7 +336,14 @@ with right:
             st.toast("Пошук кадастрових номерів запущено!", icon="🗺")
 
         if proc_is_running(st.session_state.cadastral_proc):
-            st.info("⏳ Пошук кадастрових номерів виконується...")
+            _col_info, _col_stop = st.columns([3, 1])
+            with _col_info:
+                st.info("⏳ Пошук кадастрових номерів виконується...")
+            with _col_stop:
+                if st.button("⏹ Зупинити", key="stop_cadastral", use_container_width=True):
+                    stop_proc(st.session_state.cadastral_proc)
+                    st.toast("Пошук зупинено", icon="⏹")
+                    st.rerun()
         elif st.session_state.cadastral_proc is not None:
             rc = st.session_state.cadastral_proc.returncode
             if rc == 0:
@@ -326,7 +370,14 @@ with right:
             st.toast("Збір схем запущено!", icon="🔄")
 
         if proc_is_running(st.session_state.schema_proc):
-            st.info("⏳ Збір схем виконується (це може зайняти кілька хвилин)...")
+            _col_info, _col_stop = st.columns([3, 1])
+            with _col_info:
+                st.info("⏳ Збір схем виконується (це може зайняти кілька хвилин)...")
+            with _col_stop:
+                if st.button("⏹ Зупинити", key="stop_schema", use_container_width=True):
+                    stop_proc(st.session_state.schema_proc)
+                    st.toast("Збір схем зупинено", icon="⏹")
+                    st.rerun()
         elif st.session_state.schema_proc is not None:
             rc = st.session_state.schema_proc.returncode
             if rc == 0:
