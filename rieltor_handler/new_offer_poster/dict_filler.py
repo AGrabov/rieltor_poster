@@ -185,9 +185,17 @@ class DictOfferFormFiller(
                 applied.append(f"{fi['label']}='1' (placeholder — уточніть у CRM)")
                 break
 
-        # 5) "Тип будинку" — не встановлюємо дефолт, бо жодне типове значення ('Будинок' тощо)
-        #    не входить до переліку сайту ('Чеський проект', 'Сталінка', 'Хрущівка' тощо).
-        #    Поле необов'язкове; якщо CRM не передав значення — залишаємо порожнім.
+        # 5) "Тип будинку" — default to "Будинок" for Будинок property type when absent.
+        #    The site's list includes "Будинок" as a valid option (confirmed in schema).
+        fi = self._schema["label_to_field"].get("тип будинку")
+        if fi and fi["label"] not in offer_data:
+            if str(self.property_type).lower() in ("будинок", "таунхаус", "котедж"):
+                options = fi.get("options", [])
+                default_house_type = "Будинок" if not options else next(
+                    (o for o in options if "будинок" in o.lower()), options[0] if options else "Будинок"
+                )
+                offer_data[fi["label"]] = default_house_type
+                applied.append(f"{fi['label']}='{default_house_type}' (default)")
 
         # 6) "Поверховість" — default to 2 when absent; cap at 50 (site limit)
         fi = self._schema["label_to_field"].get("поверховість")
@@ -231,8 +239,24 @@ class DictOfferFormFiller(
                             kitchen_est = 25
                         else:
                             kitchen_est = 30
-                        offer_data[kitchen_lbl] = str(kitchen_est)
-                        applied.append(f"{kitchen_lbl}='{kitchen_est}' (оцінено із {total_lbl}={total_f})")
+                        # Cap kitchen so total >= living + kitchen (avoid "сума площ" validation error)
+                        if fi_living:
+                            _living_lbl = fi_living["label"]
+                            if _living_lbl in offer_data:
+                                try:
+                                    _living_f = float(offer_data[_living_lbl])
+                                    _max_kitchen = total_f - _living_f - 1
+                                    if kitchen_est > _max_kitchen:
+                                        kitchen_est = max(1, int(_max_kitchen))
+                                        applied.append(
+                                            f"{kitchen_lbl}: обрізано до {kitchen_est} "
+                                            f"(загальна={total_f}, житлова={_living_f})"
+                                        )
+                                except (ValueError, TypeError):
+                                    pass
+                        if kitchen_est > 0:
+                            offer_data[kitchen_lbl] = str(kitchen_est)
+                            applied.append(f"{kitchen_lbl}='{kitchen_est}' (оцінено із {total_lbl}={total_f})")
                     except (ValueError, TypeError):
                         pass
             if fi_living and fi_kitchen and fi_total:
@@ -248,14 +272,54 @@ class DictOfferFormFiller(
                     except (ValueError, TypeError):
                         pass
 
-        # Warn when "Число кімнат" is absent for Квартира — cannot safely guess the value
+        # Estimate "Число кімнат" from area when absent for Квартира/Будинок
         fi_rooms = self._schema["label_to_field"].get("число кімнат")
         if fi_rooms and fi_rooms["label"] not in offer_data:
-            if self.property_type.lower() == "квартира":
-                logger.warning(
-                    "Відсутнє поле '%s' для Квартири — форма може не пройти валідацію",
-                    fi_rooms["label"],
-                )
+            _pt = self.property_type.lower()
+            if _pt in ("квартира", "будинок", "таунхаус", "котедж"):
+                fi_total = self._schema["label_to_field"].get("загальна площа, м²")
+                fi_living = self._schema["label_to_field"].get("житлова площа, м²")
+                _area_lbl = None
+                _area_val = None
+                for _fi in (fi_total, fi_living):
+                    if _fi and _fi["label"] in offer_data:
+                        try:
+                            _area_val = float(offer_data[_fi["label"]])
+                            _area_lbl = _fi["label"]
+                            break
+                        except (ValueError, TypeError):
+                            pass
+                if _area_val is not None:
+                    if _area_val <= 35:
+                        rooms_default = "1 кімната"
+                    elif _area_val <= 55:
+                        rooms_default = "2 кімнати"
+                    elif _area_val <= 80:
+                        rooms_default = "3 кімнати"
+                    elif _area_val <= 100:
+                        rooms_default = "4 кімнати"
+                    elif _area_val <= 150:
+                        rooms_default = "5 кімнат"
+                    else:
+                        rooms_default = "6 кімнат і більше"
+                    # Align with schema options if available
+                    options = fi_rooms.get("options", [])
+                    if options and rooms_default not in options:
+                        num = rooms_default.split()[0]
+                        for opt in options:
+                            if num in opt:
+                                rooms_default = opt
+                                break
+                    offer_data[fi_rooms["label"]] = rooms_default
+                    applied.append(
+                        f"{fi_rooms['label']}='{rooms_default}' (оцінено з {_area_lbl}={_area_val})"
+                    )
+                else:
+                    logger.warning(
+                        "Відсутнє поле '%s' для %s — форма може не пройти валідацію",
+                        fi_rooms["label"],
+                        self.property_type,
+                    )
 
         if applied:
             logger.info("Значення за замовчуванням: %s", applied)
@@ -284,10 +348,16 @@ class DictOfferFormFiller(
     def _is_error_page(self) -> bool:
         """Перевіряє, чи поточна сторінка є сторінкою помилки ('Щось пішло не так')."""
         try:
-            return (
-                self.page.locator('img[alt="404 bot"]').count() > 0
-                or self.page.locator("text=Щось пішло не так").count() > 0
-            )
+            url = self.page.url or ""
+            if "/error" in url or "/404" in url:
+                return True
+            if self.page.locator('img[alt="404 bot"]').count() > 0:
+                return True
+            # Check for the error heading text (case-insensitive substring match)
+            for text in ("Щось пішло не так", "Something went wrong", "404"):
+                if self.page.get_by_text(text, exact=False).count() > 0:
+                    return True
+            return False
         except Exception:
             return False
 
@@ -310,12 +380,14 @@ class DictOfferFormFiller(
 
     def open(self) -> None:
         """Відкриває сторінку створення оголошення."""
-        # Clear localStorage to prevent the site from restoring the previous offer's draft.
-        # Auth is stored in cookies on rieltor.ua, so clearing localStorage is safe.
+        # Strategy: navigate → clear storage → reload so React starts with empty storage.
+        # Auth is stored in cookies on rieltor.ua, so clearing localStorage/sessionStorage is safe.
+        self.page.goto(self.CREATE_URL, wait_until="domcontentloaded")
         try:
-            self.page.evaluate("() => window.localStorage.clear()")
+            self.page.evaluate("() => { window.localStorage.clear(); window.sessionStorage.clear(); }")
         except Exception:
             pass
+        # Reload so the React app initialises with empty storage (no draft restore).
         self.page.goto(self.CREATE_URL, wait_until="domcontentloaded")
         self._raise_if_error_page()
         # Wait for MUI to fully render (h6 sections + card buttons)
@@ -488,6 +560,14 @@ class DictOfferFormFiller(
         widget: str | None,
     ) -> None:
         """Заповнює одне поле за допомогою обробника, специфічного для типу віджету."""
+        # "Котеджне містечко" — autocomplete (dropdown shows "КМ <назва>" items),
+        # but the schema records it as widget="text". Force autocomplete handling.
+        if key.lower().strip() == "котеджне містечко":
+            sec = self._section(root, section)
+            desired = self._to_text(value)
+            self._fill_autocomplete(sec, key, desired)
+            return
+
         # Спеціальний випадок: "Комісія з покупця/орендатора" — радіокнопка (Є/Немає),
         # а не MUI Select. Схема може неправильно визначити widget="select" через сусідній
         # dropdown валюти, тому перехоплюємо до загальної диспетчеризації.
@@ -709,7 +789,16 @@ class DictOfferFormFiller(
 
         # 7) Cadastral number — plain text input, name="cadastralNumber"
         if cadastral:
+            import re as _re
             cadnum_str = str(cadastral).strip()
+            _CADNUM_RE = _re.compile(r"^\d{10}:\d{2}:\d{3}:\d{4}$")
+            if not _CADNUM_RE.match(cadnum_str):
+                logger.warning(
+                    "Кадастровий номер '%s' не відповідає формату XXXXXXXXXX:XX:XXX:XXXX — пропуск",
+                    cadnum_str,
+                )
+                cadnum_str = None
+        if cadastral and cadnum_str:
             try:
                 inp = sec.locator("css=input[name='cadastralNumber']").first
                 if inp.count():

@@ -1185,12 +1185,23 @@ class HTMLOfferParser:
                         kitchen_est = 25
                     else:
                         kitchen_est = 30
-                    data["Площа кухні, м²"] = str(kitchen_est)
-                    logger.debug(
-                        "Площа кухні оцінена за замовчуванням: %s м² (загальна=%.1f)",
-                        kitchen_est,
-                        total_f,
-                    )
+                    # Cap kitchen so total >= living + kitchen (avoid "сума площ" validation error)
+                    living_raw = data.get("Житлова площа, м²")
+                    if living_raw:
+                        try:
+                            living_f = float(living_raw)
+                            max_kitchen = total_f - living_f - 1
+                            if kitchen_est > max_kitchen:
+                                kitchen_est = max(1, int(max_kitchen))
+                        except (ValueError, TypeError):
+                            pass
+                    if kitchen_est > 0:
+                        data["Площа кухні, м²"] = str(kitchen_est)
+                        logger.debug(
+                            "Площа кухні оцінена за замовчуванням: %s м² (загальна=%.1f)",
+                            kitchen_est,
+                            total_f,
+                        )
                 except (ValueError, TypeError):
                     pass
 
@@ -1209,10 +1220,10 @@ class HTMLOfferParser:
                     pass
 
         # Fallback: estimate room count from total/living area when missing.
-        # Only for Квартира — it has "Число кімнат" as a required field.
+        # Applies to Квартира and Будинок — both have "Число кімнат" as a required select.
         if (
             not data.get("Число кімнат")
-            and str(data.get("property_type", "")).lower() == "квартира"
+            and str(data.get("property_type", "")).lower() in ("квартира", "будинок", "таунхаус", "котедж")
         ):
             area_raw = data.get("Загальна площа, м²") or data.get("Житлова площа, м²")
             if area_raw:
@@ -1226,8 +1237,10 @@ class HTMLOfferParser:
                         rooms = "3 кімнати"
                     elif area <= 100:
                         rooms = "4 кімнати"
-                    else:
+                    elif area <= 150:
                         rooms = "5 кімнат"
+                    else:
+                        rooms = "6 кімнат і більше"
                     # Align with schema options if available
                     field_info = self.label_to_field.get("число кімнат")
                     if field_info:

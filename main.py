@@ -266,6 +266,71 @@ def phase1_collect(
     return saved
 
 
+# ── Photo helpers ────────────────────────────────────────────────────
+
+
+def _photos_missing(offer_data: dict) -> bool:
+    """True if local photo files for this offer are absent or don't exist on disk."""
+    photos = (offer_data.get("apartment") or {}).get("photos", [])
+    if not photos:
+        return True
+    return not any(Path(p).exists() for p in photos if isinstance(p, str))
+
+
+def _redownload_missing_photos(offers: list, db, headless: bool, debug: bool) -> None:
+    """Re-download photos via CRM for offers whose local files are missing.
+
+    Opens a single CRM session for the whole batch (if credentials are set).
+    Updates offer_data and DB in place.
+    """
+    needing = [
+        o for o in offers
+        if _photos_missing(o.offer_data) and o.offer_data.get("photo_download_link")
+    ]
+    if not needing:
+        return
+
+    crm_email = os.environ.get("CRM_EMAIL", "").strip()
+    crm_password = os.environ.get("CRM_PASSWORD", "").strip()
+    if not crm_email or not crm_password:
+        logger.warning(
+            "Фото відсутні для %d об'єктів, але CRM_EMAIL/CRM_PASSWORD не задані — пропуск",
+            len(needing),
+        )
+        return
+
+    from crm_data_parser import (
+        CrmCredentials,
+        CrmSession,
+        download_estate_photos,
+        download_watermark_zip,
+    )
+
+    logger.info("Перезавантаження фото для %d об'єктів через CRM...", len(needing))
+    crm_creds = CrmCredentials(email=crm_email, password=crm_password)
+    with CrmSession(crm_creds, headless=headless, debug=debug) as crm:
+        crm.login()
+        for offer in needing:
+            article = offer.article or str(offer.estate_id)
+            offer_data = offer.offer_data
+            photo_dl_link = offer_data.get("photo_download_link")
+            local_paths = download_watermark_zip(crm.page, photo_dl_link, article)
+            if not local_paths:
+                # Fallback: try individual URLs (only works if they weren't overwritten)
+                photo_urls = [
+                    p for p in (offer_data.get("apartment") or {}).get("photos", [])
+                    if isinstance(p, str) and p.startswith("http")
+                ]
+                if photo_urls:
+                    local_paths = download_estate_photos(crm.page, photo_urls, article)
+            if local_paths:
+                offer_data.setdefault("apartment", {})["photos"] = local_paths
+                db.update_offer_data(offer.estate_id, offer_data)
+                logger.info("Перезавантажено %d фото для %s", len(local_paths), article)
+            else:
+                logger.warning("Не вдалось перезавантажити фото для %s", article)
+
+
 # ── Phase 2: Rieltor posting ────────────────────────────────────────
 
 
@@ -311,6 +376,9 @@ def phase2_post(
         if not offers:
             logger.info("Необроблених оголошень у БД не знайдено")
             return 0
+
+        # Pre-flight: re-download photos that were deleted / never saved locally
+        _redownload_missing_photos(offers, db, headless=headless, debug=debug)
 
         logger.info("Знайдено %d необроблених оголошень для публікації", len(offers))
 
