@@ -17,6 +17,31 @@ _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; rieltor-bot/1.0)"}
 # Schema types (rieltor.ua) that have a "Кадастровий номер" field
 _CADASTRAL_SCHEMA_TYPES = frozenset({"будинок", "ділянка", "комерційна"})
 
+# Street-type prefixes to strip before querying (Ukrainian abbreviations + full forms)
+_STREET_PREFIX_RE = re.compile(
+    r"^\s*("
+    r"вул(?:иця)?\.?\s*|"
+    r"пр(?:-т|осп(?:ект)?)?\.?\s*|"
+    r"бул(?:ьвар)?\.?\s*|"
+    r"пров(?:улок)?\.?\s*|"
+    r"пл(?:оща)?\.?\s*|"
+    r"шос(?:е)?\.?\s*|"
+    r"наб(?:ережна)?\.?\s*|"
+    r"туп(?:ик)?\.?\s*|"
+    r"дор(?:ога)?\.?\s*|"
+    r"мікрор(?:айон)?\.?\s*|"
+    r"мкр\.?\s*|"
+    r"кв-л\.?\s*|"
+    r"кварт(?:ал)?\.?\s*"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _strip_street_prefix(street: str) -> str:
+    """Прибрати скорочення типу вулиці ('вул.', 'пр-т', 'бул.' тощо)."""
+    return _STREET_PREFIX_RE.sub("", street).strip()
+
 
 def lookup_cadastral_number(city: str, street: str, house: str) -> str | None:
     """Знайти кадастровий номер ділянки за адресою через kadastr.live.
@@ -29,7 +54,7 @@ def lookup_cadastral_number(city: str, street: str, house: str) -> str | None:
     Returns:
         Рядок у форматі ``XXXXXXXXXX:XX:XXX:XXXX`` або ``None``, якщо не знайдено.
     """
-    parts = [p.strip() for p in [city, street, house] if p and p.strip()]
+    parts = [p.strip() for p in [city, _strip_street_prefix(street), house] if p and p.strip()]
     if not parts:
         return None
     query = " ".join(parts)

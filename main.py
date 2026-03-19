@@ -433,18 +433,14 @@ def phase_cadastral(max_count: int | None = None) -> int:
         Кількість записів, для яких знайдено та збережено номер.
     """
     from crm_data_parser.cadastral_lookup import enrich_offer_data_with_cadastral
-    from crm_data_parser.html_parser import CRM_TYPE_TO_SCHEMA
     from offer_db import OfferDB
 
-    _CADASTRAL_SCHEMA_TYPES = frozenset({"будинок", "ділянка", "комерційна"})
-    cadastral_crm_types = [
-        crm for crm, schema in CRM_TYPE_TO_SCHEMA.items()
-        if schema.lower() in _CADASTRAL_SCHEMA_TYPES
-    ]
+    # property_type in DB stores schema names (title-case); SQLite LOWER() is ASCII-only.
+    property_type_filter = ["Будинок", "Ділянка", "Комерційна"]
 
     updated = 0
     with OfferDB() as db:
-        offers = db.get_without_cadastral(property_types=cadastral_crm_types)
+        offers = db.get_without_cadastral(property_types=property_type_filter)
         if max_count:
             offers = offers[:max_count]
 
