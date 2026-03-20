@@ -1131,7 +1131,48 @@ class DictOfferFormFiller(
                     except Exception:
                         logger.warning("Не вдалось відновити Ціна/Валюта", exc_info=True)
 
-            # --- Відновлення 3: Обов'язкове поле порожнє ---
+            # --- Відновлення 3: Будинок містить не-цифровий текст ---
+            # Якщо поле Будинок заповнилося некоректним значенням (наприклад,
+            # через каскад сайту або помилкове типування) — очищаємо його і
+            # дозволяємо повторне збереження без номера будинку.
+            elif "будинок" in field.lower() and "починатись з цифри" in msg:
+                try:
+                    sec_addr = self._section(root, "Адреса об'єкта")
+                    house_cleared = False
+                    # 1) спробувати кнопку Clear на MUI Autocomplete
+                    house_clear_btn = sec_addr.locator(
+                        "xpath=.//label[contains(normalize-space(translate(., '*\u2009', '')), 'Будинок')]"
+                        "/ancestor::div[contains(@class,'MuiFormControl-root')][1]"
+                        "//button[@aria-label='Clear' or @title='Clear']"
+                    ).first
+                    if house_clear_btn.count():
+                        try:
+                            house_clear_btn.click()
+                            house_cleared = True
+                        except Exception:
+                            pass
+                    if not house_cleared:
+                        # 2) Fallback: очистити input безпосередньо
+                        house_ctrl = self._find_control_by_label(sec_addr, "Будинок")
+                        if house_ctrl:
+                            inp_h = house_ctrl.locator("css=input:not([aria-hidden='true'])").first
+                            if inp_h.count():
+                                inp_h.click()
+                                inp_h.fill("")
+                                try:
+                                    inp_h.press("Escape")
+                                except Exception:
+                                    pass
+                                house_cleared = True
+                    if house_cleared:
+                        logger.warning(
+                            "Відновлення: поле 'Будинок' очищено (значення починалось не з цифри)"
+                        )
+                        fixed_any = True
+                except Exception:
+                    logger.warning("Не вдалось очистити поле 'Будинок'", exc_info=True)
+
+            # --- Відновлення 4: Обов'язкове поле порожнє ---
             elif "необхідно заповнити" in msg or "необхідно вибрати" in msg:
                 # Відновлюємо лише обов'язкові поля (мають '*' у підписі на сайті).
                 # Необов'язкові поля (наприклад, "Тип будинку") пропускаємо.
