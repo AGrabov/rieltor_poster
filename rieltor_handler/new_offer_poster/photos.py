@@ -25,23 +25,44 @@ class PhotosMixin:
     # ---------- internals ----------
     def _ensure_photo_block_open(self, sec: Locator) -> None:
         """Розкриває секцію фото-блока, якщо вона згорнута."""
+        try:
+            sec.scroll_into_view_if_needed()
+        except Exception:
+            pass
+
         if self._photo_block_content_visible(sec):
             return
 
+        # The "Опис" textarea lives inside a collapsed inner accordion block
+        # (e.g. "Блок 1 з 5: Про квартиру"). Try to expand it via aria-expanded first.
+        expanded = False
         try:
-            h6 = sec.locator("css=h6").first
-            if h6.count():
-                h6.click()
-            else:
-                sec.click()
+            collapsed = sec.locator(
+                "css=[aria-expanded='false'][class*='AccordionSummary'],"
+                "[aria-expanded='false'][class*='MuiAccordion']"
+            ).first
+            if collapsed.count():
+                collapsed.click()
+                expanded = True
         except Exception:
+            pass
+
+        if not expanded:
+            # Fallback: click the first h6 inside the section (outer toggle)
             try:
-                sec.click()
+                h6 = sec.locator("css=h6").first
+                if h6.count():
+                    h6.click()
+                else:
+                    sec.click()
             except Exception:
-                pass
+                try:
+                    sec.click()
+                except Exception:
+                    pass
 
         try:
-            self.page.wait_for_timeout(250)
+            self.page.wait_for_timeout(600)
         except Exception:
             pass
 
@@ -85,9 +106,35 @@ class PhotosMixin:
             if textarea.count() == 0:
                 textarea = sec.locator("css=textarea").first
             if textarea.count() == 0:
+                # Last resort: expand any collapsed inner accordion blocks and retry.
+                # The "Опис" textarea lives inside a sub-accordion ("Блок N з 5")
+                # that may still be collapsed after _ensure_photo_block_open.
+                try:
+                    sec.scroll_into_view_if_needed()
+                    collapsed = sec.locator(
+                        "css=[aria-expanded='false'][class*='AccordionSummary'],"
+                        "[aria-expanded='false'][class*='MuiAccordion']"
+                    ).first
+                    if collapsed.count():
+                        collapsed.click()
+                        try:
+                            self.page.wait_for_timeout(800)
+                        except Exception:
+                            pass
+                        ctrl = self._find_control_by_label(sec, ui_label)
+                        if not ctrl:
+                            textarea = sec.locator("css=textarea:not([aria-hidden='true'])").first
+                            if textarea.count() == 0:
+                                textarea = sec.locator("css=textarea").first
+                            if textarea.count():
+                                ctrl = textarea
+                except Exception:
+                    pass
+            if textarea.count() and not ctrl:
+                ctrl = textarea
+            if not ctrl:
                 logger.warning("PhotoBlock: елемент керування не знайдено для label='%s' (пропуск)", ui_label)
                 return
-            ctrl = textarea
 
         # если это wrapper — берём input/textarea
         try:
