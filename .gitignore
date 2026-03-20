@@ -165,3 +165,4 @@ test_html_parser.py
 
 # Claude
 .claude/
+CLAUDE.md
