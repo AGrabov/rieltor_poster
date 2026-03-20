@@ -1363,6 +1363,45 @@ class DictOfferFormFiller(
                     err.get("field", ""),
                     err.get("message", ""),
                 )
+            # Attempt recovery (e.g. clear Будинок field) and retry once
+            try:
+                root_rec = self._new_offer_root()
+                recovered = self._attempt_error_recovery(root_rec, new_errors)
+            except Exception:
+                recovered = False
+            if recovered:
+                try:
+                    self.page.wait_for_timeout(600)
+                except Exception:
+                    pass
+                retry_btn = self.page.locator(f"button:has-text('{btn_text}')").first
+                try:
+                    retry_btn.scroll_into_view_if_needed()
+                    retry_btn.click()
+                except Exception:
+                    pass
+                try:
+                    self.page.wait_for_url(self.MANAGEMENT_URL_GLOB, timeout=20_000)
+                except Exception:
+                    pass
+                if "/offers/management" in (self.page.url or ""):
+                    logger.info("Збереження після відновлення (client-side) — успішно")
+                    return []
+                try:
+                    self.page.wait_for_timeout(900)
+                except Exception:
+                    pass
+                root_retry = self._new_offer_root()
+                new_errors = self.collect_validation_report(root_retry)
+                if new_errors:
+                    logger.warning("Залишились помилки після відновлення (client-side):")
+                    for err in new_errors:
+                        logger.error(
+                            "  Помилка валідації: [%s] %s — %s",
+                            err.get("section", ""),
+                            err.get("field", ""),
+                            err.get("message", ""),
+                        )
             if raise_on_errors:
                 raise FormValidationError(new_errors)
             return new_errors

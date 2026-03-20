@@ -759,16 +759,18 @@ class AutocompleteMixin:
             next_key,
             cur,
         )
-        # For address/house fields: commit whatever is typed.
-        # 1) Escape closes any open dropdown without clearing the typed text.
-        # 2) Enter selects the highlighted option if any, or confirms free text.
-        # 3) Click on the form heading (background) triggers blur, which MUI uses
-        #    to commit freeSolo values — more reliable than Enter alone.
+        # For address/house fields: commit whatever is typed as free text.
+        # NOTE: do NOT press Escape for street fields — MUI Autocomplete clears the
+        # input on Escape when no option was confirmed, losing the typed street name.
+        # Instead: Enter confirms the typed value (freeSolo), then blur finalises it.
         if is_address or is_house:
-            try:
-                inp.press("Escape")
-            except Exception:
-                pass
+            if not is_street:
+                # For non-street address fields (Район, Місто, Будинок) Escape is safe:
+                # it closes the dropdown without clearing a confirmed selection.
+                try:
+                    inp.press("Escape")
+                except Exception:
+                    pass
             try:
                 inp.press("Enter")
             except Exception:
