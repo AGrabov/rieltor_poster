@@ -816,6 +816,18 @@ class DictOfferFormFiller(
                 if district:
                     self._fill_autocomplete(sec, "Район", district)
 
+                # Selecting a district triggers a cascade on the site that clears the
+                # street field (the street autocomplete resets when district changes).
+                # Re-fill street if it disappeared after the district interaction.
+                if street:
+                    street_ctrl = self._find_control_by_label(sec, "Вулиця")
+                    if street_ctrl and not self._control_has_value(street_ctrl):
+                        logger.warning(
+                            "Вулиця '%s' зникла після заповнення Району — повторне заповнення",
+                            street,
+                        )
+                        self._fill_autocomplete(sec, "Вулиця", street)
+
             if house and self._map_error_visible():
                 self._force_reselect_house_number(sec, house, house_label="Будинок")
 
