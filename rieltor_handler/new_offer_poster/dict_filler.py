@@ -42,6 +42,45 @@ def _strip_street_prefix(value: str) -> str:
     return s
 
 
+# Russian → Ukrainian city name normalization (CRM sometimes stores Russian names)
+_CITY_RU_TO_UA: dict[str, str] = {
+    "киев": "Київ",
+    "харьков": "Харків",
+    "одесса": "Одеса",
+    "днепр": "Дніпро",
+    "днепропетровск": "Дніпро",
+    "запорожье": "Запоріжжя",
+    "львов": "Львів",
+    "николаев": "Миколаїв",
+    "херсон": "Херсон",
+    "полтава": "Полтава",
+    "черкассы": "Черкаси",
+    "чернигов": "Чернігів",
+    "винница": "Вінниця",
+    "ровно": "Рівне",
+    "луцк": "Луцьк",
+    "ужгород": "Ужгород",
+    "тернополь": "Тернопіль",
+    "хмельницкий": "Хмельницький",
+    "ивано-франковск": "Івано-Франківськ",
+    "черновцы": "Чернівці",
+    "кропивницкий": "Кропивницький",
+    "житомир": "Житомир",
+    "сумы": "Суми",
+    "мариуполь": "Маріуполь",
+    "бровары": "Бровари",
+    "борисполь": "Бориспіль",
+    "буча": "Буча",
+    "ирпень": "Ірпінь",
+    "белая церковь": "Біла Церква",
+}
+
+
+def _normalize_city(city: str) -> str:
+    """Normalize Russian city names to Ukrainian equivalents."""
+    return _CITY_RU_TO_UA.get(city.lower().strip(), city)
+
+
 # Photo block keys (offer_data keys that contain photo/description dicts)
 _PHOTO_BLOCK_KEYS = frozenset({"apartment", "interior", "layout", "yard", "infrastructure"})
 
@@ -693,7 +732,7 @@ class DictOfferFormFiller(
                     return v
             return None
 
-        city = _get("Місто")
+        city = _normalize_city(_get("Місто") or "") or None
         condo = _get("Новобудова")
         district = _get("Район")
         street = _get("Вулиця")
