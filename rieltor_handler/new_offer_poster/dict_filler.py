@@ -60,6 +60,7 @@ _SPECIAL_KEYS = frozenset(
         "address",
         "public_link",
         "responsible_person",
+        "новобудова",  # handled exclusively via address dict (_fill_address_from_dict)
     }
 )
 

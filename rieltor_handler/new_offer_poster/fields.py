@@ -685,6 +685,29 @@ class FieldsMixin:
         except Exception:
             pass
 
+        # Verify the listbox actually closed. MUI sometimes keeps it visible after Escape.
+        # If still open, click a neutral spot to force-close before the next select opens.
+        try:
+            self.page.wait_for_function(
+                "() => !Array.from(document.querySelectorAll('[role=\"listbox\"]'))"
+                ".some(el => {"
+                " const cs = getComputedStyle(el);"
+                " const r = el.getBoundingClientRect();"
+                " return cs.display !== 'none' && cs.visibility !== 'hidden'"
+                "   && Number(cs.opacity) > 0 && r.width > 5 && r.height > 5;"
+                "})",
+                timeout=600,
+            )
+        except Exception:
+            try:
+                self.page.mouse.click(10, 10)
+            except Exception:
+                pass
+            try:
+                self.page.wait_for_timeout(300)
+            except Exception:
+                pass
+
     def _set_multiselect_or_checklist(self, root: Locator, section: str, key: str, values: Sequence[str]) -> None:
         sec = self._section(root, section)
         label = self._expected_label(key) or key
