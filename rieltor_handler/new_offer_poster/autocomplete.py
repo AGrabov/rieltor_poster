@@ -178,7 +178,8 @@ class AutocompleteMixin:
                       const txt = (el.innerText || '').trim();
                       if (!txt) continue;
 
-                      out.push({ txt, n: norm(txt), digits: onlyDigits(txt), h: normHouse(txt), r });
+                      const role = (el.getAttribute('role') || '').toLowerCase();
+                      out.push({ txt, n: norm(txt), digits: onlyDigits(txt), h: normHouse(txt), r, isOption: role === 'option' });
                     }
                   }
                   out.sort((a,b) => a.r.top - b.r.top);
@@ -192,10 +193,21 @@ class AutocompleteMixin:
                 });
 
                 function pick(opts) {
-                  // 1) Standard text match
-                  for (const o of opts) {
+                  // 1) Standard text match — prefer role=option elements to avoid matching
+                  //    container divs that include all options in their innerText
+                  const roleOpts = opts.filter(o => o.isOption);
+                  const preferred = roleOpts.length ? roleOpts : opts;
+                  for (const o of preferred) {
                     if (o.n === d || o.n.startsWith(d) || o.n.includes(d)) {
                       return mkResult(o, 'match', opts.length);
+                    }
+                  }
+                  // Fallback: try all elements (covers non-standard MUI)
+                  if (roleOpts.length) {
+                    for (const o of opts) {
+                      if (o.n === d || o.n.startsWith(d) || o.n.includes(d)) {
+                        return mkResult(o, 'match_any', opts.length);
+                      }
                     }
                   }
 
@@ -203,7 +215,7 @@ class AutocompleteMixin:
                   //    any word in the option (handles e.g. "Нова Дарниця" → "Дарницький")
                   const dWords = d.split(/\s+/).filter(w => w.length >= 5);
                   if (dWords.length) {
-                    for (const o of opts) {
+                    for (const o of preferred) {
                       const oWords = o.n.split(/\s+/);
                       for (const dw of dWords) {
                         for (const ow of oWords) {
