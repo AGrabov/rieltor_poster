@@ -135,7 +135,7 @@ class OfferDB:
     def get_unprocessed(
         self,
         deal_type: str | None = None,
-        property_type: str | None = None,
+        property_type: str | list[str] | None = None,
         max_count: int | None = None,
     ) -> list[OfferRecord]:
         """Повернути оголошення зі статусом 'new', з необов'язковими фільтрами."""
@@ -147,8 +147,16 @@ class OfferDB:
             params.append(deal_type)
 
         if property_type:
-            query += " AND LOWER(property_type) = LOWER(?)"
-            params.append(property_type)
+            types = [property_type] if isinstance(property_type, str) else property_type
+            clauses = []
+            for pt in types:
+                if pt.lower() == "паркомісце":
+                    # DB stores "Паркомісце_garage" / "Паркомісце_parking"
+                    clauses.append("LOWER(property_type) LIKE 'паркомісце%'")
+                else:
+                    clauses.append("LOWER(property_type) = LOWER(?)")
+                    params.append(pt)
+            query += " AND (" + " OR ".join(clauses) + ")"
 
         query += " ORDER BY id"
 

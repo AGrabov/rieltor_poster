@@ -365,12 +365,27 @@ def phase2_post(
     # Normalize deal_type filter for DB query
     db_deal_type = _normalize_deal_type(deal_type) if deal_type else None
 
+    # Expand "Безкоштовне" to all free property types
+    _FREE_TYPES = ["Будинок", "Комерційна", "Ділянка", "Паркомісце"]
+    if property_type == "Безкоштовне":
+        db_property_type: str | list[str] | None = _FREE_TYPES
+    else:
+        db_property_type = property_type
+
+    def _matches_type_filter(pt: str, filt: str) -> bool:
+        """Check if offer's property_type matches the CLI filter (handles Паркомісце variants)."""
+        if filt == "Безкоштовне":
+            return any(pt.lower() == f.lower() or pt.lower().startswith(f.lower() + "_") for f in _FREE_TYPES)
+        if filt.lower() == "паркомісце":
+            return pt.lower().startswith("паркомісце")
+        return pt.lower() == filt.lower()
+
     posted = 0
 
     with OfferDB() as db:
         offers = db.get_unprocessed(
             deal_type=db_deal_type,
-            property_type=property_type,
+            property_type=db_property_type,
             max_count=max_count,
         )
         if not offers:
@@ -407,6 +422,14 @@ def phase2_post(
                         pt,
                     )
 
+                    # Guard: skip if offer type doesn't match the requested filter
+                    if property_type and not _matches_type_filter(pt, property_type):
+                        logger.warning(
+                            "Пропуск %d: тип '%s' не відповідає фільтру '%s'",
+                            offer.estate_id, pt, property_type,
+                        )
+                        continue
+
                     # Reconfigure filler for this offer's types
                     poster.property_type = pt
                     poster.deal_type = dt
@@ -418,6 +441,16 @@ def phase2_post(
                     )
 
                     _normalize_offer_data(offer_data)
+
+                    # Skip Будинок offers without house number — can't geocode or find cadastral
+                    if pt == "Будинок" and not offer_data.get("address", {}).get("Будинок", ""):
+                        logger.warning(
+                            "Об'єкт %d (article=%s): Будинок без номера будинку — пропускаємо",
+                            offer.estate_id, offer.article,
+                        )
+                        db.mark_skipped(offer.estate_id, "Будинок без номера будинку")
+                        posted += 1
+                        continue
 
                     # Збагатити кадастровим номером якщо відсутній (phase 2 fallback)
                     from crm_data_parser.cadastral_lookup import enrich_offer_data_with_cadastral

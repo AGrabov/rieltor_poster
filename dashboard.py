@@ -29,7 +29,7 @@ STATUS_LABELS = {
     "skipped": "⚪ Пропущені",
 }
 
-PROPERTY_TYPES = ["Квартира", "Кімната", "Будинок", "Комерційна", "Ділянка", "Паркомісце"]
+PROPERTY_TYPES = ["Квартира", "Кімната", "Будинок", "Комерційна", "Ділянка", "Паркомісце", "Безкоштовне"]
 DEAL_TYPES = ["Продаж", "Оренда"]
 
 st.set_page_config(
@@ -302,6 +302,7 @@ with right:
                 "Тип об'єкта",
                 options=["Всі"] + PROPERTY_TYPES,
                 key="post_property_type",
+                help="Безкоштовне = Будинок + Комерційна + Ділянка + Паркомісце",
             )
         with pf2:
             post_deal_type = st.selectbox(

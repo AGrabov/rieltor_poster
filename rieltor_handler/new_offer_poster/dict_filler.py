@@ -748,6 +748,30 @@ class DictOfferFormFiller(
 
     # ── Address ──
 
+    def _check_and_fix_house_field(self, sec) -> None:
+        """After any autocomplete fill, verify the Будинок field doesn't contain 'Будинок X' prefix."""
+        try:
+            ctrl = self._find_control_by_label(sec, "Будинок")
+            if not ctrl:
+                return
+            inp = ctrl.locator("css=input").first
+            if not inp.count():
+                return
+            current = (inp.input_value() or "").strip()
+            if current.lower().startswith("будинок "):
+                corrected = current[len("будинок "):].strip()
+                logger.warning(
+                    "Поле Будинок містить 'Будинок ...' ('%s') → виправляємо до '%s'",
+                    current,
+                    corrected,
+                )
+                inp.triple_click()
+                inp.press("Escape")  # close any open dropdown
+                inp.fill(corrected)  # replace value without triggering autocomplete
+                inp.press("Tab")     # confirm / move focus
+        except Exception as e:
+            logger.debug("_check_and_fix_house_field: %s", e)
+
     def _fill_address_from_dict(self, root: Locator, address_data: dict) -> None:
         """Заповнює секцію адреси зі словника з українськими ключами-підписами.
 
@@ -828,6 +852,10 @@ class DictOfferFormFiller(
             except Exception:
                 time.sleep(3)
 
+            # Check and fix house field if ЖК autofill put "Будинок X" instead of just "X"
+            if house:
+                self._check_and_fix_house_field(sec)
+
             # Early map error check after ЖК autofill
             if house and self._map_error_visible():
                 self._force_reselect_house_number(sec, house, house_label="Будинок")
@@ -850,6 +878,7 @@ class DictOfferFormFiller(
             if house_ctrl and not self._control_has_value(house_ctrl):
                 if house:
                     self._fill_autocomplete(sec, "Будинок", house)
+                    self._check_and_fix_house_field(sec)
 
             if house and self._map_error_visible():
                 self._force_reselect_house_number(sec, house, house_label="Будинок")
@@ -861,6 +890,7 @@ class DictOfferFormFiller(
                 self._fill_autocomplete(sec, "Вулиця", street)
             if house:
                 self._fill_autocomplete(sec, "Будинок", house)
+                self._check_and_fix_house_field(sec)
 
             # Wait for geo-lookup to auto-fill district.
             # Also allows the site to settle after house selection
@@ -1247,7 +1277,39 @@ class DictOfferFormFiller(
                 except Exception:
                     logger.warning("Не вдалось очистити поле 'Будинок'", exc_info=True)
 
-            # --- Відновлення 4: Обов'язкове поле порожнє ---
+            # --- Відновлення 4: Неправильний кадастровий номер ---
+            # Якщо сайт відхилив кадастровий номер як невалідний — очищаємо поле і
+            # зберігаємо чернетку без нього (краще зберегти без кадастру, ніж не зберегти).
+            elif "кадастровий" in field.lower() and "неправильний" in msg:
+                try:
+                    _cad_selectors = [
+                        "css=input[name='cadastralNumber']",
+                        "css=input[id*='cadastral' i]",
+                        "css=input[placeholder*='кадастр' i]",
+                        "css=input[aria-label*='кадастр' i]",
+                    ]
+                    inp_cad = None
+                    for _sel in _cad_selectors:
+                        _candidate = root.locator(_sel).first
+                        if _candidate.count():
+                            inp_cad = _candidate
+                            break
+                    if inp_cad is not None:
+                        current_cad = (inp_cad.input_value() or "").strip()
+                        inp_cad.click()
+                        inp_cad.fill("")
+                        logger.warning(
+                            "Відновлення: очищено невалідний кадастровий номер '%s' — "
+                            "повторне збереження без нього",
+                            current_cad,
+                        )
+                        fixed_any = True
+                    else:
+                        logger.warning("Не вдалось знайти поле кадастрового номера для очищення")
+                except Exception:
+                    logger.warning("Не вдалось очистити кадастровий номер", exc_info=True)
+
+            # --- Відновлення 5: Обов'язкове поле порожнє ---
             elif "необхідно заповнити" in msg or "необхідно вибрати" in msg:
                 # Відновлюємо лише обов'язкові поля (мають '*' у підписі на сайті).
                 # Необов'язкові поля (наприклад, "Тип будинку") пропускаємо.
