@@ -215,7 +215,12 @@ def phase1_collect(
                 article = offer_data.get("article", str(item.estate_id))
                 photo_dl_link = offer_data.get("photo_download_link")
                 photo_urls = offer_data.get("apartment", {}).get("photos", [])
-                if photo_dl_link:
+                add_watermark = os.getenv("ADD_WATERMARK", "true").lower() == "true"
+                if add_watermark:
+                    # Качаємо фото без вотермарки — наш логотип додасть photo_processing
+                    local_paths = download_estate_photos(crm.page, photo_urls, article) if photo_urls else []
+                elif photo_dl_link:
+                    # Качаємо ZIP з вотермаркою з CRM
                     local_paths = download_watermark_zip(crm.page, photo_dl_link, article)
                     if not local_paths and photo_urls:
                         logger.warning("Watermark ZIP порожній, використовуємо окремі фото для %s", article)
@@ -310,18 +315,21 @@ def _redownload_missing_photos(offers: list, db, headless: bool, debug: bool) ->
     crm_creds = CrmCredentials(email=crm_email, password=crm_password)
     with CrmSession(crm_creds, headless=headless, debug=debug) as crm:
         crm.login()
+        add_watermark = os.getenv("ADD_WATERMARK", "true").lower() == "true"
         for offer in needing:
             article = offer.article or str(offer.estate_id)
             offer_data = offer.offer_data
             photo_dl_link = offer_data.get("photo_download_link")
-            local_paths = download_watermark_zip(crm.page, photo_dl_link, article)
-            if not local_paths:
-                # Fallback: try individual URLs (only works if they weren't overwritten)
-                photo_urls = [
-                    p for p in (offer_data.get("apartment") or {}).get("photos", [])
-                    if isinstance(p, str) and p.startswith("http")
-                ]
-                if photo_urls:
+            photo_urls = [
+                p for p in (offer_data.get("apartment") or {}).get("photos", [])
+                if isinstance(p, str) and p.startswith("http")
+            ]
+            if add_watermark:
+                # Качаємо фото без вотермарки — наш логотип додасть photo_processing
+                local_paths = download_estate_photos(crm.page, photo_urls, article) if photo_urls else []
+            else:
+                local_paths = download_watermark_zip(crm.page, photo_dl_link, article) if photo_dl_link else []
+                if not local_paths and photo_urls:
                     local_paths = download_estate_photos(crm.page, photo_urls, article)
             if local_paths:
                 offer_data.setdefault("apartment", {})["photos"] = local_paths

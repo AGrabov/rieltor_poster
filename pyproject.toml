@@ -26,6 +26,7 @@ dependencies = [
     # NLP
     "spacy>=3.8",
     "streamlit>=1.55.0",
+    "svglib>=1.6.0",
 ]
 
 [project.optional-dependencies]

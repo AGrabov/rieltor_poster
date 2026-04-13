@@ -166,3 +166,4 @@ test_html_parser.py
 # Claude
 .claude/
 CLAUDE.md
+.playwright-mcp/page-2026-04-13T12-54-39-270Z.yml
