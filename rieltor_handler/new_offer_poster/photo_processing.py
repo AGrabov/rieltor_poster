@@ -153,6 +153,7 @@ def _prepare_single_photo(src: str) -> str | None:
 
         if ADD_WATERMARK:
             img = _apply_watermark(img)
+            logger.info("Added watermark to %s", src) if img else None
 
         # Готовим временный файл
         tmp_dir = tempfile.mkdtemp(prefix="rieltor_photo_")
