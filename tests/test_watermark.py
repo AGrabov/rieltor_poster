@@ -73,7 +73,7 @@ def test_watermark_cache_populated():
     assert _get_watermark() is wm
 
 
-def test_prepare_photos_produces_watermarked_file(tmp_path, monkeypatch):
+def test_prepare_photos_produces_watermarked_file(monkeypatch):
     """prepare_photos writes a JPEG that differs from the original (watermark present)."""
     import os
     import rieltor_handler.new_offer_poster.photo_processing as pp
@@ -133,6 +133,23 @@ def test_watermark_applied_to_already_downloaded_photos(monkeypatch):
         f"Watermark must be visible in centre of already-downloaded photo "
         f"({changed}/{total} pixels changed, expected >1%)"
     )
+
+
+def test_watermark_renders_inside_asyncio_loop():
+    """_get_watermark must succeed even when called from within a running asyncio loop.
+
+    Reproduces the production failure: Phase 2 Playwright posting session keeps an
+    asyncio loop alive, and sync_playwright() raised an error when called from it.
+    """
+    import asyncio
+    import rieltor_handler.new_offer_poster.photo_processing as pp
+    pp._watermark_cache = None
+
+    async def _inner():
+        return pp._get_watermark()
+
+    result = asyncio.run(_inner())
+    assert result is not None, "_get_watermark must succeed inside asyncio loop"
 
 
 def test_no_watermark_when_disabled(monkeypatch):

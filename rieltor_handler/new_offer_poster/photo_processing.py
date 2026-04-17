@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import io
 import logging
 import os
@@ -30,11 +31,33 @@ WATERMARK_WIDTH_RATIO = 0.4  # ширина логотипа = 40% ширины 
 _watermark_cache: Image.Image | None = None
 
 
+def _render_watermark() -> Image.Image:
+    """Render SVG logo to RGBA image via Playwright. Must run outside any asyncio event loop."""
+    from playwright.sync_api import sync_playwright
+
+    with open(WATERMARK_SVG, encoding="utf-8") as f:
+        svg = f.read()
+
+    svg_white = svg.replace("fill: url(#_Безымянный_градиент_5)", "fill: white")
+    html = (
+        "<!DOCTYPE html><html style='margin:0;padding:0'>"
+        "<body style='margin:0;padding:0;background:transparent;'>"
+        + svg_white
+        + "</body></html>"
+    )
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page(viewport={"width": 300, "height": 92})
+        page.set_content(html)
+        png_bytes = page.screenshot(omit_background=True, full_page=True)
+        browser.close()
+
+    return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+
+
 def _get_watermark() -> Image.Image | None:
-    """
-    Рендерить SVG-логотип у білий колір з прозорим фоном.
-    Результат кешується у пам'яті на час сесії.
-    """
+    """Рендерить SVG-логотип у білий колір з прозорим фоном. Результат кешується."""
     global _watermark_cache
     if _watermark_cache is not None:
         return _watermark_cache
@@ -44,33 +67,12 @@ def _get_watermark() -> Image.Image | None:
         return None
 
     try:
-        from playwright.sync_api import sync_playwright
-
-        with open(WATERMARK_SVG, encoding="utf-8") as f:
-            svg = f.read()
-
-        # Замінюємо градієнт на білий колір
-        svg_white = svg.replace(
-            "fill: url(#_Безымянный_градиент_5)", "fill: white"
-        )
-        html = (
-            "<!DOCTYPE html><html style='margin:0;padding:0'>"
-            "<body style='margin:0;padding:0;background:transparent;'>"
-            + svg_white
-            + "</body></html>"
-        )
-
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch()
-            page = browser.new_page(viewport={"width": 300, "height": 92})
-            page.set_content(html)
-            png_bytes = page.screenshot(omit_background=True, full_page=True)
-            browser.close()
-
-        _watermark_cache = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+        # Run in a thread so sync_playwright works even when called from inside
+        # an asyncio event loop (e.g. during Phase 2 Playwright posting session).
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            _watermark_cache = ex.submit(_render_watermark).result()
         logger.debug("Watermark завантажено: %s", _watermark_cache.size)
         return _watermark_cache
-
     except Exception:
         logger.exception("Не вдалось відрендерити watermark")
         return None
