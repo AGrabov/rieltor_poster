@@ -51,6 +51,34 @@ def _strip_street_prefix(street: str) -> str:
     return _STREET_PREFIX_RE.sub("", street).strip()
 
 
+def _pick_by_house(candidates: list[tuple[str, str]], house: str) -> str | None:
+    """Обрати найкращий кадастровий номер зі списку (cadnum, address).
+
+    Пріоритет:
+      1. Точний збіг номера будинку (окремий токен, без літери/дефіса після).
+      2. Збіг із суфіксом (``19-а``, ``19/3``, ``19а``).
+      3. Перший валідний номер.
+    """
+    if not candidates:
+        return None
+    house_norm = house.strip().lower()
+    if not house_norm:
+        return candidates[0][0]
+
+    h = re.escape(house_norm)
+    exact_re = re.compile(rf"(?:^|[,\s])({h})(?:[,\s]|$)")
+    for cadnum, addr in candidates:
+        if exact_re.search(addr.lower()):
+            return cadnum
+
+    loose_re = re.compile(rf"(?:^|[,\s])({h})(?=[\s,/\-а-яіїєґa-z])", re.IGNORECASE)
+    for cadnum, addr in candidates:
+        if loose_re.search(addr.lower()):
+            return cadnum
+
+    return candidates[0][0]
+
+
 def _search_raw(query: str) -> list[dict]:
     """Виконати один запит до kadastr.live; повернути список результатів (або [] при 404/помилці)."""
     try:
