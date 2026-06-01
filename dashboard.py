@@ -151,6 +151,8 @@ if "schema_proc" not in st.session_state:
     st.session_state.schema_proc = None
 if "cadastral_proc" not in st.session_state:
     st.session_state.cadastral_proc = None
+if "cleanup_proc" not in st.session_state:
+    st.session_state.cleanup_proc = None
 if "headless" not in st.session_state:
     st.session_state.headless = False
 if "log_level" not in st.session_state:
@@ -349,7 +351,7 @@ with right:
     with st.container(border=True):
         cad1, cad2 = st.columns([3, 1])
         with cad1:
-            st.markdown("**Кадастрові номери** (БД → kadastr.live)")
+            st.markdown("**Кадастрові номери** (БД → zem.center)")
             st.caption("Шукає кадастровий номер для об'єктів без нього (Будинок, Ділянка, Комерційна).")
         with cad2:
             max_count_cad = st.number_input(
@@ -387,6 +389,57 @@ with right:
                 st.success("✅ Пошук завершено")
             else:
                 st.error(f"❌ Пошук завершився з кодом {rc}")
+
+    # Очистка сміття на rieltor.ua
+    with st.container(border=True):
+        st.markdown("**🗑 Очистити сміття на rieltor.ua**")
+        st.caption(
+            "Видаляє ВСІ об'єкти із «Закритої бази», потім остаточно чистить «Видалені». "
+            "Неудачні/неправильні чернетки. Незворотно!"
+        )
+        tc1, tc2 = st.columns([3, 1])
+        with tc1:
+            confirm_cleanup = st.checkbox(
+                "Я підтверджую видалення",
+                value=False,
+                key="confirm_cleanup",
+            )
+        with tc2:
+            max_count_clean = st.number_input(
+                "Макс.",
+                min_value=0,
+                value=0,
+                key="max_count_cleanup",
+                help="0 = без обмежень",
+            )
+        cleanup_btn = st.button(
+            "🗑 Очистити «Закриту базу»",
+            use_container_width=True,
+            disabled=not confirm_cleanup or proc_is_running(st.session_state.cleanup_proc),
+        )
+
+        if cleanup_btn:
+            cmd = ["uv", "run", "python", "main.py", "clean-trash"]
+            if max_count_clean:
+                cmd += ["--max-count", str(max_count_clean)]
+            st.session_state.cleanup_proc = launch(cmd, log_level=st.session_state.log_level)
+            st.toast("Очистку «Закритої бази» запущено!", icon="🗑")
+
+        if proc_is_running(st.session_state.cleanup_proc):
+            _col_info, _col_stop = st.columns([3, 1])
+            with _col_info:
+                st.info("⏳ Очистка виконується...")
+            with _col_stop:
+                if st.button("⏹ Зупинити", key="stop_cleanup", use_container_width=True):
+                    stop_proc(st.session_state.cleanup_proc)
+                    st.toast("Очистку зупинено", icon="⏹")
+                    st.rerun()
+        elif st.session_state.cleanup_proc is not None:
+            rc = st.session_state.cleanup_proc.returncode
+            if rc == 0:
+                st.success("✅ Очистку завершено")
+            else:
+                st.error(f"❌ Очистка завершилась з кодом {rc}")
 
     # Оновлення схем
     with st.container(border=True):

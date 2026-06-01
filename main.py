@@ -606,6 +606,60 @@ def phase_cadastral(max_count: int | None = None) -> int:
     return updated
 
 
+# ── clean-trash: bulk-delete rieltor.ua «Закрита база» ──────────────
+
+
+def phase_clean_trash(
+    max_count: int | None = None,
+    deleted_max_count: int | None = None,
+    dry_run: bool = False,
+    skip_deleted: bool = False,
+    deleted_only: bool = False,
+    headless: bool = True,
+    debug: bool = False,
+) -> int:
+    """Масово очистити сміття на rieltor.ua у дві стадії.
+
+    Стадія 1 — «Закрита база» (об'єкти переходять у «Видалені»).
+    Стадія 2 — «Видалені» (остаточне видалення).
+
+    Args:
+        max_count:         ліміт видалень стадії 1 (None = всі).
+        deleted_max_count: ліміт видалень стадії 2 (None = всі).
+        dry_run:           лише підрахунок, нічого не видаляти.
+        skip_deleted:      виконати лише стадію 1 (не чіпати «Видалені»).
+        deleted_only:      виконати лише стадію 2 (очистити «Видалені» назавжди).
+
+    Returns:
+        Сумарна кількість видалених об'єктів (або наявних при dry_run).
+    """
+    from rieltor_handler.closed_base_cleaner import ClosedBaseCleaner
+    from rieltor_handler.rieltor_session import RieltorCredentials, RieltorSession
+
+    phone = os.environ.get("PHONE", "").strip()
+    password = os.environ.get("PASSWORD", "").strip()
+    if not phone or not password:
+        logger.error("PHONE та PASSWORD повинні бути задані в .env")
+        return 0
+
+    total = 0
+    with RieltorSession(
+        RieltorCredentials(phone=phone, password=password),
+        headless=headless,
+        debug=debug,
+    ) as session:
+        session.login()
+        cleaner = ClosedBaseCleaner(session.page)
+
+        if not deleted_only:
+            total += cleaner.clean(max_count=max_count, dry_run=dry_run)
+        if not skip_deleted:
+            total += cleaner.purge_deleted(max_count=deleted_max_count, dry_run=dry_run)
+
+    logger.info("clean-trash завершено: %d", total)
+    return total
+
+
 # ── post-one: single offer from JSON ────────────────────────────────
 
 
@@ -696,6 +750,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_cad = sub.add_parser("cadastral", help="Fill missing cadastral numbers in DB")
     p_cad.add_argument("--max-count", type=int, help="Max offers to process")
 
+    # clean-trash
+    p_clean = sub.add_parser(
+        "clean-trash",
+        help="Bulk-clean rieltor.ua: «Закрита база» → «Видалені» → permanently",
+    )
+    p_clean.add_argument("--max-count", type=int, help="Max stage-1 deletions («Закрита база»)")
+    p_clean.add_argument(
+        "--deleted-max-count", type=int, help="Max stage-2 deletions («Видалені» назавжди)"
+    )
+    p_clean.add_argument("--dry-run", action="store_true", help="Count only, delete nothing")
+    p_clean.add_argument(
+        "--skip-deleted", action="store_true", help="Stage 1 only (do not purge «Видалені»)"
+    )
+    p_clean.add_argument(
+        "--deleted-only", action="store_true", help="Stage 2 only (purge «Видалені» permanently)"
+    )
+
     return parser
 
 
@@ -741,6 +812,17 @@ def main() -> None:
 
         elif args.command == "cadastral":
             phase_cadastral(max_count=args.max_count)
+
+        elif args.command == "clean-trash":
+            phase_clean_trash(
+                max_count=args.max_count,
+                deleted_max_count=args.deleted_max_count,
+                dry_run=args.dry_run,
+                skip_deleted=args.skip_deleted,
+                deleted_only=args.deleted_only,
+                headless=headless,
+                debug=args.debug,
+            )
 
         else:
             # No subcommand = full pipeline (collect + post draft)
