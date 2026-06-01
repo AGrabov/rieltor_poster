@@ -606,6 +606,42 @@ def phase_cadastral(max_count: int | None = None) -> int:
     return updated
 
 
+# ── clean-trash: bulk-delete rieltor.ua «Закрита база» ──────────────
+
+
+def phase_clean_trash(
+    max_count: int | None = None,
+    dry_run: bool = False,
+    headless: bool = True,
+    debug: bool = False,
+) -> int:
+    """Масово видалити об'єкти із «Закритої бази» на rieltor.ua.
+
+    Returns:
+        Кількість видалених об'єктів (або наявних при dry_run).
+    """
+    from rieltor_handler.closed_base_cleaner import ClosedBaseCleaner
+    from rieltor_handler.rieltor_session import RieltorCredentials, RieltorSession
+
+    phone = os.environ.get("PHONE", "").strip()
+    password = os.environ.get("PASSWORD", "").strip()
+    if not phone or not password:
+        logger.error("PHONE та PASSWORD повинні бути задані в .env")
+        return 0
+
+    with RieltorSession(
+        RieltorCredentials(phone=phone, password=password),
+        headless=headless,
+        debug=debug,
+    ) as session:
+        session.login()
+        cleaner = ClosedBaseCleaner(session.page)
+        deleted = cleaner.clean(max_count=max_count, dry_run=dry_run)
+
+    logger.info("clean-trash завершено: %d", deleted)
+    return deleted
+
+
 # ── post-one: single offer from JSON ────────────────────────────────
 
 
@@ -696,6 +732,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_cad = sub.add_parser("cadastral", help="Fill missing cadastral numbers in DB")
     p_cad.add_argument("--max-count", type=int, help="Max offers to process")
 
+    # clean-trash
+    p_clean = sub.add_parser("clean-trash", help="Bulk-delete rieltor.ua «Закрита база»")
+    p_clean.add_argument("--max-count", type=int, help="Max offers to delete")
+    p_clean.add_argument("--dry-run", action="store_true", help="Count only, delete nothing")
+
     return parser
 
 
@@ -741,6 +782,14 @@ def main() -> None:
 
         elif args.command == "cadastral":
             phase_cadastral(max_count=args.max_count)
+
+        elif args.command == "clean-trash":
+            phase_clean_trash(
+                max_count=args.max_count,
+                dry_run=args.dry_run,
+                headless=headless,
+                debug=args.debug,
+            )
 
         else:
             # No subcommand = full pipeline (collect + post draft)
