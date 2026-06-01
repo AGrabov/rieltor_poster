@@ -21,6 +21,11 @@ _KK_HEADERS = {
     "Accept": "text/vnd.turbo-stream.html, text/html",
     "Referer": "https://kadastrova-karta.com/",
 }
+_ZEM_SEARCH_URL = "https://api.zem.center/api/search"
+_ZEM_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept": "application/json",
+}
 
 # Schema types (rieltor.ua) that have a "Кадастровий номер" field
 _CADASTRAL_SCHEMA_TYPES = frozenset({"будинок", "ділянка", "комерційна"})
@@ -77,6 +82,39 @@ def _pick_by_house(candidates: list[tuple[str, str]], house: str) -> str | None:
             return cadnum
 
     return candidates[0][0]
+
+
+def _search_zem_center(query: str, house: str) -> str | None:
+    """Пошук кадастрового номера через zem.center JSON API (основне джерело).
+
+    GET https://api.zem.center/api/search?q=<query>&size=20 → {"items": [...]}.
+    Кожен item має ``cadnum`` та ``address``. Повертає найкращий збіг за
+    номером будинку або None.
+    """
+    try:
+        resp = requests.get(
+            _ZEM_SEARCH_URL,
+            params={"q": query, "size": "20"},
+            headers=_ZEM_HEADERS,
+            timeout=(5, 12),  # (connect, read)
+        )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+
+        items = (resp.json() or {}).get("items") or []
+        candidates: list[tuple[str, str]] = []
+        for item in items:
+            cadnum = (item.get("cadnum") or "").strip()
+            if _CADNUM_RE.match(cadnum):
+                candidates.append((cadnum, item.get("address") or ""))
+        return _pick_by_house(candidates, house)
+    except requests.exceptions.Timeout:
+        logger.debug("Timeout zem.center для '%s'", query)
+        return None
+    except Exception:
+        logger.warning("Помилка zem.center для '%s'", query, exc_info=True)
+        return None
 
 
 def _search_raw(query: str) -> list[dict]:

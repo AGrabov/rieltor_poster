@@ -34,3 +34,43 @@ def test_pick_by_house_no_house_returns_first():
 
 def test_pick_by_house_empty_candidates_returns_none():
     assert cl._pick_by_house([], "19") is None
+
+
+class _FakeResp:
+    def __init__(self, json_data=None, status_code=200, text=""):
+        self._json = json_data if json_data is not None else {}
+        self.status_code = status_code
+        self.text = text
+
+    def json(self):
+        return self._json
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+_ZEM_SAMPLE = {
+    "items": [
+        {"cadnum": "8000000000:75:214:0033", "address": "м.Київ, вулиця Львівська, 19-а"},
+        {"cadnum": "8000000000:75:214:0010", "address": "м.Київ, вулиця Львівська, 19"},
+        {"cadnum": "not-a-cadnum", "address": "junk"},
+    ]
+}
+
+
+def test_search_zem_center_picks_exact_house(monkeypatch):
+    def fake_get(url, **kwargs):
+        assert "api.zem.center" in url
+        return _FakeResp(json_data=_ZEM_SAMPLE)
+
+    monkeypatch.setattr(cl.requests, "get", fake_get)
+    assert cl._search_zem_center("Київ Львівська 19", "19") == "8000000000:75:214:0010"
+
+
+def test_search_zem_center_handles_error(monkeypatch):
+    def fake_get(url, **kwargs):
+        raise cl.requests.exceptions.Timeout("slow")
+
+    monkeypatch.setattr(cl.requests, "get", fake_get)
+    assert cl._search_zem_center("Київ Львівська 19", "19") is None
