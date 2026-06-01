@@ -1,4 +1,4 @@
-"""Пошук кадастрового номера за адресою через kadastr.live та kadastrova-karta.com."""
+"""Пошук кадастрового номера за адресою через zem.center та kadastrova-karta.com."""
 
 from __future__ import annotations
 
@@ -13,8 +13,6 @@ logger = setup_logger(__name__)
 
 _CADNUM_RE = re.compile(r"^\d{10}:\d{2}:\d{3}:\d{4}$")  # full-string match (for API results)
 _CADNUM_IN_TEXT_RE = re.compile(r"\d{10}:\d{2}:\d{3}:\d{4}")  # substring search (for descriptions)
-_SEARCH_URL = "https://kadastr.live/search/{}/"
-_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; rieltor-bot/1.0)"}
 _KK_SEARCH_URL = "https://kadastrova-karta.com/search"
 _KK_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -117,43 +115,6 @@ def _search_zem_center(query: str, house: str) -> str | None:
         return None
 
 
-def _search_raw(query: str) -> list[dict]:
-    """Виконати один запит до kadastr.live; повернути список результатів (або [] при 404/помилці)."""
-    try:
-        url = _SEARCH_URL.format(requests.utils.quote(query, safe=""))
-        resp = requests.get(url, timeout=8, headers=_HEADERS)
-        if resp.status_code == 404:
-            logger.debug("404 для '%s'", query)
-            return []
-        resp.raise_for_status()
-        return resp.json().get("results") or []
-    except Exception:
-        logger.warning("Помилка запиту для '%s'", query, exc_info=True)
-        return []
-
-
-def _best_cadnum(results: list[dict], house: str) -> str | None:
-    """Повернути найкращий кадастровий номер зі списку результатів.
-
-    Якщо передано house — шукає запис, у якому текст будь-якого поля
-    містить номер будинку (точний збіг має пріоритет).
-    Якщо точного збігу немає — повертає перший валідний номер.
-    """
-    house_norm = house.strip().lower()
-    first_valid: str | None = None
-    for item in results:
-        cadnum = (item.get("cadnum") or "").strip()
-        if not _CADNUM_RE.match(cadnum):
-            continue
-        if first_valid is None:
-            first_valid = cadnum
-        if house_norm:
-            item_text = " ".join(str(v) for v in item.values()).lower()
-            if house_norm in item_text:
-                return cadnum
-    return first_valid
-
-
 def _search_kadastrova_karta(query: str, house: str) -> str | None:
     """Пошук кадастрового номера через kadastrova-karta.com (fallback).
 
@@ -194,66 +155,39 @@ def _search_kadastrova_karta(query: str, house: str) -> str | None:
 def lookup_cadastral_number(city: str, street: str, house: str) -> str | None:
     """Знайти кадастровий номер ділянки за адресою.
 
-    Стратегія (kadastr.live, потім kadastrova-karta.com як fallback):
-      1. kadastr.live: місто + вулиця + будинок
-      2. kadastr.live: місто + вулиця (без будинку)
-      3. kadastr.live: вулиця + будинок (без міста)
-      4. kadastrova-karta.com: місто + вулиця + будинок
-      5. kadastrova-karta.com: місто + вулиця (без будинку)
-
-    Args:
-        city:   Назва міста або населеного пункту.
-        street: Назва вулиці (без префіксу "вул." тощо).
-        house:  Номер будинку.
+    Стратегія (zem.center JSON API, потім kadastrova-karta.com як fallback):
+      1. zem.center: місто + вулиця + будинок
+      2. zem.center: місто + вулиця
+      3. kadastrova-karta.com: місто + вулиця + будинок
+      4. kadastrova-karta.com: місто + вулиця
 
     Returns:
         Рядок у форматі ``XXXXXXXXXX:XX:XXX:XXXX`` або ``None``, якщо не знайдено.
     """
     street_clean = _strip_street_prefix(street)
     city_clean = city.strip()
-    # Normalize house: "45/3" → "45 3" so the slash doesn't break the URL path
-    house_clean = house.strip().replace("/", " ").strip()
     house_orig = house.strip()
 
-    def _try_live(query: str) -> str | None:
-        return _best_cadnum(_search_raw(query), house_orig)
-
-    # ── Кроки 1–3: kadastr.live ───────────────────────────────────────
-    parts = [p for p in [city_clean, street_clean, house_clean] if p]
-    if not parts:
+    full = " ".join(p for p in [city_clean, street_clean, house_orig] if p)
+    short = " ".join(p for p in [city_clean, street_clean] if p)
+    # Preserve order, drop empties and duplicates (full == short when no house)
+    queries: list[str] = []
+    for q in (full, short):
+        if q and q not in queries:
+            queries.append(q)
+    if not queries:
         return None
 
-    cadnum = _try_live(" ".join(parts))
-    if cadnum:
-        logger.debug("Знайдено kadastr.live (крок 1): %s", cadnum)
-        return cadnum
+    for q in queries:
+        cadnum = _search_zem_center(q, house_orig)
+        if cadnum:
+            logger.debug("Знайдено zem.center: %s (запит '%s')", cadnum, q)
+            return cadnum
 
-    if house_orig:
-        parts2 = [p for p in [city_clean, street_clean] if p]
-        if parts2:
-            cadnum = _try_live(" ".join(parts2))
-            if cadnum:
-                logger.debug("Знайдено kadastr.live (крок 2): %s", cadnum)
-                return cadnum
-
-        parts3 = [p for p in [street_clean, house_clean] if p]
-        if len(parts3) > 1:
-            cadnum = _try_live(" ".join(parts3))
-            if cadnum:
-                logger.debug("Знайдено kadastr.live (крок 3): %s", cadnum)
-                return cadnum
-
-    # ── Кроки 4–5: kadastrova-karta.com fallback ─────────────────────
-    kk_queries = [
-        " ".join(p for p in [city_clean, street_clean, house_orig] if p),
-        " ".join(p for p in [city_clean, street_clean] if p),
-    ]
-    for q in kk_queries:
-        if not q:
-            continue
+    for q in queries:
         cadnum = _search_kadastrova_karta(q, house_orig)
         if cadnum:
-            logger.debug("Знайдено kadastrova-karta.com: %s (запит: '%s')", cadnum, q)
+            logger.debug("Знайдено kadastrova-karta.com: %s (запит '%s')", cadnum, q)
             return cadnum
 
     return None
@@ -322,7 +256,7 @@ def fill_missing_cadastral_numbers(max_count: int | None = None) -> int:
     """Знайти кадастрові номери для всіх об'єктів у БД, де вони відсутні.
 
     Запитує БД, фільтрує за типами (Будинок, Ділянка, Комерційна),
-    шукає номер через kadastr.live і зберігає результат назад у БД.
+    шукає номер через zem.center і зберігає результат назад у БД.
 
     Args:
         max_count: Обмежити кількість оброблюваних об'єктів (None = без обмежень).

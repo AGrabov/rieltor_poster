@@ -94,3 +94,29 @@ def test_search_kadastrova_karta_picks_exact_house(monkeypatch):
 
     monkeypatch.setattr(cl.requests, "get", fake_get)
     assert cl._search_kadastrova_karta("Київ Львівська 19", "19") == "8000000000:75:214:0010"
+
+
+def test_lookup_uses_zem_first(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cl, "_search_zem_center", lambda q, h: calls.append(("zem", q)) or "8000000000:75:214:0010")
+    monkeypatch.setattr(cl, "_search_kadastrova_karta", lambda q, h: calls.append(("kk", q)) or None)
+    result = cl.lookup_cadastral_number("Київ", "вул. Львівська", "19")
+    assert result == "8000000000:75:214:0010"
+    # zem.center called first, kadastrova-karta not reached
+    assert calls[0][0] == "zem"
+    assert all(c[0] != "kk" for c in calls)
+
+
+def test_lookup_falls_back_to_kadastrova(monkeypatch):
+    monkeypatch.setattr(cl, "_search_zem_center", lambda q, h: None)
+    monkeypatch.setattr(cl, "_search_kadastrova_karta", lambda q, h: "8000000000:75:214:0099")
+    result = cl.lookup_cadastral_number("Київ", "вул. Львівська", "19")
+    assert result == "8000000000:75:214:0099"
+
+
+def test_lookup_no_kadastr_live_references():
+    # kadastr.live is dead — ensure it is fully removed from the module
+    import inspect
+    src = inspect.getsource(cl)
+    assert "kadastr.live" not in src
+    assert "_search_raw" not in src
