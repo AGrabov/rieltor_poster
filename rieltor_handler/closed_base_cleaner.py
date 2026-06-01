@@ -29,10 +29,13 @@ class ClosedBaseCleaner:
     TABLE = "table"
     ROW_RADIO = "td.MuiTableCell-paddingCheckbox .MuiRadio-root"
     TAB_LABEL = "Закрита база"
+    # Toolbar action button (унікальний — інші дії: Опублікувати/Редагувати/В чорновики/В угоди)
     DELETE_BUTTON = "button:has-text('Видалити')"
     DIALOG = "div[role='dialog']"
+    # Діалог «Видалити оголошення»: радіогрупа з 6 причин, перша — «Просто не хочу рекламувати»
     DIALOG_REASON_RADIO = "div[role='dialog'] .MuiRadio-root"
-    DIALOG_CONFIRM = "div[role='dialog'] button:has-text('Видалити')"
+    # Підтвердження в діалозі — кнопка «OK» (НЕ «Видалити»: такої в діалозі немає)
+    DIALOG_CONFIRM = "div[role='dialog'] button:has-text('OK')"
 
     RENDER_TIMEOUT_MS = 15_000
 
@@ -42,8 +45,15 @@ class ClosedBaseCleaner:
     # ── навігація / рендер ───────────────────────────────────────────
 
     def _goto_base(self) -> None:
-        """Перейти на сторінку «Закритої бази» й дочекатися появи таблиці."""
-        self.page.goto(self.CLOSED_BASE_URL, wait_until="domcontentloaded")
+        """Перейти на сторінку «Закритої бази» й дочекатися завантаження таблиці.
+
+        SPA-таблиця довантажується асинхронно, тому чекаємо networkidle
+        (з fallback, бо на сторінках із поллінгом networkidle може не настати).
+        """
+        try:
+            self.page.goto(self.CLOSED_BASE_URL, wait_until="networkidle")
+        except PlaywrightTimeoutError:
+            pass  # навігація відбулась, але мережа не «затихла» — продовжуємо
         try:
             self.page.wait_for_selector(self.TABLE, timeout=self.RENDER_TIMEOUT_MS)
         except PlaywrightTimeoutError:
@@ -83,7 +93,10 @@ class ClosedBaseCleaner:
             return False
 
         self.page.locator(self.ROW_RADIO).first.click()
-        self.page.locator(self.DELETE_BUTTON).first.click()
+        # Дочекатися готовності тулбару перед кліком (інакше клік ловить таймаут)
+        delete_btn = self.page.locator(self.DELETE_BUTTON).first
+        delete_btn.wait_for(state="visible", timeout=self.RENDER_TIMEOUT_MS)
+        delete_btn.click()
 
         dialog = self.page.locator(self.DIALOG)
         dialog.wait_for(state="visible")
