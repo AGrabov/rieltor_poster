@@ -349,7 +349,7 @@ with right:
     with st.container(border=True):
         cad1, cad2 = st.columns([3, 1])
         with cad1:
-            st.markdown("**Кадастрові номери** (БД → kadastr.live)")
+            st.markdown("**Кадастрові номери** (БД → zem.center)")
             st.caption("Шукає кадастровий номер для об'єктів без нього (Будинок, Ділянка, Комерційна).")
         with cad2:
             max_count_cad = st.number_input(
