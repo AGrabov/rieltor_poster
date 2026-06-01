@@ -393,7 +393,10 @@ with right:
     # Очистка сміття на rieltor.ua
     with st.container(border=True):
         st.markdown("**🗑 Очистити сміття на rieltor.ua**")
-        st.caption("Видаляє ВСІ об'єкти із «Закритої бази» (неудачні/неправильні чернетки). Незворотно!")
+        st.caption(
+            "Видаляє ВСІ об'єкти із «Закритої бази», потім остаточно чистить «Видалені». "
+            "Неудачні/неправильні чернетки. Незворотно!"
+        )
         tc1, tc2 = st.columns([3, 1])
         with tc1:
             confirm_cleanup = st.checkbox(
