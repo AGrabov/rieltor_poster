@@ -92,16 +92,28 @@ class ClosedBaseCleaner:
             logger.debug("Не вдалося прочитати лічильник вкладки '%s', рахуємо рядки", label)
         return self._wait_for_rows()
 
-    def _delete_one(self, url: str, action_selector: str, pick_reason: bool) -> bool:
+    def _delete_one(
+        self, url: str, action_selector: str, pick_reason: bool, renavigate: bool = True
+    ) -> bool:
         """Видалити перший об'єкт на поточній вкладці. False, якщо список порожній.
 
         Args:
-            url:             URL вкладки (для повторної навігації після видалення).
+            url:             URL вкладки (для повторної навігації / перевірки порожнечі).
             action_selector: селектор кнопки дії («Видалити» / «Видалити назавжди»).
             pick_reason:     чи треба обрати причину в діалозі (стадія 1).
+            renavigate:      True — перезавантажувати список після кожного видалення
+                             (стадія 1). False — видаляти «на місці» без перезавантаження
+                             (стадія 2: список оновлюється сам), із перезавантаженням лише
+                             коли видима сторінка спорожніла (могли лишитись об'єкти далі).
         """
         if self._wait_for_rows() == 0:
-            return False
+            if renavigate:
+                return False
+            # «На місці»: сторінка могла лише вичерпати видимі 25 рядків —
+            # перезавантажуємо раз, щоб підтягнути наступні (або підтвердити порожнечу).
+            self._goto(url)
+            if self._wait_for_rows() == 0:
+                return False
 
         self.page.locator(self.ROW_RADIO).first.click()
         # Дочекатися готовності тулбару перед кліком (інакше клік ловить таймаут)
@@ -116,8 +128,9 @@ class ClosedBaseCleaner:
             self.page.locator(self.DIALOG_REASON_RADIO).first.click()
         self.page.locator(self.DIALOG_CONFIRM).first.click()
         dialog.wait_for(state="detached")
-        self.page.wait_for_timeout(800)  # let the request settle
-        self._goto(url)  # refresh the list before the next deletion
+        self.page.wait_for_timeout(800)  # let the request settle / list update in place
+        if renavigate:
+            self._goto(url)  # refresh the list before the next deletion
         return True
 
     # ── стадія 1: «Закрита база» ─────────────────────────────────────
@@ -143,8 +156,10 @@ class ClosedBaseCleaner:
         return self._badge(self.TAB_DELETED)
 
     def _purge_first(self) -> bool:
-        """Остаточно видалити перший об'єкт із «Видалені»."""
-        return self._delete_one(self.DELETED_URL, self.DELETE_FOREVER_BUTTON, pick_reason=False)
+        """Остаточно видалити перший об'єкт із «Видалені» (без перезавантаження сторінки)."""
+        return self._delete_one(
+            self.DELETED_URL, self.DELETE_FOREVER_BUTTON, pick_reason=False, renavigate=False
+        )
 
     def purge_deleted(self, max_count: int | None = None, dry_run: bool = False) -> int:
         """Стадія 2: остаточно видалити об'єкти із «Видалені»."""
