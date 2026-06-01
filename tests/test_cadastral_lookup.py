@@ -74,3 +74,23 @@ def test_search_zem_center_handles_error(monkeypatch):
 
     monkeypatch.setattr(cl.requests, "get", fake_get)
     assert cl._search_zem_center("Київ Львівська 19", "19") is None
+
+
+_KK_HTML = """
+<a data-action="search#linkClicked">
+  <div class="font-bold">8000000000:75:214:0033</div>
+  <div class="text-gray-500">м.Київ, вулиця Львівська, 19-а</div>
+</a>
+<a data-action="search#linkClicked">
+  <div class="font-bold">8000000000:75:214:0010</div>
+  <div class="text-gray-500">м.Київ, вулиця Львівська, 19</div>
+</a>
+"""
+
+
+def test_search_kadastrova_karta_picks_exact_house(monkeypatch):
+    def fake_get(url, **kwargs):
+        return _FakeResp(text=_KK_HTML)
+
+    monkeypatch.setattr(cl.requests, "get", fake_get)
+    assert cl._search_kadastrova_karta("Київ Львівська 19", "19") == "8000000000:75:214:0010"

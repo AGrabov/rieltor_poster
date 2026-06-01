@@ -158,8 +158,6 @@ def _search_kadastrova_karta(query: str, house: str) -> str | None:
     """Пошук кадастрового номера через kadastrova-karta.com (fallback).
 
     Парсить Turbo Stream HTML відповідь — без Playwright.
-    Повертає перший cadnum, де адреса містить номер будинку,
-    або перший валідний cadnum якщо точного збігу немає.
     """
     try:
         resp = requests.get(
@@ -173,9 +171,7 @@ def _search_kadastrova_karta(query: str, house: str) -> str | None:
         resp.raise_for_status()
 
         soup = BeautifulSoup(resp.text, "html.parser")
-        house_norm = house.strip().lower()
-        first_valid: str | None = None
-
+        candidates: list[tuple[str, str]] = []
         for a_tag in soup.select("a[data-action='search#linkClicked']"):
             cadnum_div = a_tag.select_one("div.font-bold")
             addr_div = a_tag.select_one("div.text-gray-500")
@@ -184,15 +180,9 @@ def _search_kadastrova_karta(query: str, house: str) -> str | None:
             cadnum = cadnum_div.get_text(strip=True)
             if not _CADNUM_RE.match(cadnum):
                 continue
-            if first_valid is None:
-                first_valid = cadnum
-            if house_norm and addr_div:
-                addr_text = addr_div.get_text(strip=True).lower()
-                # Match ", 45/3" or ", 45 " — house at end or before comma
-                if re.search(r"[,\s]" + re.escape(house_norm) + r"(\s*$|[,\s])", addr_text):
-                    return cadnum
-
-        return first_valid
+            addr = addr_div.get_text(strip=True) if addr_div else ""
+            candidates.append((cadnum, addr))
+        return _pick_by_house(candidates, house)
     except requests.exceptions.Timeout:
         logger.debug("Timeout kadastrova-karta.com для '%s'", query)
         return None
