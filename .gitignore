@@ -136,6 +136,7 @@ dmypy.json
 
 # Project specific
 config.ini
+.refact
 
 # History
 .history/
@@ -147,15 +148,17 @@ html/
 debug_html/
 old/
 *.ipynb
+
+# JSON: ігноруємо транзитні дампи, але тримаємо схеми форм у git
 *.json
+!schemas/schema_dump/**/*.json
 
 # Файлы фото
 offers/pics/
 *.jpg
 *.jpeg
 
-# gitignore
-.gitignore
+# Legacy / example files
 DICT_FILLER_README.md
 example_dict_filler_usage.py
 example_html_parser_usage.py
@@ -166,4 +169,6 @@ test_html_parser.py
 # Claude
 .claude/
 CLAUDE.md
-.playwright-mcp/page-2026-04-13T12-54-39-270Z.yml
+.playwright-mcp
+logs/schema_collector.log.1
+logs/schema_collector.log.2
