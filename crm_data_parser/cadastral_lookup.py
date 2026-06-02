@@ -14,6 +14,7 @@ try:
     from .address_normalize import (
         fold_cyrillic,
         normalize_city,
+        normalize_house,
         street_type_canon,
         strip_street_type,
     )
@@ -21,6 +22,7 @@ except ImportError:  # direct-run fallback
     from address_normalize import (  # noqa: I001
         fold_cyrillic,
         normalize_city,
+        normalize_house,
         street_type_canon,
         strip_street_type,
     )
@@ -50,12 +52,16 @@ _CADASTRAL_SCHEMA_TYPES = frozenset({"будинок", "ділянка", "ком
 
 
 def _house_matches(addr: str, house: str) -> bool:
-    """Точний збіг номера будинку як окремого токена (``19``, не ``19-а``)."""
-    h = house.strip().lower()
+    """Збіг номера будинку, толерантний до формату (``19А`` = ``19-а`` = ``19 а``).
+
+    Порівнює канон ``normalize_house`` номера CRM з кожним комою-відділеним
+    сегментом адреси кандидата (номер будинку в реєстрі стоїть в окремому
+    сегменті). ``19`` і ``19-а`` лишаються різними (різні ділянки).
+    """
+    h = normalize_house(house)
     if not h:
         return False
-    exact_re = re.compile(rf"(?:^|[,\s])({re.escape(h)})(?:[,\s]|$)")
-    return bool(exact_re.search(addr.lower()))
+    return any(normalize_house(seg) == h for seg in addr.split(","))
 
 
 def _street_matches(street: str, addr: str) -> bool:
@@ -197,8 +203,10 @@ def lookup_cadastral_number(city: str, street: str, house: str) -> str | None:
     street_clean = strip_street_type(street)
     city_clean = normalize_city(city)
     house_orig = house.strip()
+    # Compact house for QUERY recall — "19 б" splits and returns 0, "19б" works.
+    house_query = normalize_house(house_orig)
 
-    full = " ".join(p for p in [city_clean, street_clean, house_orig] if p)
+    full = " ".join(p for p in [city_clean, street_clean, house_query] if p)
     short = " ".join(p for p in [city_clean, street_clean] if p)
     # Preserve order, drop empties and duplicates (full == short when no house)
     queries: list[str] = []

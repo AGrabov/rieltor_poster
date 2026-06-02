@@ -51,6 +51,19 @@ def test_pick_verified_empty_candidates_returns_none():
     assert cl._pick_verified([], "Львівська", "19") is None
 
 
+# ── house-format tolerance (19А = 19-а = 19 а) ────────────────────────────
+def test_pick_verified_house_letter_variants_match():
+    candidates = [("8000000000:75:214:0033", "м.Київ, вулиця Львівська, 19-а")]
+    for crm_house in ("19А", "19-а", "19 а", "19а"):
+        assert cl._pick_verified(candidates, "Львівська", crm_house) == "8000000000:75:214:0033"
+
+
+def test_pick_verified_bare_number_differs_from_lettered():
+    # "19" and "19-а" are different parcels — must not match.
+    candidates = [("8000000000:75:214:0033", "м.Київ, вулиця Львівська, 19-а")]
+    assert cl._pick_verified(candidates, "Львівська", "19") is None
+
+
 # ── street-type disambiguation (вул./пров./пл. Шевченка) ──────────────────
 _SHEVCHENKA = [
     ("8000000000:01:001:0001", "м.Київ, вулиця Шевченка, 19"),

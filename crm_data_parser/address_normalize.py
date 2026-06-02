@@ -117,6 +117,9 @@ _TYPE_CANON: dict[str, str] = {
 }
 _TYPE_TOKEN_RE = re.compile(r"[А-Яа-яІіЇїЄєҐґ\-]+")
 
+# Префікс номера будинку ("Будинок 6" → "6", "буд. 6" → "6").
+_HOUSE_PREFIX_RE = re.compile(r"^\s*(?:будинок|буд|дом)\.?\s+", re.IGNORECASE)
+
 # Folding для ПОРІВНЯННЯ (не для відображення): звести RU/UA-специфічні літери.
 _FOLD_MAP = str.maketrans(
     {
@@ -160,6 +163,17 @@ def normalize_city(city: str) -> str:
 def strip_street_type(street: str) -> str:
     """Зрізати тип вулиці ('вул.'/'ул.', 'пров.'/'пер.', 'просп.' тощо)."""
     return _STREET_TYPE_RE.sub("", street).strip()
+
+
+def normalize_house(house: str) -> str:
+    """Канонічна форма номера будинку для порівняння.
+
+    Дзеркалить site-логіку ``normHouse`` (autocomplete.py): прибирає пробіли
+    й дефіси, lower. Додатково зрізає префікс «Будинок/буд.». Тож
+    ``19А`` = ``19-а`` = ``19 а`` = ``Будинок 19а``.
+    """
+    h = _HOUSE_PREFIX_RE.sub("", house or "")
+    return re.sub(r"[\s\-]+", "", h).lower()
 
 
 def street_type_canon(text: str) -> str:

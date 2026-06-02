@@ -91,6 +91,33 @@ def test_street_type_canon_finds_type_inside_address():
     assert an.street_type_canon("м.Київ, Голосіївський р-н, вулиця Львівська, 19") == "вул"
 
 
+# ── normalize_house ───────────────────────────────────────────────────────
+def test_normalize_house_unifies_letter_variants():
+    # Mirrors the site's normHouse: "20а" = "20-а" = "20 а" = "20А".
+    assert (
+        an.normalize_house("20а")
+        == an.normalize_house("20-а")
+        == an.normalize_house("20 а")
+        == an.normalize_house("20А")
+    )
+
+
+def test_normalize_house_keeps_fraction():
+    assert an.normalize_house("1-3/5") == "13/5"
+
+
+def test_normalize_house_strips_budynok_prefix():
+    assert an.normalize_house("Будинок 6") == "6"
+
+
+def test_normalize_house_distinct_houses_differ():
+    assert an.normalize_house("19") != an.normalize_house("19а")
+
+
+def test_normalize_house_empty():
+    assert an.normalize_house("") == ""
+
+
 # ── fold_cyrillic ─────────────────────────────────────────────────────────
 def test_fold_cyrillic_unifies_i_and_yi():
     # Russian и and Ukrainian і fold to the same form
