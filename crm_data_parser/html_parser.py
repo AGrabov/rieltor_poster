@@ -12,6 +12,7 @@ from typing import Any
 
 from bs4 import BeautifulSoup
 
+from crm_data_parser.address_normalize import normalize_city, strip_street_type
 from crm_data_parser.description_analyzer import DescriptionAnalyzer
 from schemas import ADDRESS_LABELS, load_offer_schema
 from setup_logger import setup_logger
@@ -101,28 +102,6 @@ _INFRA_TO_NEARBY = {
     "відпочинок, розваги": "Розважальні заклади",
     "фітнес-центри": "Розважальні заклади",
 }
-
-
-_STREET_PREFIXES = (
-    "вулиця ", "вул. ", "вул.",
-    "проспект ", "просп. ", "просп.",
-    "бульвар ", "бульв. ", "бульв.",
-    "площа ", "пл. ", "пл.",
-    "провулок ", "пров. ", "пров.",
-    "шосе ",
-    "набережна ",
-    "узвіз ",
-)
-
-
-def _strip_street_prefix(value: str) -> str:
-    """Видалити тип вулиці з початку рядка (вул., просп., бульв. тощо)."""
-    s = value.strip()
-    s_lower = s.lower()
-    for prefix in _STREET_PREFIXES:
-        if s_lower.startswith(prefix.lower()):
-            return s[len(prefix):].strip()
-    return s
 
 
 class HTMLOfferParser:
@@ -400,9 +379,7 @@ class HTMLOfferParser:
             if "apartment" not in result:
                 result["apartment"] = {}
             existing_desc = result["apartment"].get("description", "")
-            result["apartment"]["description"] = (
-                existing_desc + f"\n\nАртикул: #{result['article']}"
-            ).strip()
+            result["apartment"]["description"] = (existing_desc + f"\n\nАртикул: #{result['article']}").strip()
 
         # Personal notes: CRM link → Відповідальний (name, phone only) → Власник (if available)
         notes_parts: list[str] = []
@@ -578,10 +555,12 @@ class HTMLOfferParser:
                         schema_label = field_info["label"]
                         value = value_text
 
-                        # Clean up prefixes
+                        # Clean up prefixes / normalize RU→UA
                         label_lower = schema_label.lower().strip()
                         if label_lower == "вулиця":
-                            value = _strip_street_prefix(value)
+                            value = strip_street_type(value)
+                        elif label_lower == "місто":
+                            value = normalize_city(value)
                         elif label_lower == "новобудова":
                             if value.strip().lower() == "ні":
                                 continue  # treat "Ні" as no ЖК
@@ -1092,8 +1071,8 @@ class HTMLOfferParser:
             "площа загальна,м²": "загальна площа, м²",
             "площа житлова,м²": "житлова площа, м²",
             "площа кухні,м²": "площа кухні, м²",
-            "площа ділянки,соток": "площа ділянки, соток",   # Будинок
-            "площа загальна,соток": "загальна площа, соток", # Ділянка
+            "площа ділянки,соток": "площа ділянки, соток",  # Будинок
+            "площа загальна,соток": "загальна площа, соток",  # Ділянка
             "територія": "площа ділянки, соток",
             "территория": "площа ділянки, соток",
             "кіл. кімнат": "число кімнат",
@@ -1165,10 +1144,7 @@ class HTMLOfferParser:
         # Fallback: estimate kitchen area from total area when both sub-areas are missing.
         # Only applies to residential properties (Квартира, Будинок, Таунхаус).
         _residential = {"квартира", "будинок", "таунхаус", "котедж"}
-        if (
-            not data.get("Площа кухні, м²")
-            and str(data.get("property_type", "")).lower() in _residential
-        ):
+        if not data.get("Площа кухні, м²") and str(data.get("property_type", "")).lower() in _residential:
             total = data.get("Загальна площа, м²")
             if total:
                 try:
@@ -1221,9 +1197,11 @@ class HTMLOfferParser:
 
         # Fallback: estimate room count from total/living area when missing.
         # Applies to Квартира and Будинок — both have "Число кімнат" as a required select.
-        if (
-            not data.get("Число кімнат")
-            and str(data.get("property_type", "")).lower() in ("квартира", "будинок", "таунхаус", "котедж")
+        if not data.get("Число кімнат") and str(data.get("property_type", "")).lower() in (
+            "квартира",
+            "будинок",
+            "таунхаус",
+            "котедж",
         ):
             area_raw = data.get("Загальна площа, м²") or data.get("Житлова площа, м²")
             if area_raw:
@@ -1252,9 +1230,7 @@ class HTMLOfferParser:
                                     rooms = opt
                                     break
                     data["Число кімнат"] = rooms
-                    logger.debug(
-                        "Число кімнат оцінено за площею %.1f м² → '%s'", area, rooms
-                    )
+                    logger.debug("Число кімнат оцінено за площею %.1f м² → '%s'", area, rooms)
                 except (ValueError, TypeError):
                     pass
 

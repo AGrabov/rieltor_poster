@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 
 import requests
 from bs4 import BeautifulSoup
 
 from setup_logger import setup_logger
 
+try:
+    from .address_normalize import fold_cyrillic, normalize_city, strip_street_type
+except ImportError:  # direct-run fallback
+    from address_normalize import fold_cyrillic, normalize_city, strip_street_type  # noqa: I001
+
 logger = setup_logger(__name__)
+
+# Мінімальна схожість назви вулиці (folded) для впевненого збігу.
+_STREET_MATCH_THRESHOLD = 0.78
+_WORD_RE = re.compile(r"[А-Яа-яІіЇїЄєҐґA-Za-z]+")
 
 _CADNUM_RE = re.compile(r"^\d{10}:\d{2}:\d{3}:\d{4}$")  # full-string match (for API results)
 _CADNUM_IN_TEXT_RE = re.compile(r"\d{10}:\d{2}:\d{3}:\d{4}")  # substring search (for descriptions)
@@ -28,66 +38,51 @@ _ZEM_HEADERS = {
 # Schema types (rieltor.ua) that have a "Кадастровий номер" field
 _CADASTRAL_SCHEMA_TYPES = frozenset({"будинок", "ділянка", "комерційна"})
 
-# Street-type prefixes to strip before querying (Ukrainian abbreviations + full forms).
-# More-specific alternatives listed before shorter ones to avoid partial matches
-# (e.g. "пров." must come before "пр-т" so "пр" alone is never stripped).
-_STREET_PREFIX_RE = re.compile(
-    r"^\s*("
-    r"провулок\.?\s*|пров\.?\s*|"
-    r"проспект\.?\s*|просп\.?\s*|пр-т\.?\s*|"
-    r"вулиця\.?\s*|вул\.?\s*|"
-    r"бульвар\.?\s*|бул\.?\s*|"
-    r"площа\.?\s*|пл\.?\s*|"
-    r"шосе\.?\s*|шос\.?\s*|"
-    r"набережна\.?\s*|наб\.?\s*|"
-    r"тупик\.?\s*|туп\.?\s*|"
-    r"дорога\.?\s*|дор\.?\s*|"
-    r"мікрорайон\.?\s*|мкр\.?\s*|"
-    r"квартал\.?\s*|кварт\.?\s*|кв-л\.?\s*"
-    r")",
-    re.IGNORECASE,
-)
+
+def _house_matches(addr: str, house: str) -> bool:
+    """Точний збіг номера будинку як окремого токена (``19``, не ``19-а``)."""
+    h = house.strip().lower()
+    if not h:
+        return False
+    exact_re = re.compile(rf"(?:^|[,\s])({re.escape(h)})(?:[,\s]|$)")
+    return bool(exact_re.search(addr.lower()))
 
 
-def _strip_street_prefix(street: str) -> str:
-    """Прибрати скорочення типу вулиці ('вул.', 'пр-т', 'бул.' тощо)."""
-    return _STREET_PREFIX_RE.sub("", street).strip()
+def _street_matches(street: str, addr: str) -> bool:
+    """Чи присутня назва вулиці ``street`` в адресі кандидата (фуззі, RU↔UA).
 
-
-def _pick_by_house(candidates: list[tuple[str, str]], house: str) -> str | None:
-    """Обрати найкращий кадастровий номер зі списку (cadnum, address).
-
-    Пріоритет:
-      1. Точний збіг номера будинку (окремий токен, без літери/дефіса після).
-      2. Збіг із суфіксом (``19-а``, ``19/3``, ``19а``).
-      3. Перший валідний номер.
+    Порівнює ``fold_cyrillic``-форми, толеруючи и↔і та інші RU/UA відмінності.
+    Перевіряє окремі токени адреси та сусідні пари (для двослівних назв).
     """
-    if not candidates:
-        return None
-    house_norm = house.strip().lower()
-    if not house_norm:
-        return candidates[0][0]
+    q = fold_cyrillic(strip_street_type(street))
+    if not q:
+        return False
+    tokens = [fold_cyrillic(t) for t in _WORD_RE.findall(addr)]
+    tokens = [t for t in tokens if t]
+    phrases = list(tokens)
+    phrases += [f"{tokens[i]} {tokens[i + 1]}" for i in range(len(tokens) - 1)]
+    return any(SequenceMatcher(None, q, p).ratio() >= _STREET_MATCH_THRESHOLD for p in phrases)
 
-    h = re.escape(house_norm)
-    exact_re = re.compile(rf"(?:^|[,\s])({h})(?:[,\s]|$)")
+
+def _pick_verified(candidates: list[tuple[str, str]], street: str, house: str) -> str | None:
+    """Обрати кадастровий номер лише за ВПЕВНЕНОГО збігу.
+
+    Повертає cadnum першого кандидата, де точно збігається номер будинку
+    (окремий токен) І фуззі-збігається назва вулиці. Інакше — ``None``
+    (поле краще лишити порожнім: чернетку на rieltor.ua не відредагувати).
+    """
     for cadnum, addr in candidates:
-        if exact_re.search(addr.lower()):
+        if _house_matches(addr, house) and _street_matches(street, addr):
             return cadnum
-
-    loose_re = re.compile(rf"(?:^|[,\s])({h})(?=[\s,/\-а-яіїєґa-z])", re.IGNORECASE)
-    for cadnum, addr in candidates:
-        if loose_re.search(addr.lower()):
-            return cadnum
-
-    return candidates[0][0]
+    return None
 
 
-def _search_zem_center(query: str, house: str) -> str | None:
+def _search_zem_center(query: str, street: str, house: str) -> str | None:
     """Пошук кадастрового номера через zem.center JSON API (основне джерело).
 
     GET https://api.zem.center/api/search?q=<query>&size=20 → {"items": [...]}.
-    Кожен item має ``cadnum`` та ``address``. Повертає найкращий збіг за
-    номером будинку або None.
+    Кожен item має ``cadnum`` та ``address``. Повертає впевнений збіг за
+    номером будинку та назвою вулиці або None.
     """
     try:
         resp = requests.get(
@@ -106,7 +101,7 @@ def _search_zem_center(query: str, house: str) -> str | None:
             cadnum = (item.get("cadnum") or "").strip()
             if _CADNUM_RE.match(cadnum):
                 candidates.append((cadnum, item.get("address") or ""))
-        return _pick_by_house(candidates, house)
+        return _pick_verified(candidates, street, house)
     except requests.exceptions.Timeout:
         logger.debug("Timeout zem.center для '%s'", query)
         return None
@@ -115,7 +110,7 @@ def _search_zem_center(query: str, house: str) -> str | None:
         return None
 
 
-def _search_kadastrova_karta(query: str, house: str) -> str | None:
+def _search_kadastrova_karta(query: str, street: str, house: str) -> str | None:
     """Пошук кадастрового номера через kadastrova-karta.com (fallback).
 
     Парсить Turbo Stream HTML відповідь — без Playwright.
@@ -143,7 +138,7 @@ def _search_kadastrova_karta(query: str, house: str) -> str | None:
                 continue
             addr = addr_div.get_text(strip=True) if addr_div else ""
             candidates.append((cadnum, addr))
-        return _pick_by_house(candidates, house)
+        return _pick_verified(candidates, street, house)
     except requests.exceptions.Timeout:
         logger.debug("Timeout kadastrova-karta.com для '%s'", query)
         return None
@@ -164,8 +159,9 @@ def lookup_cadastral_number(city: str, street: str, house: str) -> str | None:
     Returns:
         Рядок у форматі ``XXXXXXXXXX:XX:XXX:XXXX`` або ``None``, якщо не знайдено.
     """
-    street_clean = _strip_street_prefix(street)
-    city_clean = city.strip()
+    # RU→UA: місто за словником, тип вулиці зрізаємо (інакше реєстр дає 0).
+    street_clean = strip_street_type(street)
+    city_clean = normalize_city(city)
     house_orig = house.strip()
 
     full = " ".join(p for p in [city_clean, street_clean, house_orig] if p)
@@ -179,13 +175,13 @@ def lookup_cadastral_number(city: str, street: str, house: str) -> str | None:
         return None
 
     for q in queries:
-        cadnum = _search_zem_center(q, house_orig)
+        cadnum = _search_zem_center(q, street_clean, house_orig)
         if cadnum:
             logger.debug("Знайдено zem.center: %s (запит '%s')", cadnum, q)
             return cadnum
 
     for q in queries:
-        cadnum = _search_kadastrova_karta(q, house_orig)
+        cadnum = _search_kadastrova_karta(q, street_clean, house_orig)
         if cadnum:
             logger.debug("Знайдено kadastrova-karta.com: %s (запит '%s')", cadnum, q)
             return cadnum
@@ -247,9 +243,6 @@ def enrich_offer_data_with_cadastral(offer_data: dict) -> bool:
         )
         return True
     return False
-
-
-
 
 
 def fill_missing_cadastral_numbers(max_count: int | None = None) -> int:

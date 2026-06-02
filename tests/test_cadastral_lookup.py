@@ -1,39 +1,54 @@
-"""Tests for cadastral number lookup: house matching + source parsers."""
+"""Tests for cadastral number lookup: strict house+street match + parsers."""
 
 from __future__ import annotations
 
 from crm_data_parser import cadastral_lookup as cl
 
 
-def test_pick_by_house_prefers_exact_over_suffix():
-    # API returns 19-а, 19, 19-і in this order; exact "19" must win
+# ── _pick_verified: strict house + street match ───────────────────────────
+def test_pick_verified_returns_exact_house_on_matching_street():
     candidates = [
         ("8000000000:75:214:0033", "м.Київ, вулиця Львівська, 19-а"),
         ("8000000000:75:214:0010", "м.Київ, вулиця Львівська, 19"),
         ("8000000000:75:214:0012", "м.Київ, вулиця Львівська, 19-і"),
     ]
-    assert cl._pick_by_house(candidates, "19") == "8000000000:75:214:0010"
+    assert cl._pick_verified(candidates, "Львівська", "19") == "8000000000:75:214:0010"
 
 
-def test_pick_by_house_falls_back_to_suffix_when_no_exact():
+def test_pick_verified_no_exact_house_returns_none():
+    # Only suffixed houses (19-а, 19-і) — strict match must NOT fill.
     candidates = [
         ("8000000000:75:214:0033", "м.Київ, вулиця Львівська, 19-а"),
         ("8000000000:75:214:0012", "м.Київ, вулиця Львівська, 19-і"),
     ]
-    # No bare "19" → first suffix match returned
-    assert cl._pick_by_house(candidates, "19") == "8000000000:75:214:0033"
+    assert cl._pick_verified(candidates, "Львівська", "19") is None
 
 
-def test_pick_by_house_no_house_returns_first():
+def test_pick_verified_street_mismatch_returns_none():
+    # House 19 matches but the street is different → do not fill.
     candidates = [
-        ("8000000000:75:214:0033", "м.Київ, вулиця Львівська, 19-а"),
+        ("8000000000:75:214:0010", "м.Київ, вулиця Садова, 19"),
+    ]
+    assert cl._pick_verified(candidates, "Львівська", "19") is None
+
+
+def test_pick_verified_empty_house_returns_none():
+    candidates = [
         ("8000000000:75:214:0010", "м.Київ, вулиця Львівська, 19"),
     ]
-    assert cl._pick_by_house(candidates, "") == "8000000000:75:214:0033"
+    assert cl._pick_verified(candidates, "Львівська", "") is None
 
 
-def test_pick_by_house_empty_candidates_returns_none():
-    assert cl._pick_by_house([], "19") is None
+def test_pick_verified_tolerates_ru_ua_spelling():
+    # CRM street "Пушкинська" (RU и) vs registry "Пушкінська" (UA і).
+    candidates = [
+        ("8000000000:76:024:0044", "м. Київ, вул. Пушкінська, 1"),
+    ]
+    assert cl._pick_verified(candidates, "Пушкинська", "1") == "8000000000:76:024:0044"
+
+
+def test_pick_verified_empty_candidates_returns_none():
+    assert cl._pick_verified([], "Львівська", "19") is None
 
 
 class _FakeResp:
@@ -65,7 +80,7 @@ def test_search_zem_center_picks_exact_house(monkeypatch):
         return _FakeResp(json_data=_ZEM_SAMPLE)
 
     monkeypatch.setattr(cl.requests, "get", fake_get)
-    assert cl._search_zem_center("Київ Львівська 19", "19") == "8000000000:75:214:0010"
+    assert cl._search_zem_center("Київ Львівська 19", "Львівська", "19") == "8000000000:75:214:0010"
 
 
 def test_search_zem_center_handles_error(monkeypatch):
@@ -73,7 +88,7 @@ def test_search_zem_center_handles_error(monkeypatch):
         raise cl.requests.exceptions.Timeout("slow")
 
     monkeypatch.setattr(cl.requests, "get", fake_get)
-    assert cl._search_zem_center("Київ Львівська 19", "19") is None
+    assert cl._search_zem_center("Київ Львівська 19", "Львівська", "19") is None
 
 
 _KK_HTML = """
@@ -93,23 +108,40 @@ def test_search_kadastrova_karta_picks_exact_house(monkeypatch):
         return _FakeResp(text=_KK_HTML)
 
     monkeypatch.setattr(cl.requests, "get", fake_get)
-    assert cl._search_kadastrova_karta("Київ Львівська 19", "19") == "8000000000:75:214:0010"
+    got = cl._search_kadastrova_karta("Київ Львівська 19", "Львівська", "19")
+    assert got == "8000000000:75:214:0010"
+
+
+def test_lookup_normalizes_city_and_strips_street(monkeypatch):
+    seen = {}
+
+    def fake_zem(query, street, house):
+        seen["query"] = query
+        seen["street"] = street
+        return "8000000000:75:214:0010"
+
+    monkeypatch.setattr(cl, "_search_zem_center", fake_zem)
+    # Russian city + Russian street type must be normalized before querying.
+    result = cl.lookup_cadastral_number("Киев", "ул. Львівська", "19")
+    assert result == "8000000000:75:214:0010"
+    assert "Київ" in seen["query"]
+    assert "ул." not in seen["query"]
+    assert seen["street"] == "Львівська"
 
 
 def test_lookup_uses_zem_first(monkeypatch):
     calls = []
-    monkeypatch.setattr(cl, "_search_zem_center", lambda q, h: calls.append(("zem", q)) or "8000000000:75:214:0010")
-    monkeypatch.setattr(cl, "_search_kadastrova_karta", lambda q, h: calls.append(("kk", q)) or None)
+    monkeypatch.setattr(cl, "_search_zem_center", lambda q, s, h: calls.append(("zem", q)) or "8000000000:75:214:0010")
+    monkeypatch.setattr(cl, "_search_kadastrova_karta", lambda q, s, h: calls.append(("kk", q)) or None)
     result = cl.lookup_cadastral_number("Київ", "вул. Львівська", "19")
     assert result == "8000000000:75:214:0010"
-    # zem.center called first, kadastrova-karta not reached
     assert calls[0][0] == "zem"
     assert all(c[0] != "kk" for c in calls)
 
 
 def test_lookup_falls_back_to_kadastrova(monkeypatch):
-    monkeypatch.setattr(cl, "_search_zem_center", lambda q, h: None)
-    monkeypatch.setattr(cl, "_search_kadastrova_karta", lambda q, h: "8000000000:75:214:0099")
+    monkeypatch.setattr(cl, "_search_zem_center", lambda q, s, h: None)
+    monkeypatch.setattr(cl, "_search_kadastrova_karta", lambda q, s, h: "8000000000:75:214:0099")
     result = cl.lookup_cadastral_number("Київ", "вул. Львівська", "19")
     assert result == "8000000000:75:214:0099"
 
@@ -117,6 +149,7 @@ def test_lookup_falls_back_to_kadastrova(monkeypatch):
 def test_lookup_no_kadastr_live_references():
     # kadastr.live is dead — ensure it is fully removed from the module
     import inspect
+
     src = inspect.getsource(cl)
     assert "kadastr.live" not in src
     assert "_search_raw" not in src

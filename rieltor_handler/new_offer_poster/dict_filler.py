@@ -5,9 +5,11 @@ from typing import Any
 
 from playwright.sync_api import Locator, Page
 
+from crm_data_parser.address_normalize import normalize_city, strip_street_type
 from schemas import load_offer_schema
 from setup_logger import setup_logger
 
+from ..rieltor_session import RieltorErrorPageException
 from .address import AddressMixin
 from .autocomplete import AutocompleteMixin
 from .fields import FieldsMixin
@@ -16,101 +18,8 @@ from .misc import deal_text
 from .photos import _LABEL_DESCRIPTION, _LABEL_VIDEO_URL, PhotosMixin
 from .structure import StructureMixin
 from .validation import FormValidationError, ValidationMixin
-from ..rieltor_session import RieltorErrorPageException
 
 logger = setup_logger(__name__)
-
-_STREET_PREFIXES = (
-    # вулиця
-    "вулиця ", "вул. ", "вул.",
-    # проспект
-    "проспект ", "просп. ", "просп.", "пр-т ", "пр-т.",
-    # бульвар
-    "бульвар ", "бульв. ", "бульв.", "бул. ", "бул.",
-    # площа
-    "площа ", "пл. ", "пл.",
-    # провулок
-    "провулок ", "пров. ", "пров.", "пер. ", "пер.",
-    # шосе
-    "шосе ", "шос. ", "шос.",
-    # набережна
-    "набережна ", "наб. ", "наб.",
-    # узвіз
-    "узвіз ",
-    # тупик
-    "тупик ", "туп. ", "туп.",
-    # алея
-    "алея ", "ал. ", "ал.",
-    # проїзд
-    "проїзд ", "пр-д ", "пр-д.",
-    # лінія
-    "лінія ",
-    # квартал
-    "квартал ", "кварт. ", "кв-л ",
-    # дорога
-    "дорога ", "дор. ", "дор.",
-    # маршрут
-    "маршрут ",
-    # Russian prefixes (CRM може зберігати рос. назви)
-    "улица ", "ул. ", "ул.",
-    "переулок ", "пер. ",
-    "проезд ",
-    "шоссе ", "ш. ",
-    "набережная ", "наб. ",
-    "бульвар ",
-    "площадь ",
-    "проспект ",
-)
-
-
-def _strip_street_prefix(value: str) -> str:
-    """Видалити тип вулиці з початку рядка (вул., просп., бульв. тощо)."""
-    s = value.strip()
-    s_lower = s.lower()
-    for prefix in _STREET_PREFIXES:
-        if s_lower.startswith(prefix.lower()):
-            return s[len(prefix):].strip()
-    return s
-
-
-# Russian → Ukrainian city name normalization (CRM sometimes stores Russian names)
-_CITY_RU_TO_UA: dict[str, str] = {
-    "киев": "Київ",
-    "харьков": "Харків",
-    "одесса": "Одеса",
-    "днепр": "Дніпро",
-    "днепропетровск": "Дніпро",
-    "запорожье": "Запоріжжя",
-    "львов": "Львів",
-    "николаев": "Миколаїв",
-    "херсон": "Херсон",
-    "полтава": "Полтава",
-    "черкассы": "Черкаси",
-    "чернигов": "Чернігів",
-    "винница": "Вінниця",
-    "ровно": "Рівне",
-    "луцк": "Луцьк",
-    "ужгород": "Ужгород",
-    "тернополь": "Тернопіль",
-    "хмельницкий": "Хмельницький",
-    "ивано-франковск": "Івано-Франківськ",
-    "черновцы": "Чернівці",
-    "кропивницкий": "Кропивницький",
-    "житомир": "Житомир",
-    "сумы": "Суми",
-    "мариуполь": "Маріуполь",
-    "бровары": "Бровари",
-    "борисполь": "Бориспіль",
-    "буча": "Буча",
-    "ирпень": "Ірпінь",
-    "белая церковь": "Біла Церква",
-}
-
-
-def _normalize_city(city: str) -> str:
-    """Normalize Russian city names to Ukrainian equivalents."""
-    return _CITY_RU_TO_UA.get(city.lower().strip(), city)
-
 
 # Photo block keys (offer_data keys that contain photo/description dicts)
 _PHOTO_BLOCK_KEYS = frozenset({"apartment", "interior", "layout", "yard", "infrastructure"})
@@ -245,11 +154,7 @@ class DictOfferFormFiller(
             призначення_val = ""
             if fi_pryz:
                 призначення_val = str(offer_data.get(fi_pryz["label"], "")).lower()
-            vyd_default = (
-                "Офісний центр"
-                if "офіс" in призначення_val
-                else "Окремо стояча будівля"
-            )
+            vyd_default = "Офісний центр" if "офіс" in призначення_val else "Окремо стояча будівля"
             offer_data[fi["label"]] = vyd_default
             applied.append(f"{fi['label']}={vyd_default!r}")
 
@@ -267,8 +172,10 @@ class DictOfferFormFiller(
         if fi and fi["label"] not in offer_data:
             if str(self.property_type).lower() in ("будинок", "таунхаус", "котедж"):
                 options = fi.get("options", [])
-                default_house_type = "Будинок" if not options else next(
-                    (o for o in options if "будинок" in o.lower()), options[0] if options else "Будинок"
+                default_house_type = (
+                    "Будинок"
+                    if not options
+                    else next((o for o in options if "будинок" in o.lower()), options[0] if options else "Будинок")
                 )
                 offer_data[fi["label"]] = default_house_type
                 applied.append(f"{fi['label']}='{default_house_type}' (default)")
@@ -289,14 +196,9 @@ class DictOfferFormFiller(
                     if floors > 50:
                         offer_data[lbl] = 2
                         applied.append(f"{lbl}: {floors}→2 (перевищував ліміт 50)")
-                    elif (
-                        str(self.property_type).lower() in _HOUSE_FLOOR_TYPES
-                        and floors > _HOUSE_MAX_FLOORS
-                    ):
+                    elif str(self.property_type).lower() in _HOUSE_FLOOR_TYPES and floors > _HOUSE_MAX_FLOORS:
                         offer_data[lbl] = _HOUSE_MAX_FLOORS
-                        applied.append(
-                            f"{lbl}: {floors}→{_HOUSE_MAX_FLOORS} (ліміт для {self.property_type})"
-                        )
+                        applied.append(f"{lbl}: {floors}→{_HOUSE_MAX_FLOORS} (ліміт для {self.property_type})")
                 except (TypeError, ValueError):
                     pass
 
@@ -398,9 +300,7 @@ class DictOfferFormFiller(
                                 rooms_default = opt
                                 break
                     offer_data[fi_rooms["label"]] = rooms_default
-                    applied.append(
-                        f"{fi_rooms['label']}='{rooms_default}' (оцінено з {_area_lbl}={_area_val})"
-                    )
+                    applied.append(f"{fi_rooms['label']}='{rooms_default}' (оцінено з {_area_lbl}={_area_val})")
                 else:
                     logger.warning(
                         "Відсутнє поле '%s' для %s — форма може не пройти валідацію",
@@ -468,8 +368,7 @@ class DictOfferFormFiller(
             except Exception:
                 pass
             raise RieltorErrorPageException(
-                f"Сайт повернув сторінку помилки за адресою {url}. "
-                "Сторінка недоступна або сесія закінчилась."
+                f"Сайт повернув сторінку помилки за адресою {url}. Сторінка недоступна або сесія закінчилась."
             )
 
     def open(self) -> None:
@@ -716,10 +615,7 @@ class DictOfferFormFiller(
             elif isinstance(value, list):
                 if len(value) > 1:
                     # Multi-value: open listbox once and select all items at once
-                    items = [
-                        _SELECT_VALUE_MAP.get(self._to_text(v).lower().strip(), self._to_text(v))
-                        for v in value
-                    ]
+                    items = [_SELECT_VALUE_MAP.get(self._to_text(v).lower().strip(), self._to_text(v)) for v in value]
                     self._open_checklist_and_check(root, section, key, items)
                     return
                 value = value[0] if value else ""
@@ -759,7 +655,7 @@ class DictOfferFormFiller(
                 return
             current = (inp.input_value() or "").strip()
             if current.lower().startswith("будинок "):
-                corrected = current[len("будинок "):].strip()
+                corrected = current[len("будинок ") :].strip()
                 logger.warning(
                     "Поле Будинок містить 'Будинок ...' ('%s') → виправляємо до '%s'",
                     current,
@@ -768,7 +664,7 @@ class DictOfferFormFiller(
                 inp.triple_click()
                 inp.press("Escape")  # close any open dropdown
                 inp.fill(corrected)  # replace value without triggering autocomplete
-                inp.press("Tab")     # confirm / move focus
+                inp.press("Tab")  # confirm / move focus
         except Exception as e:
             logger.debug("_check_and_fix_house_field: %s", e)
 
@@ -792,7 +688,7 @@ class DictOfferFormFiller(
                     return v
             return None
 
-        city = _normalize_city(_get("Місто") or "") or None
+        city = normalize_city(_get("Місто") or "") or None
         condo = _get("Новобудова")
         district = _get("Район")
         street = _get("Вулиця")
@@ -810,13 +706,13 @@ class DictOfferFormFiller(
 
         # Normalize street prefix (вул., просп., бульв. тощо)
         if street:
-            street = _strip_street_prefix(str(street))
+            street = strip_street_type(str(street))
 
         # Normalize house: strip leading "Будинок " so only number remains ("Будинок 6" → "6")
         if house:
             h = str(house).strip()
             if h.lower().startswith("будинок "):
-                h = h[len("будинок "):].strip()
+                h = h[len("будинок ") :].strip()
             house = h
 
         if condo:
@@ -954,6 +850,7 @@ class DictOfferFormFiller(
         # 7) Cadastral number — plain text input, name="cadastralNumber"
         if cadastral:
             import re as _re
+
             cadnum_str = str(cadastral).strip()
             _CADNUM_RE = _re.compile(r"^\d{10}:\d{2}:\d{3}:\d{4}$")
             if not _CADNUM_RE.match(cadnum_str):
@@ -1225,14 +1122,10 @@ class DictOfferFormFiller(
                                 inp.fill(price_norm)
                                 self._mark_touched(inp)
                                 fixed_any = True
-                                logger.warning(
-                                    "Відновлення: Ціна='%s' (нормалізовано з '%s')", price_norm, price_raw
-                                )
+                                logger.warning("Відновлення: Ціна='%s' (нормалізовано з '%s')", price_norm, price_raw)
                         currency_raw = offer_data.get("Валюта") or ""
                         if currency_raw:
-                            self._fill_field_from_dict(
-                                root, "Цінові параметри", "Валюта", currency_raw, "select"
-                            )
+                            self._fill_field_from_dict(root, "Цінові параметри", "Валюта", currency_raw, "select")
                     except Exception:
                         logger.warning("Не вдалось відновити Ціна/Валюта", exc_info=True)
 
@@ -1270,9 +1163,7 @@ class DictOfferFormFiller(
                                     pass
                                 house_cleared = True
                     if house_cleared:
-                        logger.warning(
-                            "Відновлення: поле 'Будинок' очищено (значення починалось не з цифри)"
-                        )
+                        logger.warning("Відновлення: поле 'Будинок' очищено (значення починалось не з цифри)")
                         fixed_any = True
                 except Exception:
                     logger.warning("Не вдалось очистити поле 'Будинок'", exc_info=True)
@@ -1299,8 +1190,7 @@ class DictOfferFormFiller(
                         inp_cad.click()
                         inp_cad.fill("")
                         logger.warning(
-                            "Відновлення: очищено невалідний кадастровий номер '%s' — "
-                            "повторне збереження без нього",
+                            "Відновлення: очищено невалідний кадастровий номер '%s' — повторне збереження без нього",
                             current_cad,
                         )
                         fixed_any = True
@@ -1322,7 +1212,7 @@ class DictOfferFormFiller(
                     addr = offer_data.get("address") or {}
                     street_raw = addr.get("Вулиця") or addr.get("вулиця")
                     if street_raw:
-                        street = _strip_street_prefix(str(street_raw))
+                        street = strip_street_type(str(street_raw))
                         try:
                             sec_addr = self._section(root, "Адреса об'єкта")
                             self._fill_autocomplete(sec_addr, "Вулиця", street, force=True)
@@ -1355,9 +1245,7 @@ class DictOfferFormFiller(
                             self._fill_field_from_dict(root, sec, lbl, val, widget)
                             fixed_any = True
                         except Exception:
-                            logger.warning(
-                                "Не вдалось повторно заповнити '%s'", lbl, exc_info=True
-                            )
+                            logger.warning("Не вдалось повторно заповнити '%s'", lbl, exc_info=True)
 
         return fixed_any
 
@@ -1525,9 +1413,7 @@ class DictOfferFormFiller(
             # Recovery: clear the Вулиця field and retry save with city-only address.
             wrong_city = any(self.MAP_WRONG_CITY_SUBSTR in e.get("message", "") for e in report)
             if wrong_city:
-                logger.warning(
-                    "Помилка карти 'іншому місті' — спроба збереження без вулиці"
-                )
+                logger.warning("Помилка карти 'іншому місті' — спроба збереження без вулиці")
                 try:
                     root_retry = self._new_offer_root()
                     sec_addr = self._section(root_retry, "Адреса об'єкта")
@@ -1567,14 +1453,9 @@ class DictOfferFormFiller(
                     logger.warning("Не вдалось спробувати повторне збереження", exc_info=True)
 
             # Generic recovery: attempt to fix remaining errors and retry once
-            remaining = [
-                e for e in report
-                if self.MAP_WRONG_CITY_SUBSTR not in e.get("message", "")
-            ]
+            remaining = [e for e in report if self.MAP_WRONG_CITY_SUBSTR not in e.get("message", "")]
             if remaining:
-                logger.warning(
-                    "Спроба відновлення після помилок валідації (%d помилок)", len(remaining)
-                )
+                logger.warning("Спроба відновлення після помилок валідації (%d помилок)", len(remaining))
                 try:
                     root_rec = self._new_offer_root()
                     recovered = self._attempt_error_recovery(root_rec, remaining)
