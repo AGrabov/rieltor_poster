@@ -55,7 +55,7 @@ class MappingMixin:
 
         label = None
         # translate() strips '*' and thin-space (&#x2009;) from label text before comparing
-        _strip = f"translate(., '*\u2009', '')"
+        _strip = "translate(., '*\u2009', '')"
         candidates = [
             # exact match by label text node (thin-space + asterisk stripped)
             f"xpath=.//label[normalize-space(translate(text(), '*\u2009', ''))={lit_exact}]",

@@ -104,7 +104,8 @@ def download_watermark_zip(
 
         with zipfile.ZipFile(io.BytesIO(response.body())) as zf:
             image_names = sorted(
-                n for n in zf.namelist()
+                n
+                for n in zf.namelist()
                 if not n.endswith("/") and Path(n).suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")
             )
             for i, name in enumerate(image_names):

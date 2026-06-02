@@ -38,8 +38,7 @@ class PhotosMixin:
         expanded = False
         try:
             collapsed = sec.locator(
-                "css=[aria-expanded='false'][class*='AccordionSummary'],"
-                "[aria-expanded='false'][class*='MuiAccordion']"
+                "css=[aria-expanded='false'][class*='AccordionSummary'],[aria-expanded='false'][class*='MuiAccordion']"
             ).first
             if collapsed.count():
                 collapsed.click()

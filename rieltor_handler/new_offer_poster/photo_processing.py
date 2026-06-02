@@ -41,9 +41,7 @@ def _render_watermark() -> Image.Image:
     svg_white = svg.replace("fill: url(#_Безымянный_градиент_5)", "fill: white")
     html = (
         "<!DOCTYPE html><html style='margin:0;padding:0'>"
-        "<body style='margin:0;padding:0;background:transparent;'>"
-        + svg_white
-        + "</body></html>"
+        "<body style='margin:0;padding:0;background:transparent;'>" + svg_white + "</body></html>"
     )
 
     with sync_playwright() as pw:

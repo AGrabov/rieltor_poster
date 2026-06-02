@@ -29,7 +29,7 @@ def _street_search_stem(name: str) -> str:
             vowel_count += 1
             if vowel_count == 2:
                 stem = s[:i]
-                return stem if len(stem) >= 3 else s[:max(i, 3)]
+                return stem if len(stem) >= 3 else s[: max(i, 3)]
     return s[:6]
 
 
@@ -213,10 +213,10 @@ class AutocompleteMixin:
 
                   // 2) Word-stem match: any word in desired shares ≥5-char prefix with
                   //    any word in the option (handles e.g. "Нова Дарниця" → "Дарницький")
-                  const dWords = d.split(/\s+/).filter(w => w.length >= 5);
+                  const dWords = d.split(/\\s+/).filter(w => w.length >= 5);
                   if (dWords.length) {
                     for (const o of preferred) {
-                      const oWords = o.n.split(/\s+/);
+                      const oWords = o.n.split(/\\s+/);
                       for (const dw of dWords) {
                         for (const ow of oWords) {
                           if (ow.length >= 5) {
@@ -269,7 +269,7 @@ class AutocompleteMixin:
                     }
                     let bestScore = 0, bestOpt = null;
                     for (const o of opts) {
-                      const oFirstWord = o.n.split(/\s+/)[0];
+                      const oFirstWord = o.n.split(/\\s+/)[0];
                       const score = fuzzyScore(d, oFirstWord);
                       if (score > bestScore) { bestScore = score; bestOpt = o; }
                     }
@@ -464,8 +464,7 @@ class AutocompleteMixin:
         # site shows "Болсуновська вул." — slightly different spelling but valid selection).
         if is_address and closed:
             logger.debug(
-                "Autocomplete прийнято через закриття списку (адресне поле). "
-                "closed=True desired='%s' current='%s'",
+                "Autocomplete прийнято через закриття списку (адресне поле). closed=True desired='%s' current='%s'",
                 desired,
                 cur,
             )

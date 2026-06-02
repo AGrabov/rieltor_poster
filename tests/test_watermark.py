@@ -13,6 +13,7 @@ SAMPLE_PHOTO = "crm_data_parser/offers/pics/A28526/photo_000.jpg"
 def reset_watermark_cache():
     """Clear the in-memory watermark cache between tests."""
     import rieltor_handler.new_offer_poster.photo_processing as pp
+
     pp._watermark_cache = None
     yield
     pp._watermark_cache = None
@@ -37,15 +38,14 @@ def test_watermark_applied_changes_pixels():
     h, w = orig_arr.shape[:2]
     cy, cx = h // 2, w // 2
     crop_size = min(h, w) // 4
-    orig_crop = orig_arr[cy - crop_size:cy + crop_size, cx - crop_size:cx + crop_size]
-    result_crop = result_arr[cy - crop_size:cy + crop_size, cx - crop_size:cx + crop_size]
+    orig_crop = orig_arr[cy - crop_size : cy + crop_size, cx - crop_size : cx + crop_size]
+    result_crop = result_arr[cy - crop_size : cy + crop_size, cx - crop_size : cx + crop_size]
 
     changed_pixels = np.any(orig_crop != result_crop, axis=-1).sum()
     total_pixels = orig_crop.shape[0] * orig_crop.shape[1]
 
     assert changed_pixels > total_pixels * 0.01, (
-        f"Expected >1% of central pixels to change after watermark, "
-        f"got {changed_pixels}/{total_pixels}"
+        f"Expected >1% of central pixels to change after watermark, got {changed_pixels}/{total_pixels}"
     )
 
 
@@ -76,7 +76,9 @@ def test_watermark_cache_populated():
 def test_prepare_photos_produces_watermarked_file(monkeypatch):
     """prepare_photos writes a JPEG that differs from the original (watermark present)."""
     import os
+
     import rieltor_handler.new_offer_poster.photo_processing as pp
+
     monkeypatch.setattr(pp, "ADD_WATERMARK", True)
 
     result_paths = pp.prepare_photos([SAMPLE_PHOTO])
@@ -105,7 +107,9 @@ def test_watermark_applied_to_already_downloaded_photos(monkeypatch):
     calls prepare_photos — watermark must be applied at that point.
     """
     import os
+
     import rieltor_handler.new_offer_poster.photo_processing as pp
+
     monkeypatch.setattr(pp, "ADD_WATERMARK", True)
 
     # Simulate offer_data["apartment"]["photos"] as stored in DB after Phase 1
@@ -142,7 +146,9 @@ def test_watermark_renders_inside_asyncio_loop():
     asyncio loop alive, and sync_playwright() raised an error when called from it.
     """
     import asyncio
+
     import rieltor_handler.new_offer_poster.photo_processing as pp
+
     pp._watermark_cache = None
 
     async def _inner():
@@ -155,6 +161,7 @@ def test_watermark_renders_inside_asyncio_loop():
 def test_no_watermark_when_disabled(monkeypatch):
     """prepare_photos must NOT apply watermark when ADD_WATERMARK=false."""
     import rieltor_handler.new_offer_poster.photo_processing as pp
+
     monkeypatch.setattr(pp, "ADD_WATERMARK", False)
 
     prepared = pp.prepare_photos([SAMPLE_PHOTO])
@@ -175,6 +182,5 @@ def test_no_watermark_when_disabled(monkeypatch):
 
     # JPEG re-encode introduces small rounding errors (≤ ~5 per channel) — not watermark
     assert max_diff <= 10, (
-        f"Centre pixels changed by {max_diff} without watermark — "
-        "expected only JPEG compression noise (≤10)"
+        f"Centre pixels changed by {max_diff} without watermark — expected only JPEG compression noise (≤10)"
     )

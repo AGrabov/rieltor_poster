@@ -41,6 +41,7 @@ logger = setup_logger(__name__)
 
 # ── Legacy offer-data normalization ─────────────────────────────────
 
+
 def _normalize_offer_data(offer_data: dict) -> None:
     """Fix legacy DB entries that were collected with old notes/description format.
 
@@ -158,6 +159,7 @@ def phase1_collect(
 
         if property_type:
             from crm_data_parser.html_parser import CRM_TYPE_TO_SCHEMA
+
             pt_lower = property_type.lower()
 
             def _matches_property_type(item) -> bool:
@@ -288,10 +290,7 @@ def _redownload_missing_photos(offers: list, db, headless: bool, debug: bool) ->
     Opens a single CRM session for the whole batch (if credentials are set).
     Updates offer_data and DB in place.
     """
-    needing = [
-        o for o in offers
-        if _photos_missing(o.offer_data) and o.offer_data.get("photo_download_link")
-    ]
+    needing = [o for o in offers if _photos_missing(o.offer_data) and o.offer_data.get("photo_download_link")]
     if not needing:
         return
 
@@ -321,7 +320,8 @@ def _redownload_missing_photos(offers: list, db, headless: bool, debug: bool) ->
             offer_data = offer.offer_data
             photo_dl_link = offer_data.get("photo_download_link")
             photo_urls = [
-                p for p in (offer_data.get("apartment") or {}).get("photos", [])
+                p
+                for p in (offer_data.get("apartment") or {}).get("photos", [])
                 if isinstance(p, str) and p.startswith("http")
             ]
             if add_watermark:
@@ -434,7 +434,9 @@ def phase2_post(
                     if property_type and not _matches_type_filter(pt, property_type):
                         logger.warning(
                             "Пропуск %d: тип '%s' не відповідає фільтру '%s'",
-                            offer.estate_id, pt, property_type,
+                            offer.estate_id,
+                            pt,
+                            property_type,
                         )
                         continue
 
@@ -454,7 +456,8 @@ def phase2_post(
                     if pt == "Будинок" and not offer_data.get("address", {}).get("Будинок", ""):
                         logger.warning(
                             "Об'єкт %d (article=%s): Будинок без номера будинку — пропускаємо",
-                            offer.estate_id, offer.article,
+                            offer.estate_id,
+                            offer.article,
                         )
                         db.mark_skipped(offer.estate_id, "Будинок без номера будинку")
                         posted += 1
@@ -462,6 +465,7 @@ def phase2_post(
 
                     # Збагатити кадастровим номером якщо відсутній (phase 2 fallback)
                     from crm_data_parser.cadastral_lookup import enrich_offer_data_with_cadastral
+
                     if enrich_offer_data_with_cadastral(offer_data):
                         db.update_offer_data(offer.estate_id, offer_data)
 
@@ -506,9 +510,7 @@ def phase2_post(
                     db.mark_failed(offer.estate_id, e.errors)
 
                 except RieltorErrorPageException as e:
-                    logger.warning(
-                        "Сторінка помилки для об'єкта %d, повторна спроба...", offer.estate_id
-                    )
+                    logger.warning("Сторінка помилки для об'єкта %d, повторна спроба...", offer.estate_id)
                     try:
                         poster.filler = DictOfferFormFiller(
                             poster.page,
@@ -532,9 +534,7 @@ def phase2_post(
                                 cleanup_photos(offer.article)
                             posted += 1
                     except Exception as retry_e:
-                        logger.error(
-                            "Повтор для об'єкта %d не вдався: %s", offer.estate_id, retry_e
-                        )
+                        logger.error("Повтор для об'єкта %d не вдався: %s", offer.estate_id, retry_e)
                         logger.error(
                             "Дані об'єкта %d (article=%s):\n%s",
                             offer.estate_id,
@@ -723,7 +723,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="Rieltor offer automation: CRM → parse → post",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("--headless", action="store_true", help="Run browser in headless mode (also set via HEADLESS=true env var)")
+    parser.add_argument(
+        "--headless", action="store_true", help="Run browser in headless mode (also set via HEADLESS=true env var)"
+    )
 
     sub = parser.add_subparsers(dest="command")
 
@@ -756,16 +758,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Bulk-clean rieltor.ua: «Закрита база» → «Видалені» → permanently",
     )
     p_clean.add_argument("--max-count", type=int, help="Max stage-1 deletions («Закрита база»)")
-    p_clean.add_argument(
-        "--deleted-max-count", type=int, help="Max stage-2 deletions («Видалені» назавжди)"
-    )
+    p_clean.add_argument("--deleted-max-count", type=int, help="Max stage-2 deletions («Видалені» назавжди)")
     p_clean.add_argument("--dry-run", action="store_true", help="Count only, delete nothing")
-    p_clean.add_argument(
-        "--skip-deleted", action="store_true", help="Stage 1 only (do not purge «Видалені»)"
-    )
-    p_clean.add_argument(
-        "--deleted-only", action="store_true", help="Stage 2 only (purge «Видалені» permanently)"
-    )
+    p_clean.add_argument("--skip-deleted", action="store_true", help="Stage 1 only (do not purge «Видалені»)")
+    p_clean.add_argument("--deleted-only", action="store_true", help="Stage 2 only (purge «Видалені» permanently)")
 
     return parser
 

@@ -149,15 +149,15 @@ class DescriptionAnalyzer:
           "сотокПаркування" → "соток. Паркування"
         """
         # 1) "мг" → "м²" FIRST so "212мгДілянка" → "212 м²Ділянка"
-        text = re.sub(r'(\d)\s*мг\b', r'\1 м²', text)
+        text = re.sub(r"(\d)\s*мг\b", r"\1 м²", text)
         # 2) Insert ". " at lowercase/digit/²→uppercase boundary ONLY when the uppercase
         #    letter starts a real word (≥2 lowercase follow it).
         #    "сотокПаркування" → "соток. Паркування" ✓
         #    "кВт" (В followed by only 1 lowercase) → unchanged ✓
         #    "м²Ділянка" → "м². Ділянка" ✓ (² in first char class)
-        text = re.sub(r'([а-яіїєґ\d²])([А-ЯІЇЄҐ][а-яіїєґ]{2,})', r'\1. \2', text)
+        text = re.sub(r"([а-яіїєґ\d²])([А-ЯІЇЄҐ][а-яіїєґ]{2,})", r"\1. \2", text)
         # 3) Normalize whitespace
-        text = re.sub(r'[ \t]+', ' ', text)
+        text = re.sub(r"[ \t]+", " ", text)
         return text.strip()
 
     def analyze(self, description: str, existing_data: dict) -> dict:
@@ -416,8 +416,8 @@ class DescriptionAnalyzer:
                 if m:
                     if check_prefix:
                         # Skip "до N соток" / "від N соток" — vague expansion hints
-                        prefix = text[max(0, m.start() - 5):m.start()]
-                        if re.search(r'\bдо\b|\bвід\b', prefix):
+                        prefix = text[max(0, m.start() - 5) : m.start()]
+                        if re.search(r"\bдо\b|\bвід\b", prefix):
                             continue
                     plot_value = m.group(1).replace(",", ".")
                     break
@@ -445,9 +445,7 @@ class DescriptionAnalyzer:
 
             if "Поверх" not in extracted:
                 # Pattern 2: "12-й поверх із 31" (ordinal suffix before поверх)
-                floor_match2 = re.search(
-                    r"(\d+)\s*[-–—]?\s*[а-яіїєґ]{0,3}\s+поверх\s+(?:із?|з)\s+(\d+)", text
-                )
+                floor_match2 = re.search(r"(\d+)\s*[-–—]?\s*[а-яіїєґ]{0,3}\s+поверх\s+(?:із?|з)\s+(\d+)", text)
                 if floor_match2:
                     extracted["Поверх"] = floor_match2.group(1)
                     if "Поверховість" not in existing_data and "Поверховість" not in extracted:
@@ -667,8 +665,12 @@ class DescriptionAnalyzer:
                     extracted[_kitchen_lbl] = str(round(_kitchen * _factor, 1))
                     logger.warning(
                         "Площа: %.1f + %.1f > %.1f — масштабовано (k=%.3f): %.1f + %.1f",
-                        _living, _kitchen, _total, _factor,
-                        float(extracted[_living_lbl]), float(extracted[_kitchen_lbl]),
+                        _living,
+                        _kitchen,
+                        _total,
+                        _factor,
+                        float(extracted[_living_lbl]),
+                        float(extracted[_kitchen_lbl]),
                     )
                 else:
                     # Only one sub-area is freshly extracted — recalculate it as remainder
@@ -680,7 +682,9 @@ class DescriptionAnalyzer:
                             _recalc = max(0.0, _total - (_other or 0.0))
                             logger.warning(
                                 "Площа: %s=%.1f перевищує загальну — перераховано як %.1f",
-                                _lbl, _val, _recalc,
+                                _lbl,
+                                _val,
+                                _recalc,
                             )
                             extracted[_lbl] = str(round(_recalc, 1))
 

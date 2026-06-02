@@ -71,18 +71,14 @@ class ClosedBaseCleaner:
     def _wait_for_rows(self) -> int:
         """Дочекатися рендеру рядків; повернути їх кількість на сторінці (0 якщо порожньо)."""
         try:
-            self.page.locator(self.ROW_RADIO).first.wait_for(
-                state="visible", timeout=self.RENDER_TIMEOUT_MS
-            )
+            self.page.locator(self.ROW_RADIO).first.wait_for(state="visible", timeout=self.RENDER_TIMEOUT_MS)
         except PlaywrightTimeoutError:
             return 0
         return self.page.locator(self.ROW_RADIO).count()
 
     def _badge(self, label: str) -> int:
         """Прочитати лічильник активної вкладки за її назвою."""
-        badge = self.page.locator(
-            f"xpath=//span[normalize-space()='{label}']/following-sibling::span[1]"
-        )
+        badge = self.page.locator(f"xpath=//span[normalize-space()='{label}']/following-sibling::span[1]")
         try:
             badge.first.wait_for(state="visible", timeout=self.RENDER_TIMEOUT_MS)
             digits = re.sub(r"\D", "", badge.first.inner_text() or "")
@@ -92,9 +88,7 @@ class ClosedBaseCleaner:
             logger.debug("Не вдалося прочитати лічильник вкладки '%s', рахуємо рядки", label)
         return self._wait_for_rows()
 
-    def _delete_one(
-        self, url: str, action_selector: str, pick_reason: bool, renavigate: bool = True
-    ) -> bool:
+    def _delete_one(self, url: str, action_selector: str, pick_reason: bool, renavigate: bool = True) -> bool:
         """Видалити перший об'єкт на поточній вкладці. False, якщо список порожній.
 
         Args:
@@ -157,15 +151,11 @@ class ClosedBaseCleaner:
 
     def _purge_first(self) -> bool:
         """Остаточно видалити перший об'єкт із «Видалені» (без перезавантаження сторінки)."""
-        return self._delete_one(
-            self.DELETED_URL, self.DELETE_FOREVER_BUTTON, pick_reason=False, renavigate=False
-        )
+        return self._delete_one(self.DELETED_URL, self.DELETE_FOREVER_BUTTON, pick_reason=False, renavigate=False)
 
     def purge_deleted(self, max_count: int | None = None, dry_run: bool = False) -> int:
         """Стадія 2: остаточно видалити об'єкти із «Видалені»."""
-        return self._run_loop(
-            self.count_deleted, self._purge_first, max_count, dry_run, "«Видалені»"
-        )
+        return self._run_loop(self.count_deleted, self._purge_first, max_count, dry_run, "«Видалені»")
 
     # ── спільний цикл ────────────────────────────────────────────────
 

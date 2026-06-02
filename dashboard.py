@@ -77,6 +77,7 @@ def stop_proc(proc: subprocess.Popen | None) -> None:
             )
         else:
             import signal
+
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
     except Exception:
         try:

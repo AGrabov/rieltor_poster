@@ -234,7 +234,13 @@ class FieldsMixin:
         # "Поверховість" is auto-filled by the site from the building database when
         # the address is confirmed — trust that value over the CRM's.
         if cur and key.lower().strip() in ("поверховість",):
-            logger.info("Заповнення пропущено %s/%s: вже '%s' (авто-значення, не перезаписуємо '%s')", section, key, cur, desired)
+            logger.info(
+                "Заповнення пропущено %s/%s: вже '%s' (авто-значення, не перезаписуємо '%s')",
+                section,
+                key,
+                cur,
+                desired,
+            )
             self._mark_touched(ctrl)
             return
 
@@ -417,16 +423,17 @@ class FieldsMixin:
                 # Numeric value exceeds available options → try last "і більше" ceiling option
                 try:
                     all_texts = self._list_listbox_options(lb)
-                    ceiling_text = next(
-                        (t for t in reversed(all_texts) if "більше" in t.lower()), None
-                    )
+                    ceiling_text = next((t for t in reversed(all_texts) if "більше" in t.lower()), None)
                     if ceiling_text:
                         opt = self._find_option_in_listbox(lb, ceiling_text)
                         if opt:
                             ceiling_applied = True
                             logger.info(
                                 "Select ceiling fallback %s/%s: '%s' → '%s'",
-                                section, key, desired, ceiling_text,
+                                section,
+                                key,
+                                desired,
+                                ceiling_text,
                             )
                 except Exception:
                     pass
@@ -465,7 +472,10 @@ class FieldsMixin:
                     if desired.lower() not in new_cur.lower():
                         logger.warning(
                             "Select %s/%s: після кліку значення '%s', очікувалось '%s'",
-                            section, key, new_cur, desired,
+                            section,
+                            key,
+                            new_cur,
+                            desired,
                         )
                 except Exception:
                     pass
