@@ -67,6 +67,30 @@ def test_strip_street_type_does_not_eat_name_starting_like_prefix():
     assert an.strip_street_type("Шевченка") == "Шевченка"
 
 
+# ── street_type_canon ─────────────────────────────────────────────────────
+def test_street_type_canon_ukrainian():
+    assert an.street_type_canon("вул. Шевченка") == "вул"
+    assert an.street_type_canon("провулок Шевченка") == "пров"
+    assert an.street_type_canon("пл. Шевченка") == "пл"
+    assert an.street_type_canon("просп. Свободи") == "просп"
+
+
+def test_street_type_canon_russian_maps_to_ukrainian():
+    assert an.street_type_canon("ул. Шевченка") == "вул"
+    assert an.street_type_canon("пер. Шевченка") == "пров"
+    assert an.street_type_canon("площадь Шевченка") == "пл"
+
+
+def test_street_type_canon_no_type_returns_empty():
+    assert an.street_type_canon("Шевченка") == ""
+    assert an.street_type_canon("Лесі Українки") == ""
+
+
+def test_street_type_canon_finds_type_inside_address():
+    # Works on a full registry address, not just a leading prefix.
+    assert an.street_type_canon("м.Київ, Голосіївський р-н, вулиця Львівська, 19") == "вул"
+
+
 # ── fold_cyrillic ─────────────────────────────────────────────────────────
 def test_fold_cyrillic_unifies_i_and_yi():
     # Russian и and Ukrainian і fold to the same form

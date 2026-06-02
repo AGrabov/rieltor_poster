@@ -11,9 +11,19 @@ from bs4 import BeautifulSoup
 from setup_logger import setup_logger
 
 try:
-    from .address_normalize import fold_cyrillic, normalize_city, strip_street_type
+    from .address_normalize import (
+        fold_cyrillic,
+        normalize_city,
+        street_type_canon,
+        strip_street_type,
+    )
 except ImportError:  # direct-run fallback
-    from address_normalize import fold_cyrillic, normalize_city, strip_street_type  # noqa: I001
+    from address_normalize import (  # noqa: I001
+        fold_cyrillic,
+        normalize_city,
+        street_type_canon,
+        strip_street_type,
+    )
 
 logger = setup_logger(__name__)
 
@@ -67,14 +77,38 @@ def _street_matches(street: str, addr: str) -> bool:
 def _pick_verified(candidates: list[tuple[str, str]], street: str, house: str) -> str | None:
     """Обрати кадастровий номер лише за ВПЕВНЕНОГО збігу.
 
-    Повертає cadnum першого кандидата, де точно збігається номер будинку
-    (окремий токен) І фуззі-збігається назва вулиці. Інакше — ``None``
-    (поле краще лишити порожнім: чернетку на rieltor.ua не відредагувати).
+    Фільтрує кандидатів за точним номером будинку (окремий токен) і фуззі-
+    збігом назви вулиці, а потім розрізняє однойменні вулиці різного типу
+    (вул./пров./пл. Шевченка) за каноном типу:
+
+      • тип CRM відомий → беремо кандидата того ж типу; якщо такого немає
+        (а інші типи є) → ``None`` (не вгадуємо);
+      • тип CRM невідомий, але кандидати різного типу → ``None`` (неоднозначно).
+
+    Інакше — ``None`` (поле краще лишити порожнім: чернетку не відредагувати).
     """
-    for cadnum, addr in candidates:
-        if _house_matches(addr, house) and _street_matches(street, addr):
-            return cadnum
-    return None
+    matches = [
+        (cadnum, addr) for cadnum, addr in candidates if _house_matches(addr, house) and _street_matches(street, addr)
+    ]
+    if not matches:
+        return None
+
+    crm_type = street_type_canon(street)
+    if crm_type:
+        same_type = [cadnum for cadnum, addr in matches if street_type_canon(addr) == crm_type]
+        if same_type:
+            return same_type[0]
+        # Тип CRM відомий, але серед кандидатів типи є й жоден не збігся → не вгадуємо.
+        if any(street_type_canon(addr) for _, addr in matches):
+            return None
+        # Жоден кандидат не має розпізнаного типу — нічим розрізняти, беремо перший.
+        return matches[0][0]
+
+    # Тип CRM невідомий: якщо кандидати різного типу — неоднозначно, пропускаємо.
+    distinct_types = {street_type_canon(addr) for _, addr in matches if street_type_canon(addr)}
+    if len(distinct_types) > 1:
+        return None
+    return matches[0][0]
 
 
 def _search_zem_center(query: str, street: str, house: str) -> str | None:
@@ -174,14 +208,16 @@ def lookup_cadastral_number(city: str, street: str, house: str) -> str | None:
     if not queries:
         return None
 
+    # Verification gets the ORIGINAL street (keeps the type for disambiguation);
+    # the query `q` uses the stripped form (the registry chokes on any type).
     for q in queries:
-        cadnum = _search_zem_center(q, street_clean, house_orig)
+        cadnum = _search_zem_center(q, street, house_orig)
         if cadnum:
             logger.debug("Знайдено zem.center: %s (запит '%s')", cadnum, q)
             return cadnum
 
     for q in queries:
-        cadnum = _search_kadastrova_karta(q, street_clean, house_orig)
+        cadnum = _search_kadastrova_karta(q, street, house_orig)
         if cadnum:
             logger.debug("Знайдено kadastrova-karta.com: %s (запит '%s')", cadnum, q)
             return cadnum

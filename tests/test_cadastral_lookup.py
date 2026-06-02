@@ -51,6 +51,33 @@ def test_pick_verified_empty_candidates_returns_none():
     assert cl._pick_verified([], "Львівська", "19") is None
 
 
+# ── street-type disambiguation (вул./пров./пл. Шевченка) ──────────────────
+_SHEVCHENKA = [
+    ("8000000000:01:001:0001", "м.Київ, вулиця Шевченка, 19"),
+    ("8000000000:01:001:0002", "м.Київ, провулок Шевченка, 19"),
+    ("8000000000:01:001:0003", "м.Київ, площа Шевченка, 19"),
+]
+
+
+def test_pick_verified_picks_matching_street_type():
+    assert cl._pick_verified(_SHEVCHENKA, "вул. Шевченка", "19") == "8000000000:01:001:0001"
+
+
+def test_pick_verified_russian_type_maps_to_ukrainian():
+    # CRM "пер." (RU) must select провулок, not вулиця.
+    assert cl._pick_verified(_SHEVCHENKA, "пер. Шевченка", "19") == "8000000000:01:001:0002"
+
+
+def test_pick_verified_type_known_but_absent_returns_none():
+    # CRM says бульвар, but no бульвар candidate → do not guess.
+    assert cl._pick_verified(_SHEVCHENKA, "бул. Шевченка", "19") is None
+
+
+def test_pick_verified_ambiguous_types_without_crm_type_returns_none():
+    # CRM has no type and the registry offers several types → cannot disambiguate.
+    assert cl._pick_verified(_SHEVCHENKA, "Шевченка", "19") is None
+
+
 class _FakeResp:
     def __init__(self, json_data=None, status_code=200, text=""):
         self._json = json_data if json_data is not None else {}
@@ -121,12 +148,14 @@ def test_lookup_normalizes_city_and_strips_street(monkeypatch):
         return "8000000000:75:214:0010"
 
     monkeypatch.setattr(cl, "_search_zem_center", fake_zem)
-    # Russian city + Russian street type must be normalized before querying.
+    # The QUERY must be normalized (RU city → UA, street type stripped);
+    # the street arg keeps the original so the type stays available for selection.
     result = cl.lookup_cadastral_number("Киев", "ул. Львівська", "19")
     assert result == "8000000000:75:214:0010"
     assert "Київ" in seen["query"]
     assert "ул." not in seen["query"]
-    assert seen["street"] == "Львівська"
+    assert "Львівська" in seen["query"]
+    assert seen["street"] == "ул. Львівська"
 
 
 def test_lookup_uses_zem_first(monkeypatch):
