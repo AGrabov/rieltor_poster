@@ -117,8 +117,13 @@ _TYPE_CANON: dict[str, str] = {
 }
 _TYPE_TOKEN_RE = re.compile(r"[А-Яа-яІіЇїЄєҐґ\-]+")
 
-# Префікс номера будинку ("Будинок 6" → "6", "буд. 6" → "6").
-_HOUSE_PREFIX_RE = re.compile(r"^\s*(?:будинок|буд|дом)\.?\s+", re.IGNORECASE)
+# Префікс номера будинку ("Будинок 6"/"буд. 6"/"корпус 6"/"№6" → "6").
+_HOUSE_PREFIX_RE = re.compile(
+    r"^\s*(?:№\s*|(?:будинок|буд|дом|корпус|корп)\.?\s+)",
+    re.IGNORECASE,
+)
+# Хвіст-кваліфікатор будинку ("5 корпус 2" → "5"): корпус не входить у № ділянки.
+_HOUSE_TAIL_RE = re.compile(r"[\s,]*(?:корпус|корп)\.?.*$", re.IGNORECASE)
 
 # Folding для ПОРІВНЯННЯ (не для відображення): звести RU/UA-специфічні літери.
 _FOLD_MAP = str.maketrans(
@@ -173,6 +178,7 @@ def normalize_house(house: str) -> str:
     ``19А`` = ``19-а`` = ``19 а`` = ``Будинок 19а``.
     """
     h = _HOUSE_PREFIX_RE.sub("", house or "")
+    h = _HOUSE_TAIL_RE.sub("", h)
     return re.sub(r"[\s\-]+", "", h).lower()
 
 

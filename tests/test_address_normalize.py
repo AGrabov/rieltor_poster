@@ -110,6 +110,23 @@ def test_normalize_house_strips_budynok_prefix():
     assert an.normalize_house("Будинок 6") == "6"
 
 
+def test_normalize_house_strips_korpus():
+    # "корпус" both as a leading prefix and as a trailing qualifier → keep main number.
+    assert an.normalize_house("корпус 5") == "5"
+    assert an.normalize_house("5 корпус 2") == "5"
+    assert an.normalize_house("буд. 5, корпус 2") == "5"
+    assert an.normalize_house("корп. 3") == "3"
+
+
+def test_normalize_house_keeps_letter_before_korpus():
+    assert an.normalize_house("5а корпус 2") == "5а"
+
+
+def test_normalize_house_strips_numero_sign():
+    assert an.normalize_house("№5") == "5"
+    assert an.normalize_house("№ 5") == "5"
+
+
 def test_normalize_house_distinct_houses_differ():
     assert an.normalize_house("19") != an.normalize_house("19а")
 
