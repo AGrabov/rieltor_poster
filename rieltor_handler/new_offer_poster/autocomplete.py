@@ -107,7 +107,7 @@ class AutocompleteMixin:
         if not desired:
             return False
 
-        self.page.wait_for_timeout(150)
+        self.page.wait_for_timeout(80)
 
         res = self.page.evaluate(
             """(params) => {
@@ -433,7 +433,7 @@ class AutocompleteMixin:
                 logger.debug("Autocomplete підтверджено наступним полем: %s", next_key)
                 return True
 
-        self.page.wait_for_timeout(150)
+        self.page.wait_for_timeout(80)
         try:
             cur = (inp.input_value() or "").strip()
         except Exception:
@@ -613,7 +613,7 @@ class AutocompleteMixin:
             # Typing/filling is not possible — just wait for the dropdown to appear.
             if _is_readonly:
                 try:
-                    self.page.wait_for_timeout(600)
+                    self.page.wait_for_timeout(250)
                 except Exception:
                     pass
                 return
@@ -633,12 +633,14 @@ class AutocompleteMixin:
                 for ch in _house_digit_prefix:
                     try:
                         inp.type(ch, delay=0)
-                        self.page.wait_for_timeout(150)
+                        self.page.wait_for_timeout(60)
                     except Exception:
                         pass
-                # Wait for dropdown to load after final digit
+                # Short wait for the dropdown to load. A long wait lets MUI
+                # auto-settle on the bare-number option, so the digits-only pick
+                # "succeeds" and the full-value retry (with the letter) never runs.
                 try:
-                    self.page.wait_for_timeout(800)
+                    self.page.wait_for_timeout(200)
                 except Exception:
                     pass
                 return
@@ -692,7 +694,7 @@ class AutocompleteMixin:
                     inp.click()
                     inp.fill("")
                     inp.type(stem, delay=30)
-                    self.page.wait_for_timeout(1000)
+                    self.page.wait_for_timeout(350)
                 except Exception:
                     pass
                 if _try_pick():
@@ -721,7 +723,7 @@ class AutocompleteMixin:
             try:
                 inp.press("End")
                 inp.type(" ")
-                self.page.wait_for_timeout(120)
+                self.page.wait_for_timeout(60)
                 inp.press("Backspace")
             except Exception:
                 pass
@@ -729,7 +731,7 @@ class AutocompleteMixin:
             # Re-click to re-open the dropdown for another pick attempt
             try:
                 inp.click()
-                self.page.wait_for_timeout(400)
+                self.page.wait_for_timeout(200)
             except Exception:
                 pass
 
@@ -750,7 +752,7 @@ class AutocompleteMixin:
                     inp.click()
                     inp.fill("")
                     inp.type(stem, delay=25)
-                    self.page.wait_for_timeout(600)
+                    self.page.wait_for_timeout(250)
                 except Exception:
                     pass
                 if _try_pick():

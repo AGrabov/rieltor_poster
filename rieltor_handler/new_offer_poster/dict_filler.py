@@ -744,9 +744,9 @@ class DictOfferFormFiller(
             # 2a) CONDO COMPLEX → triggers autofill of district/street/house
             self._fill_autocomplete(sec, "Новобудова", condo)
             try:
-                self.page.wait_for_timeout(3500)
+                self.page.wait_for_timeout(1800)
             except Exception:
-                time.sleep(3)
+                time.sleep(1.8)
 
             # Check and fix house field if ЖК autofill put "Будинок X" instead of just "X"
             if house:
@@ -792,9 +792,9 @@ class DictOfferFormFiller(
             # Also allows the site to settle after house selection
             # (house pick can trigger cascading address updates that may clear street).
             try:
-                self.page.wait_for_timeout(2500)
+                self.page.wait_for_timeout(1200)
             except Exception:
-                time.sleep(2.5)
+                time.sleep(1.2)
 
             # Street sometimes gets cleared by the site after house/geo cascade.
             # Re-fill it before touching district so district geo-lookup uses correct street.
@@ -808,9 +808,9 @@ class DictOfferFormFiller(
                     self._fill_autocomplete(sec, "Вулиця", street)
                     # Short pause for geo-lookup to catch up after street re-fill
                     try:
-                        self.page.wait_for_timeout(1500)
+                        self.page.wait_for_timeout(700)
                     except Exception:
-                        time.sleep(1.5)
+                        time.sleep(0.7)
 
             # Fill district only if not auto-filled by geo-lookup
             district_ctrl = self._find_control_by_label(sec, "Район")
