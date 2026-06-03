@@ -239,6 +239,16 @@ class OfferDB:
         rows = self.conn.execute(query, params).fetchall()
         return [_row_to_record(r) for r in rows]
 
+    def delete_by_statuses(self, statuses: list[str]) -> int:
+        """Видаляє всі записи зі вказаними статусами. Повертає кількість видалених."""
+        if not statuses:
+            return 0
+        placeholders = ", ".join("?" * len(statuses))
+        cur = self.conn.execute(f"DELETE FROM offers WHERE status IN ({placeholders})", statuses)
+        self.conn.commit()
+        logger.info("Видалено %d записів зі статусами %s", cur.rowcount, statuses)
+        return cur.rowcount
+
     def summary(self) -> dict[str, int]:
         rows = self.conn.execute("SELECT status, COUNT(*) as cnt FROM offers GROUP BY status").fetchall()
         return {r["status"]: r["cnt"] for r in rows}

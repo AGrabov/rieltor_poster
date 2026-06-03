@@ -209,6 +209,37 @@ with left:
             text=f"опубліковано {summary['posted']}/{total}",
         )
 
+    # Видалення об'єктів із БД за вибраними статусами
+    with st.container(border=True):
+        st.markdown("**🗑 Видалити з БД за статусом**")
+        del_statuses = st.multiselect(
+            "Статуси для видалення",
+            options=STATUSES,
+            default=["failed"],
+            format_func=lambda s: STATUS_LABELS.get(s, s),
+            key="del_statuses",
+        )
+        del_count = sum(summary[s] for s in del_statuses)
+        st.caption(f"Буде видалено об'єктів: {del_count}. Незворотно.")
+        confirm_del = st.checkbox(
+            "Я підтверджую видалення",
+            value=False,
+            key="confirm_del_status",
+            disabled=del_count == 0,
+        )
+        if st.button(
+            "🗑 Видалити вибрані",
+            use_container_width=True,
+            disabled=not confirm_del or del_count == 0,
+        ):
+            try:
+                with OfferDB() as db:
+                    deleted = db.delete_by_statuses(del_statuses)
+                st.toast(f"Видалено {deleted} записів", icon="🗑")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Помилка видалення: {e}")
+
 # ── Керування ─────────────────────────────────────────────────────────
 
 with right:
