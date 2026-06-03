@@ -1247,6 +1247,34 @@ class DictOfferFormFiller(
                         except Exception:
                             logger.warning("Не вдалось повторно заповнити '%s'", lbl, exc_info=True)
 
+            # --- Відновлення 6 (generic fallback): необов'язкове текстове поле ---
+            # Будь-яка інша помилка на полі, яке НЕ обов'язкове (за JSON-схемою) і
+            # НЕ в секції адреси → очищаємо чисто текстове значення і пробуємо
+            # зберегти знову. Обов'язкові поля та адреса мають власні відновлення вище.
+            else:
+                if sec == "Адреса об'єкта":
+                    continue
+                fi = self._schema["label_to_field"].get(field.lower().strip())
+                required = bool(fi.get("required")) if fi else ("*" in (err.get("field") or ""))
+                if required:
+                    continue
+                try:
+                    target_sec = self._section(root, sec) if sec else root
+                    ctrl = self._find_control_by_label(target_sec, field)
+                    if ctrl and ctrl.count():
+                        tag = (ctrl.evaluate("el => el.tagName.toLowerCase()") or "").strip()
+                        role = (ctrl.get_attribute("role") or "").strip()
+                        # Лише чисто текстові поля: textarea або input, що не combobox
+                        # (MUI Select = <div>, autocomplete input має role='combobox').
+                        if tag == "textarea" or (tag == "input" and role != "combobox"):
+                            ctrl.click()
+                            ctrl.fill("")
+                            self._mark_touched(ctrl)
+                            fixed_any = True
+                            logger.warning("Відновлення: очищено необов'язкове поле '%s'", field)
+                except Exception:
+                    logger.warning("Не вдалось очистити необов'язкове поле '%s'", field, exc_info=True)
+
         return fixed_any
 
     def _submit_and_get_report(
