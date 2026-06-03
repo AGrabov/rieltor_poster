@@ -100,6 +100,54 @@ def _normalize_deal_type(value: str) -> str | None:
     return _DEAL_TYPE_NORMALIZE.get(value.lower().strip())
 
 
+# ── Property-type filtering ──────────────────────────────────────────
+
+# Free-to-post property types on rieltor.ua. "Безкоштовне" expands to these.
+_FREE_PROPERTY_TYPES = ["Будинок", "Комерційна", "Ділянка", "Паркомісце"]
+
+
+def _build_collect_item_filter(deal_type: str | None, property_type: str | None):
+    """Скласти предикат для фільтрації карток списку CRM на льоту.
+
+    Застосовується ДО підрахунку зібраних об'єктів, тож ліміт max_count
+    рахує саме об'єкти потрібного типу/угоди. "Безкоштовне" розгортається
+    в усі безкоштовні типи (як у фазі post).
+
+    Returns:
+        Функція item -> bool (True = картку лишити).
+    """
+    from crm_data_parser.html_parser import CRM_TYPE_TO_SCHEMA
+
+    normalized_deal = _normalize_deal_type(deal_type) if deal_type else None
+
+    def _schema_type(item) -> str:
+        crm_type = (item.property_type or "").lower()
+        return CRM_TYPE_TO_SCHEMA.get(crm_type, item.property_type or "").lower()
+
+    def _matches_deal(item) -> bool:
+        if not normalized_deal:
+            return True
+        return bool(item.deal_type and item.deal_type.lower() == normalized_deal.lower())
+
+    def _matches_property(item) -> bool:
+        if not property_type:
+            return True
+        crm_type = (item.property_type or "").lower()
+        schema = _schema_type(item)
+        if property_type == "Безкоштовне":
+            return any(
+                schema == f.lower() or schema.startswith(f.lower() + "_") for f in _FREE_PROPERTY_TYPES
+            )
+        pt_lower = property_type.lower()
+        # Direct CRM-type match (e.g. "будинок") or schema match (e.g. "таунхаус" → "Будинок").
+        return crm_type == pt_lower or schema == pt_lower
+
+    def _item_filter(item) -> bool:
+        return _matches_deal(item) and _matches_property(item)
+
+    return _item_filter
+
+
 # ── Phase 1: CRM collection ─────────────────────────────────────────
 
 
@@ -147,42 +195,31 @@ def phase1_collect(
             debug=debug,
         )
 
-        items = collector.collect_advertisable(max_pages=max_pages)
-        logger.info("Зібрано %d рекламованих об'єктів з CRM", len(items))
+        # Build the type/deal filter and iterate the CRM list lazily, so the
+        # property-type filter is applied BEFORE counting and pagination stops
+        # as soon as max_count new offers are saved (no need to crawl all pages).
+        item_filter = _build_collect_item_filter(deal_type, property_type)
+        if deal_type or property_type:
+            logger.info(
+                "Фільтр збору: deal_type=%s, property_type=%s",
+                _normalize_deal_type(deal_type) if deal_type else "будь-який",
+                property_type or "будь-який",
+            )
 
-        # Apply filters
-        if deal_type:
-            normalized = _normalize_deal_type(deal_type)
-            if normalized:
-                items = [i for i in items if i.deal_type and i.deal_type.lower() == normalized.lower()]
-                logger.info("Відфільтровано за deal_type=%s: %d елементів", normalized, len(items))
-
-        if property_type:
-            from crm_data_parser.html_parser import CRM_TYPE_TO_SCHEMA
-
-            pt_lower = property_type.lower()
-
-            def _matches_property_type(item) -> bool:
-                crm_type = (item.property_type or "").lower()
-                # Direct match: e.g. "Будинок" == "будинок"
-                if crm_type == pt_lower:
-                    return True
-                # Schema match: e.g. "Таунхаус"/"Дуплекс" → "Будинок"
-                return CRM_TYPE_TO_SCHEMA.get(crm_type, "").lower() == pt_lower
-
-            items = [i for i in items if _matches_property_type(i)]
-            logger.info("Відфільтровано за property_type=%s: %d елементів", property_type, len(items))
-
-        for idx, item in enumerate(items, 1):
+        # Display denominator for progress logs: the target count, or "?" when unbounded.
+        total_label = str(max_count) if max_count else "?"
+        idx = 0
+        for item in collector.iter_advertisable(max_pages=max_pages, item_filter=item_filter):
             if max_count and saved >= max_count:
                 logger.info("Досягнуто ліміту %d нових збережених об'єктів, зупинка", max_count)
                 break
+            idx += 1
 
             if db.estate_exists(item.estate_id):
                 logger.info(
-                    "[%d/%d] Об'єкт %d вже є в БД, пропускаємо",
+                    "[%d/%s] Об'єкт %d вже є в БД, пропускаємо",
                     idx,
-                    len(items),
+                    total_label,
                     item.estate_id,
                 )
                 continue
@@ -199,9 +236,9 @@ def phase1_collect(
                         status="skipped",
                     )
                     logger.warning(
-                        "[%d/%d] Об'єкт %d закрито, пропущено",
+                        "[%d/%s] Об'єкт %d закрито, пропущено",
                         idx,
-                        len(items),
+                        total_label,
                         item.estate_id,
                     )
                     continue
@@ -246,18 +283,18 @@ def phase1_collect(
                 )
                 saved += 1
                 logger.info(
-                    "[%d/%d] Збережено об'єкт %d (article=%s)",
+                    "[%d/%s] Збережено об'єкт %d (article=%s)",
                     idx,
-                    len(items),
+                    total_label,
                     item.estate_id,
                     article,
                 )
 
             except Exception:
                 logger.exception(
-                    "[%d/%d] Помилка обробки об'єкта %d",
+                    "[%d/%s] Помилка обробки об'єкта %d",
                     idx,
-                    len(items),
+                    total_label,
                     item.estate_id,
                 )
                 db.insert_offer(
@@ -734,7 +771,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_collect.add_argument("--max-pages", type=int, help="Max CRM pagination pages")
     p_collect.add_argument("--max-count", type=int, help="Max offers to collect")
     p_collect.add_argument("--deal-type", help="Filter: sell or lease")
-    p_collect.add_argument("--property-type", help="Filter: Квартира, Будинок, etc.")
+    p_collect.add_argument(
+        "--property-type",
+        help="Filter: Квартира, Будинок, etc., or Безкоштовне (all free-to-post types)",
+    )
 
     # post
     p_post = sub.add_parser("post", help="Phase 2: post from DB to Rieltor")

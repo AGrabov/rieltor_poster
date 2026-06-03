@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
 from bs4 import BeautifulSoup, Tag
@@ -93,15 +94,43 @@ class EstateListCollector:
     def collect_advertisable(self, max_pages: int | None = None) -> list[EstateListItem]:
         """Зібрати всі рекламовані об'єкти з відфільтрованого списку CRM.
 
-        Відкриває список об'єктів з фільтром "Можна рекламувати",
-        потім ітерує всі сторінки, збираючи картки об'єктів.
-        Автоматично пропускає закриті об'єкти.
+        Зручна обгортка над :meth:`iter_advertisable`, що матеріалізує всі
+        сторінки у список. Для збору з лімітом (стоп-раніше) використовуйте
+        :meth:`iter_advertisable` напряму та зупиняйте ітерацію самостійно —
+        тоді наступні сторінки не завантажуються.
 
         Args:
             max_pages: Максимальна кількість сторінок для обробки (None = всі).
 
         Returns:
             Список активних EstateListItem (закриті виключені).
+        """
+        all_items = list(self.iter_advertisable(max_pages=max_pages))
+        logger.info("Зібрано %d активних рекламованих об'єктів", len(all_items))
+        return all_items
+
+    def iter_advertisable(
+        self,
+        max_pages: int | None = None,
+        item_filter: Callable[[EstateListItem], bool] | None = None,
+    ) -> Iterator[EstateListItem]:
+        """Ліниво ітерувати рекламовані об'єкти з відфільтрованого списку CRM.
+
+        Сторінки завантажуються на вимогу: наступна відкривається лише коли
+        споживач вичерпав поточну. Це дозволяє зупинити збір (напр. за
+        досягнення max_count) без обходу всіх сторінок CRM.
+
+        Фільтр ``item_filter`` (тип об'єкта / тип угоди) застосовується ДО
+        видачі, тож споживач рахує вже відфільтровані об'єкти.
+
+        Args:
+            max_pages: Максимальна кількість сторінок для обробки (None = всі).
+            item_filter: Необов'язковий предикат — видаються лише об'єкти,
+                для яких він повертає True. ``None`` = без додаткової фільтрації.
+
+        Yields:
+            Активні рекламовані EstateListItem, що проходять item_filter
+            (закриті та не рекламовані виключені).
         """
         url = (
             f"{CRM_BASE_URL}{self.ESTATE_LIST_PATH}"
@@ -114,25 +143,31 @@ class EstateListCollector:
         self.page.goto(url, wait_until="domcontentloaded")
         self.page.wait_for_selector(".estate-list", timeout=15_000)
 
-        all_items: list[EstateListItem] = []
         page_num = 1
+        total_matched = 0
 
         while True:
             logger.info("Парсинг сторінки %d...", page_num)
             items = self.collect_page()
             active = [i for i in items if not i.is_closed and i.can_advertise]
+            matched = [i for i in active if item_filter(i)] if item_filter else active
             skipped_closed = sum(1 for i in items if i.is_closed)
             skipped_no_ads = sum(1 for i in items if not i.is_closed and not i.can_advertise)
-            all_items.extend(active)
+            skipped_filtered = len(active) - len(matched)
+            total_matched += len(matched)
             logger.info(
-                "Сторінка %d: %d об'єктів (%d активних, %d закритих, %d не рекламованих), всього: %d",
+                "Сторінка %d: %d об'єктів (%d підходять, %d закритих, %d не рекламованих, "
+                "%d відсіяно фільтром), всього підходящих: %d",
                 page_num,
                 len(items),
-                len(active),
+                len(matched),
                 skipped_closed,
                 skipped_no_ads,
-                len(all_items),
+                skipped_filtered,
+                total_matched,
             )
+
+            yield from matched
 
             if max_pages and page_num >= max_pages:
                 logger.info("Досягнуто max_pages=%d, зупинка", max_pages)
@@ -144,9 +179,6 @@ class EstateListCollector:
 
             self._go_next_page()
             page_num += 1
-
-        logger.info("Зібрано %d активних рекламованих об'єктів", len(all_items))
-        return all_items
 
     def collect_page(self) -> list[EstateListItem]:
         """Розпарсити всі картки об'єктів на поточній сторінці.
