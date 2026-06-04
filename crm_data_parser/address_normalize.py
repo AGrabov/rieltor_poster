@@ -182,6 +182,63 @@ def normalize_house(house: str) -> str:
     return re.sub(r"[\s\-]+", "", h).lower()
 
 
+# Канонічний тип → повне слово для відображення (лише розрізняльні, без «вул»).
+_TYPE_CANON_DISPLAY: dict[str, str] = {
+    "пров": "провулок",
+    "просп": "проспект",
+    "бул": "бульвар",
+    "пл": "площа",
+    "шосе": "шосе",
+    "наб": "набережна",
+    "туп": "тупик",
+    "узвіз": "узвіз",
+    "проїзд": "проїзд",
+    "дорога": "дорога",
+    "алея": "алея",
+}
+
+# Токени типів для пошуку в описі (розрізняльні; без однобуквених неоднозначних «ш»/«пр»).
+_RECOVER_TYPE_TOKENS = [
+    "шосе", "шоссе", "проспект", "просп", "пр-т", "пр-кт", "бульвар", "бульв", "бул", "б-р",
+    "провулок", "пров", "переулок", "пер", "площа", "площадь", "пл", "набережна", "набережная",
+    "наб", "тупик", "туп", "узвіз", "проїзд", "проезд", "дорога", "алея",
+]
+_RECOVER_TYPE_ALT = "|".join(re.escape(t) for t in sorted(_RECOVER_TYPE_TOKENS, key=len, reverse=True))
+_NOT_CYR_LAT = r"(?![А-Яа-яІіЇїЄєҐґA-Za-z])"
+_NOT_CYR_LAT_BEHIND = r"(?<![А-Яа-яІіЇїЄєҐґA-Za-z])"
+
+
+def recover_street_type(street: str, *texts: str) -> str:
+    """Якщо у вулиці немає типу — знайти розрізняльний тип у тексті(ах) поряд з назвою.
+
+    Напр. вулиця="Харківське", опис містить "Харківське шосе" → "Харківське шосе".
+    Типовий «вул» НЕ відновлюємо (він неявний на сайті). Шукаємо тип лише
+    впритул до назви (через пробіл/кому), щоб не схопити чужий тип із сусіднього
+    речення. Повертає "Назва Тип" або вихідну вулицю без змін.
+    """
+    if not street or street_type_canon(street):
+        return street
+    name = strip_street_type(street).strip()
+    if len(name) < 3:
+        return street
+    name_re = re.escape(name)
+    after = re.compile(
+        _NOT_CYR_LAT_BEHIND + name_re + r"[\s,]*(" + _RECOVER_TYPE_ALT + r")" + _NOT_CYR_LAT, re.IGNORECASE
+    )
+    before = re.compile(
+        _NOT_CYR_LAT_BEHIND + r"(" + _RECOVER_TYPE_ALT + r")\.?\s+" + name_re + _NOT_CYR_LAT, re.IGNORECASE
+    )
+    for text in texts:
+        if not text:
+            continue
+        m = after.search(text) or before.search(text)
+        if m:
+            disp = _TYPE_CANON_DISPLAY.get(street_type_canon(m.group(1)))
+            if disp:
+                return f"{name} {disp}"
+    return street
+
+
 def street_type_canon(text: str) -> str:
     """Канонічний тип вулиці (UA) з рядка або ``''``, якщо типу немає.
 

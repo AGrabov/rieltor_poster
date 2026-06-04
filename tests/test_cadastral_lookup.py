@@ -12,7 +12,7 @@ def test_pick_verified_returns_exact_house_on_matching_street():
         ("8000000000:75:214:0010", "м.Київ, вулиця Львівська, 19"),
         ("8000000000:75:214:0012", "м.Київ, вулиця Львівська, 19-і"),
     ]
-    assert cl._pick_verified(candidates, "Львівська", "19") == "8000000000:75:214:0010"
+    assert cl._pick_verified(candidates, "Львівська", "19")[0] == "8000000000:75:214:0010"
 
 
 def test_pick_verified_no_exact_house_returns_none():
@@ -44,7 +44,7 @@ def test_pick_verified_tolerates_ru_ua_spelling():
     candidates = [
         ("8000000000:76:024:0044", "м. Київ, вул. Пушкінська, 1"),
     ]
-    assert cl._pick_verified(candidates, "Пушкинська", "1") == "8000000000:76:024:0044"
+    assert cl._pick_verified(candidates, "Пушкинська", "1")[0] == "8000000000:76:024:0044"
 
 
 def test_pick_verified_empty_candidates_returns_none():
@@ -55,7 +55,7 @@ def test_pick_verified_empty_candidates_returns_none():
 def test_pick_verified_house_letter_variants_match():
     candidates = [("8000000000:75:214:0033", "м.Київ, вулиця Львівська, 19-а")]
     for crm_house in ("19А", "19-а", "19 а", "19а"):
-        assert cl._pick_verified(candidates, "Львівська", crm_house) == "8000000000:75:214:0033"
+        assert cl._pick_verified(candidates, "Львівська", crm_house)[0] == "8000000000:75:214:0033"
 
 
 def test_pick_verified_bare_number_differs_from_lettered():
@@ -73,12 +73,12 @@ _SHEVCHENKA = [
 
 
 def test_pick_verified_picks_matching_street_type():
-    assert cl._pick_verified(_SHEVCHENKA, "вул. Шевченка", "19") == "8000000000:01:001:0001"
+    assert cl._pick_verified(_SHEVCHENKA, "вул. Шевченка", "19")[0] == "8000000000:01:001:0001"
 
 
 def test_pick_verified_russian_type_maps_to_ukrainian():
     # CRM "пер." (RU) must select провулок, not вулиця.
-    assert cl._pick_verified(_SHEVCHENKA, "пер. Шевченка", "19") == "8000000000:01:001:0002"
+    assert cl._pick_verified(_SHEVCHENKA, "пер. Шевченка", "19")[0] == "8000000000:01:001:0002"
 
 
 def test_pick_verified_type_known_but_absent_returns_none():
@@ -120,7 +120,7 @@ def test_search_zem_center_picks_exact_house(monkeypatch):
         return _FakeResp(json_data=_ZEM_SAMPLE)
 
     monkeypatch.setattr(cl.requests, "get", fake_get)
-    assert cl._search_zem_center("Київ Львівська 19", "Львівська", "19") == "8000000000:75:214:0010"
+    assert cl._search_zem_center("Київ Львівська 19", "Львівська", "19")[0] == "8000000000:75:214:0010"
 
 
 def test_search_zem_center_handles_error(monkeypatch):
@@ -149,7 +149,7 @@ def test_search_kadastrova_karta_picks_exact_house(monkeypatch):
 
     monkeypatch.setattr(cl.requests, "get", fake_get)
     got = cl._search_kadastrova_karta("Київ Львівська 19", "Львівська", "19")
-    assert got == "8000000000:75:214:0010"
+    assert got[0] == "8000000000:75:214:0010"
 
 
 def test_lookup_normalizes_city_and_strips_street(monkeypatch):
@@ -158,7 +158,7 @@ def test_lookup_normalizes_city_and_strips_street(monkeypatch):
     def fake_zem(query, street, house):
         seen["query"] = query
         seen["street"] = street
-        return "8000000000:75:214:0010"
+        return ("8000000000:75:214:0010", "м.Київ, вулиця Львівська, 19")
 
     monkeypatch.setattr(cl, "_search_zem_center", fake_zem)
     # The QUERY must be normalized (RU city → UA, street type stripped);
@@ -173,7 +173,11 @@ def test_lookup_normalizes_city_and_strips_street(monkeypatch):
 
 def test_lookup_uses_zem_first(monkeypatch):
     calls = []
-    monkeypatch.setattr(cl, "_search_zem_center", lambda q, s, h: calls.append(("zem", q)) or "8000000000:75:214:0010")
+    monkeypatch.setattr(
+        cl,
+        "_search_zem_center",
+        lambda q, s, h: calls.append(("zem", q)) or ("8000000000:75:214:0010", "м.Київ, вул. Львівська, 19"),
+    )
     monkeypatch.setattr(cl, "_search_kadastrova_karta", lambda q, s, h: calls.append(("kk", q)) or None)
     result = cl.lookup_cadastral_number("Київ", "вул. Львівська", "19")
     assert result == "8000000000:75:214:0010"
@@ -183,9 +187,79 @@ def test_lookup_uses_zem_first(monkeypatch):
 
 def test_lookup_falls_back_to_kadastrova(monkeypatch):
     monkeypatch.setattr(cl, "_search_zem_center", lambda q, s, h: None)
-    monkeypatch.setattr(cl, "_search_kadastrova_karta", lambda q, s, h: "8000000000:75:214:0099")
+    monkeypatch.setattr(
+        cl, "_search_kadastrova_karta", lambda q, s, h: ("8000000000:75:214:0099", "м.Київ, вул. Львівська, 19")
+    )
     result = cl.lookup_cadastral_number("Київ", "вул. Львівська", "19")
     assert result == "8000000000:75:214:0099"
+
+
+# ── registry address parsing (Район + street type) ───────────────────────
+def test_parse_registry_address_extracts_raion_and_street_with_type():
+    parsed = cl.parse_registry_address("м.Київ, Дарницький р-н, шосе Харківське, 201-203")
+    assert parsed["Район"] == "Дарницький"
+    assert parsed["Вулиця"] == "Харківське шосе"
+
+
+def test_parse_registry_address_drops_default_vulytsia_type():
+    parsed = cl.parse_registry_address("Київська обл., Бучанський р-н, вул. Воскресенська, 16")
+    assert parsed["Район"] == "Бучанський"
+    assert parsed["Вулиця"] == "Воскресенська"
+
+
+def test_format_registry_street_reorders_type_last():
+    assert cl._format_registry_street("шосе Харківське") == "Харківське шосе"
+    assert cl._format_registry_street("проспект Перемоги") == "Перемоги проспект"
+    assert cl._format_registry_street("вул. Хрещатик") == "Хрещатик"
+
+
+def test_street_base_ignores_type_for_comparison():
+    # Same street with/without type must compare equal (so we can add the type).
+    assert cl._street_base("Харківське") == cl._street_base("Харківське шосе")
+    assert cl._street_base("вул. Воскресенська") == cl._street_base("Воскресенська")
+
+
+# ── registry overwrite gated by the same match criteria as the cadnum ─────
+# (house+suffix exact, street type matches when known, name fuzzy)
+_REG = "м.Київ, Дарницький р-н, шосе Харківське, 201-203"
+
+
+def test_registry_matches_when_house_and_name_match_no_crm_type():
+    # CRM type missing (historical) — name + house match, type unambiguous → match.
+    addr = {"Вулиця": "Харківське", "Будинок": "201-203"}
+    assert cl._registry_matches_crm(addr, _REG) is True
+
+
+def test_registry_no_match_on_house_mismatch():
+    addr = {"Вулиця": "Харківське", "Будинок": "16"}
+    assert cl._registry_matches_crm(addr, _REG) is False
+
+
+def test_registry_no_match_on_street_type_mismatch():
+    # CRM says площа, registry is шосе → type conflict, do not overwrite.
+    addr = {"Вулиця": "Харківська площа", "Будинок": "201-203"}
+    assert cl._registry_matches_crm(addr, _REG) is False
+
+
+def test_registry_no_match_on_name_mismatch():
+    addr = {"Вулиця": "Львівська", "Будинок": "201-203"}
+    assert cl._registry_matches_crm(addr, _REG) is False
+
+
+# ── street type recovery from description ─────────────────────────────────
+def test_recover_street_type_finds_type_in_text():
+    from crm_data_parser.address_normalize import recover_street_type
+
+    assert recover_street_type("Харківське", "офіс на Харківське шосе, 201") == "Харківське шосе"
+    assert recover_street_type("Перемоги", "проспект Перемоги, 5") == "Перемоги проспект"
+
+
+def test_recover_street_type_keeps_default_and_existing():
+    from crm_data_parser.address_normalize import recover_street_type
+
+    # default "вул" is implicit — not appended; already-typed street unchanged.
+    assert recover_street_type("Воскресенська", "вул. Воскресенська 16") == "Воскресенська"
+    assert recover_street_type("Харківське шосе", "anything") == "Харківське шосе"
 
 
 def test_lookup_no_kadastr_live_references():

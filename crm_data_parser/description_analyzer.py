@@ -7,6 +7,53 @@ from setup_logger import setup_logger
 logger = setup_logger(__name__)
 
 
+# Minimum plausible building total area, m². A value below this (e.g. "0.7"
+# misparsed from "180,7") is a parse error — drop it rather than trust it.
+# Self-contained sanity bound: does NOT compare against CRM data (often unreliable).
+_MIN_TOTAL_AREA_M2 = 5.0
+
+# Max plausible floor / storey count. Higher values are mis-parsed areas/power
+# (e.g. "площа поверху — 209 м²" → 209), not real floors.
+_MAX_FLOOR = 60
+
+# Multi-value amenity fields: checkbox groups on rieltor.ua (the schema collector
+# mislabels them "select"). Several options are true at once, so the analyzer must
+# return the FULL list of matches — never a single value, which would collapse the
+# list (e.g. ['Школа','Супермаркет'] → 'Супермаркет').
+MULTI_VALUE_LABELS = frozenset(
+    {
+        "поруч є",
+        "у квартирі є",
+        "у будинку є",
+        "в кімнаті є",
+        "на ділянці є",
+        "працює без світла",
+    }
+)
+
+
+def _is_multi_value(label: str) -> bool:
+    return label.lower().strip() in MULTI_VALUE_LABELS
+
+
+def merge_multi_value(existing, new):
+    """Об'єднати значення мультизначного поля (CRM + опис) у список без дублів.
+
+    Зберігає порядок: спершу наявні значення, потім нові. Приймає скаляр або список.
+    """
+
+    def _as_list(v):
+        if v is None:
+            return []
+        return list(v) if isinstance(v, (list, tuple)) else [v]
+
+    out: list = []
+    for item in _as_list(existing) + _as_list(new):
+        if item not in out:
+            out.append(item)
+    return out
+
+
 # Contextual regex patterns: schema_label_lower → list of (regex, matched_value)
 # These patterns look for specific phrases in description text.
 CONTEXTUAL_PATTERNS: dict[str, list[tuple]] = {
@@ -173,24 +220,34 @@ class DescriptionAnalyzer:
 
         # 1) Match against field options for select/radio/checklist widgets
         option_matches = self._match_field_options(description_lower, existing_data)
-        extracted.update(option_matches)
+        self._merge_into(extracted, option_matches)
 
         # 2) Contextual patterns (appliances, heating type, condition, etc.)
         context_matches = self._extract_by_context(description_lower, existing_data)
-        extracted.update(context_matches)
+        self._merge_into(extracted, context_matches)
 
         # 3) Numeric patterns (areas, floor, rooms, price, year, ceiling)
         numeric_matches = self._extract_numeric_fields(description_lower, existing_data)
-        extracted.update(numeric_matches)
+        self._merge_into(extracted, numeric_matches)
 
         # 4) Simple keyword patterns (heating boolean, hot water)
         pattern_matches = self._extract_keyword_patterns(description_lower, existing_data)
-        extracted.update(pattern_matches)
+        self._merge_into(extracted, pattern_matches)
 
         if self.debug and extracted:
             logger.debug(f"DescriptionAnalyzer вилучив {len(extracted)} полів: {list(extracted.keys())}")
 
         return extracted
+
+    @staticmethod
+    def _merge_into(target: dict, new: dict) -> None:
+        """Злити new у target. Мультизначні поля об'єднуються у список (union),
+        решта — перезаписуються (останній етап перемагає, як було)."""
+        for key, value in new.items():
+            if _is_multi_value(key):
+                target[key] = merge_multi_value(target.get(key), value)
+            else:
+                target[key] = value
 
     @staticmethod
     def _option_in_text(option_lower: str, text: str) -> bool:
@@ -254,24 +311,25 @@ class DescriptionAnalyzer:
             if key.lower() in self._NUMERIC_ONLY_FIELDS:
                 continue
 
-            if widget in ["select", "radio"]:
-                matches = [opt for opt in options if self._option_in_text(opt.lower(), text)]
+            if widget in ["select", "radio", "checklist"]:
+                # Варіанти-голі-числа (Поверх 1..40, Кількість телефонних ліній 1..5)
+                # не можна матчити через "чи є це число в тексті" — це просто хапає
+                # найбільшу цифру в описі (напр. "30" з "30 кВт"). Такі поля
+                # потребують спеціальних контекстних вилучувачів, тож числові
+                # варіанти тут пропускаємо.
+                matches = [
+                    opt
+                    for opt in options
+                    if not re.fullmatch(r"\d+", opt.strip()) and self._option_in_text(opt.lower(), text)
+                ]
                 if matches:
-                    extracted[key] = matches[-1]
+                    # Чеклісти та мультизначні поля → весь список; інакше — одне значення.
+                    if widget == "checklist" or _is_multi_value(key):
+                        extracted[key] = matches
+                    else:
+                        extracted[key] = matches[-1]
                     if self.debug:
-                        logger.debug(f"Знайдено збіг {key}={matches[-1]} в описі (з {len(matches)} збігів)")
-
-            elif widget == "checklist":
-                matched_options = []
-                for option in options:
-                    option_lower = option.lower()
-                    if self._option_in_text(option_lower, text):
-                        matched_options.append(option)
-
-                if matched_options:
-                    extracted[key] = matched_options
-                    if self.debug:
-                        logger.debug(f"Знайдено збіг {key}={matched_options} в описі")
+                        logger.debug(f"Знайдено збіг {key}={extracted[key]} в описі (з {len(matches)} збігів)")
 
         return extracted
 
@@ -308,8 +366,8 @@ class DescriptionAnalyzer:
             if not matches:
                 continue
 
-            # checklist fields → list of values, select/radio → single value
-            if widget == "checklist" or len(matches) > 1:
+            # checklist / multi-value fields → list of values, single select/radio → one value
+            if widget == "checklist" or _is_multi_value(schema_label) or len(matches) > 1:
                 # Merge with existing option_matches if already extracted above
                 if schema_label in extracted:
                     existing = extracted[schema_label]
@@ -335,7 +393,10 @@ class DescriptionAnalyzer:
         # --- Areas ---
         area_patterns = [
             (
-                r"загальн\w*\s+площ\w*(?:\s+\w+)?\s*[:\s\-–—]*(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?|кв\.?\s*м)",
+                # Optional word between "площа" and the number is letters-only
+                # ([^\W\d_]+, not \w+) — \w+ greedily eats leading digits, so
+                # "загальною площею 180,7 м²" would capture "0,7" instead of "180,7".
+                r"загальн\w*\s+площ\w*(?:\s+[^\W\d_]+)?\s*[:\s\-–—]*(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?|кв\.?\s*м)",
                 "Загальна площа, м²",
             ),
             (r"(\d+[.,]?\d*)\s*(?:м²|м\.?\s*кв\.?)\s*загальн", "Загальна площа, м²"),
@@ -436,26 +497,33 @@ class DescriptionAnalyzer:
 
         # --- Floor ---
         if "Поверх" not in existing_data and "Поверх" not in extracted:
+            floor = total = None
             # Pattern 1: "N поверх / M" or "N поверх з M" (without ordinal suffix)
-            floor_match = re.search(r"(\d+)\s*поверх\s*[/зі]+\s*(\d+)", text)
-            if floor_match:
-                extracted["Поверх"] = floor_match.group(1)
-                if "Поверховість" not in existing_data and "Поверховість" not in extracted:
-                    extracted["Поверховість"] = floor_match.group(2)
-
-            if "Поверх" not in extracted:
+            m = re.search(r"(\d+)\s*поверх\s*[/зі]+\s*(\d+)", text)
+            if m:
+                floor, total = m.group(1), m.group(2)
+            if floor is None:
                 # Pattern 2: "12-й поверх із 31" (ordinal suffix before поверх)
-                floor_match2 = re.search(r"(\d+)\s*[-–—]?\s*[а-яіїєґ]{0,3}\s+поверх\s+(?:із?|з)\s+(\d+)", text)
-                if floor_match2:
-                    extracted["Поверх"] = floor_match2.group(1)
-                    if "Поверховість" not in existing_data and "Поверховість" not in extracted:
-                        extracted["Поверховість"] = floor_match2.group(2)
+                m = re.search(r"(\d+)\s*[-–—]?\s*[а-яіїєґ]{0,3}\s+поверх\s+(?:із?|з)\s+(\d+)", text)
+                if m:
+                    floor, total = m.group(1), m.group(2)
+            if floor is None:
+                # Pattern 3: "поверх - 4" / "поверх: 4" — ціле слово "поверх", не
+                # "поверху": "площа поверху — 209 м²" дало б поверх=209.
+                m = re.search(r"поверх(?![а-яіїєґ])\s*[-–—:]\s*(\d+)", text)
+                if m:
+                    floor = m.group(1)
 
-            if "Поверх" not in extracted:
-                # Pattern 3: "поверх - 4" or "поверх: 4" (floor number after keyword)
-                floor_match3 = re.search(r"поверх\s*[-–—:]\s*(\d+)", text)
-                if floor_match3:
-                    extracted["Поверх"] = floor_match3.group(1)
+            # Правдоподібність: відкидаємо нереальні номери (це площа/потужність, не поверх).
+            if floor is not None and 0 < int(floor) <= _MAX_FLOOR:
+                extracted["Поверх"] = floor
+                if (
+                    total is not None
+                    and 0 < int(total) <= _MAX_FLOOR
+                    and "Поверховість" not in existing_data
+                    and "Поверховість" not in extracted
+                ):
+                    extracted["Поверховість"] = total
 
         # --- Room count ---
         if "Число кімнат" not in existing_data and "Число кімнат" not in extracted:
@@ -650,6 +718,18 @@ class DescriptionAnalyzer:
                 return float(str(val).replace(",", ".")) if val is not None else None
             except (ValueError, TypeError):
                 return None
+
+        # Drop an implausibly small total area (e.g. "0.7" misparsed from "180,7").
+        # We only discard the value we extracted — never touch existing_data.
+        if _total_lbl in extracted:
+            _t = _to_float(_total_lbl)
+            if _t is not None and _t < _MIN_TOTAL_AREA_M2:
+                logger.warning(
+                    "Площа: загальна=%.2f м² < %.1f — неправдоподібно, відкинуто",
+                    _t,
+                    _MIN_TOTAL_AREA_M2,
+                )
+                del extracted[_total_lbl]
 
         _total = _to_float(_total_lbl)
         _living = _to_float(_living_lbl)

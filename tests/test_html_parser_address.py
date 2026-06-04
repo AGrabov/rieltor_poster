@@ -29,6 +29,8 @@ def test_extract_address_normalizes_russian_city():
     assert address["Місто"] == "Київ"
 
 
-def test_extract_address_strips_russian_street_type():
+def test_extract_address_keeps_street_type():
+    # Street type is preserved at parse time — needed to pick the right option on
+    # the site (шосе/проспект/площа); the autocomplete strips it only for search.
     address = _make_parser()._extract_address()
-    assert address["Вулиця"] == "Лесі Українки"
+    assert address["Вулиця"] == "ул. Лесі Українки"

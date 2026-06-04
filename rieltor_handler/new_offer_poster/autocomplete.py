@@ -4,6 +4,7 @@ from typing import Sequence
 
 from playwright.sync_api import Locator
 
+from crm_data_parser.address_normalize import strip_street_type
 from schemas import ADDRESS_LABELS
 from setup_logger import setup_logger
 
@@ -21,8 +22,13 @@ def _street_search_stem(name: str) -> str:
 
     Examples: "Малевича" → "Мале", "Болсунівська" → "Болсу", "Саксаганського" → "Сакса".
     Minimum 3 chars returned; result is capped at 6 chars.
+
+    Ведучий тип ("шосе Харківське", "вул. Воскресенська") відкидаємо — стем має
+    починатися з НАЗВИ, інакше для "шосе Харківське" вийшло б "шос" і ми б
+    знайшли будь-яке шосе. Тип у збереженому значенні лишається для звірки з
+    варіантами реєстру/сайту.
     """
-    s = (name or "").strip()
+    s = strip_street_type((name or "").strip()) or (name or "").strip()
     vowel_count = 0
     for i, ch in enumerate(s):
         if ch in _UA_VOWELS:

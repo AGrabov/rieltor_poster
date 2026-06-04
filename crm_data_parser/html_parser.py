@@ -12,8 +12,12 @@ from typing import Any
 
 from bs4 import BeautifulSoup
 
-from crm_data_parser.address_normalize import normalize_city, strip_street_type
-from crm_data_parser.description_analyzer import DescriptionAnalyzer
+from crm_data_parser.address_normalize import normalize_city, recover_street_type
+from crm_data_parser.description_analyzer import (
+    DescriptionAnalyzer,
+    _is_multi_value,
+    merge_multi_value,
+)
 from schemas import ADDRESS_LABELS, load_offer_schema
 from setup_logger import setup_logger
 
@@ -407,9 +411,24 @@ class HTMLOfferParser:
         _STRUCTURED_FIELDS = frozenset({"Ціна", "Валюта", "offer_type", "property_type"})
         if description or note:
             full_text = "\n\n".join([note or "", description or ""]).strip()
+
+            # Якщо у вулиці немає типу — спробувати знайти його в описі
+            # ("Харківське" + "Харківське шосе" в тексті → "Харківське шосе").
+            addr = result.get("address")
+            if addr and addr.get("Вулиця"):
+                typed = recover_street_type(addr["Вулиця"], full_text)
+                if typed != addr["Вулиця"]:
+                    logger.debug("Тип вулиці з опису: '%s' → '%s'", addr["Вулиця"], typed)
+                    addr["Вулиця"] = typed
+
             analyzed_data = self.analyzer.analyze(full_text, {})
             for key, value in analyzed_data.items():
                 if key in _STRUCTURED_FIELDS or value is None:
+                    continue
+                # Мультизначні поля (Поруч є, У квартирі є, …): об'єднуємо список CRM
+                # та опису, щоб не загубити пункти, яких немає в описі.
+                if _is_multi_value(key):
+                    result[key] = merge_multi_value(result.get(key), value)
                     continue
                 if key in result and result[key] != value:
                     logger.debug("Опис перезаписує CRM: %s='%s' → '%s'", key, result[key], value)
@@ -557,9 +576,7 @@ class HTMLOfferParser:
 
                         # Clean up prefixes / normalize RU→UA
                         label_lower = schema_label.lower().strip()
-                        if label_lower == "вулиця":
-                            value = strip_street_type(value)
-                        elif label_lower == "місто":
+                        if label_lower == "місто":
                             value = normalize_city(value)
                         elif label_lower == "новобудова":
                             if value.strip().lower() == "ні":

@@ -15,6 +15,7 @@ try:
         fold_cyrillic,
         normalize_city,
         normalize_house,
+        recover_street_type,
         street_type_canon,
         strip_street_type,
     )
@@ -23,6 +24,7 @@ except ImportError:  # direct-run fallback
         fold_cyrillic,
         normalize_city,
         normalize_house,
+        recover_street_type,
         street_type_canon,
         strip_street_type,
     )
@@ -80,8 +82,8 @@ def _street_matches(street: str, addr: str) -> bool:
     return any(SequenceMatcher(None, q, p).ratio() >= _STREET_MATCH_THRESHOLD for p in phrases)
 
 
-def _pick_verified(candidates: list[tuple[str, str]], street: str, house: str) -> str | None:
-    """Обрати кадастровий номер лише за ВПЕВНЕНОГО збігу.
+def _pick_verified(candidates: list[tuple[str, str]], street: str, house: str) -> tuple[str, str] | None:
+    """Обрати (кадастровий номер, адресу реєстру) лише за ВПЕВНЕНОГО збігу.
 
     Фільтрує кандидатів за точним номером будинку (окремий токен) і фуззі-
     збігом назви вулиці, а потім розрізняє однойменні вулиці різного типу
@@ -92,7 +94,12 @@ def _pick_verified(candidates: list[tuple[str, str]], street: str, house: str) -
       • тип CRM невідомий, але кандидати різного типу → ``None`` (неоднозначно).
 
     Інакше — ``None`` (поле краще лишити порожнім: чернетку не відредагувати).
+
+    Returns:
+        (cadnum, registry_address) або None.
     """
+    # Збіг: номер будинку з суфіксом (точно) + назва вулиці (фуззі, RU↔UA).
+    # Тип вулиці звіряємо нижче — за відомого типу він має збігтися.
     matches = [
         (cadnum, addr) for cadnum, addr in candidates if _house_matches(addr, house) and _street_matches(street, addr)
     ]
@@ -101,28 +108,28 @@ def _pick_verified(candidates: list[tuple[str, str]], street: str, house: str) -
 
     crm_type = street_type_canon(street)
     if crm_type:
-        same_type = [cadnum for cadnum, addr in matches if street_type_canon(addr) == crm_type]
+        same_type = [(cadnum, addr) for cadnum, addr in matches if street_type_canon(addr) == crm_type]
         if same_type:
             return same_type[0]
         # Тип CRM відомий, але серед кандидатів типи є й жоден не збігся → не вгадуємо.
         if any(street_type_canon(addr) for _, addr in matches):
             return None
         # Жоден кандидат не має розпізнаного типу — нічим розрізняти, беремо перший.
-        return matches[0][0]
+        return matches[0]
 
     # Тип CRM невідомий: якщо кандидати різного типу — неоднозначно, пропускаємо.
     distinct_types = {street_type_canon(addr) for _, addr in matches if street_type_canon(addr)}
     if len(distinct_types) > 1:
         return None
-    return matches[0][0]
+    return matches[0]
 
 
-def _search_zem_center(query: str, street: str, house: str) -> str | None:
+def _search_zem_center(query: str, street: str, house: str) -> tuple[str, str] | None:
     """Пошук кадастрового номера через zem.center JSON API (основне джерело).
 
     GET https://api.zem.center/api/search?q=<query>&size=20 → {"items": [...]}.
-    Кожен item має ``cadnum`` та ``address``. Повертає впевнений збіг за
-    номером будинку та назвою вулиці або None.
+    Кожен item має ``cadnum`` та ``address``. Повертає (cadnum, address) за
+    впевненого збігу номера будинку й назви вулиці або None.
     """
     try:
         resp = requests.get(
@@ -150,10 +157,10 @@ def _search_zem_center(query: str, street: str, house: str) -> str | None:
         return None
 
 
-def _search_kadastrova_karta(query: str, street: str, house: str) -> str | None:
+def _search_kadastrova_karta(query: str, street: str, house: str) -> tuple[str, str] | None:
     """Пошук кадастрового номера через kadastrova-karta.com (fallback).
 
-    Парсить Turbo Stream HTML відповідь — без Playwright.
+    Парсить Turbo Stream HTML відповідь — без Playwright. Повертає (cadnum, address).
     """
     try:
         resp = requests.get(
@@ -187,8 +194,8 @@ def _search_kadastrova_karta(query: str, street: str, house: str) -> str | None:
         return None
 
 
-def lookup_cadastral_number(city: str, street: str, house: str) -> str | None:
-    """Знайти кадастровий номер ділянки за адресою.
+def lookup_cadastral_record(city: str, street: str, house: str) -> tuple[str, str] | None:
+    """Знайти (кадастровий номер, адресу реєстру) ділянки за адресою.
 
     Стратегія (zem.center JSON API, потім kadastrova-karta.com як fallback):
       1. zem.center: місто + вулиця + будинок
@@ -197,9 +204,12 @@ def lookup_cadastral_number(city: str, street: str, house: str) -> str | None:
       4. kadastrova-karta.com: місто + вулиця
 
     Returns:
-        Рядок у форматі ``XXXXXXXXXX:XX:XXX:XXXX`` або ``None``, якщо не знайдено.
+        (cadnum, registry_address) або None. cadnum у форматі
+        ``XXXXXXXXXX:XX:XXX:XXXX``; адреса — канонічна з реєстру (з типом
+        вулиці та адмінрайоном), напр. "м.Київ, Дарницький р-н, шосе ...".
     """
-    # RU→UA: місто за словником, тип вулиці зрізаємо (інакше реєстр дає 0).
+    # RU→UA: місто за словником, тип вулиці зрізаємо ЛИШЕ у ЗАПИТІ (реєстр інакше
+    # дає 0); у даних тип лишається й використовується для звірки нижче.
     street_clean = strip_street_type(street)
     city_clean = normalize_city(city)
     house_orig = house.strip()
@@ -219,28 +229,131 @@ def lookup_cadastral_number(city: str, street: str, house: str) -> str | None:
     # Verification gets the ORIGINAL street (keeps the type for disambiguation);
     # the query `q` uses the stripped form (the registry chokes on any type).
     for q in queries:
-        cadnum = _search_zem_center(q, street, house_orig)
-        if cadnum:
-            logger.debug("Знайдено zem.center: %s (запит '%s')", cadnum, q)
-            return cadnum
+        rec = _search_zem_center(q, street, house_orig)
+        if rec:
+            logger.debug("Знайдено zem.center: %s (запит '%s')", rec[0], q)
+            return rec
 
     for q in queries:
-        cadnum = _search_kadastrova_karta(q, street, house_orig)
-        if cadnum:
-            logger.debug("Знайдено kadastrova-karta.com: %s (запит '%s')", cadnum, q)
-            return cadnum
+        rec = _search_kadastrova_karta(q, street, house_orig)
+        if rec:
+            logger.debug("Знайдено kadastrova-karta.com: %s (запит '%s')", rec[0], q)
+            return rec
 
     return None
 
 
-def enrich_offer_data_with_cadastral(offer_data: dict) -> bool:
-    """Додати кадастровий номер до offer_data["address"], якщо він відсутній.
+def lookup_cadastral_number(city: str, street: str, house: str) -> str | None:
+    """Знайти лише кадастровий номер за адресою (обгортка над record)."""
+    rec = lookup_cadastral_record(city, street, house)
+    return rec[0] if rec else None
 
-    Перевіряє тип об'єкта через CRM_TYPE_TO_SCHEMA і пропускає типи,
-    що не підтримують поле «Кадастровий номер» на rieltor.ua.
+
+def lookup_address_by_cadnum(cadnum: str) -> str | None:
+    """Отримати канонічну адресу реєстру за кадастровим номером (zem.center).
+
+    Потрібно, щоб дозаповнити Район/тип вулиці для об'єктів, у яких номер уже
+    збережено (а отже повторного пошуку за адресою не було).
+    """
+    cadnum = (cadnum or "").strip()
+    if not _CADNUM_RE.match(cadnum):
+        return None
+    try:
+        resp = requests.get(
+            _ZEM_SEARCH_URL,
+            params={"q": cadnum, "size": "5"},
+            headers=_ZEM_HEADERS,
+            timeout=(5, 12),
+        )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        for item in (resp.json() or {}).get("items") or []:
+            if (item.get("cadnum") or "").strip() == cadnum:
+                return (item.get("address") or "").strip() or None
+    except requests.exceptions.Timeout:
+        logger.debug("Timeout zem.center (cadnum) для '%s'", cadnum)
+    except Exception:
+        logger.warning("Помилка zem.center (cadnum) для '%s'", cadnum, exc_info=True)
+    return None
+
+
+# Слова-типи вулиць у канонічному (повному) вигляді з реєстру.
+_REGISTRY_TYPE_WORDS = frozenset(
+    {
+        "шосе", "проспект", "просп", "бульвар", "бул", "провулок", "пров",
+        "площа", "пл", "узвіз", "набережна", "проїзд", "тупик", "тупік",
+        "алея", "дорога", "дор", "вулиця", "вул", "майдан",
+    }
+)
+_REGISTRY_DEFAULT_TYPES = frozenset({"вулиця", "вул"})
+
+
+def _format_registry_street(segment: str) -> str:
+    """Перетворити сегмент вулиці з реєстру у формат сайту: НАЗВА + тип.
+
+    "шосе Харківське" → "Харківське шосе"; "вул. Воскресенська" → "Воскресенська"
+    (типовий "вул" опускаємо — сайт трактує вулицю як тип за замовчуванням).
+    """
+    tokens = [t for t in segment.replace(".", " ").split() if t]
+    type_tok = next((t.lower() for t in tokens if t.lower() in _REGISTRY_TYPE_WORDS), None)
+    name = " ".join(t for t in tokens if t.lower() not in _REGISTRY_TYPE_WORDS).strip()
+    if not name:
+        return segment.strip()
+    if not type_tok or type_tok in _REGISTRY_DEFAULT_TYPES:
+        return name
+    return f"{name} {type_tok}"
+
+
+def parse_registry_address(addr: str) -> dict:
+    """Розібрати канонічну адресу реєстру на Район і Вулицю (з типом).
+
+    Напр. "м.Київ, Дарницький р-н, шосе Харківське, 201-203" →
+    {"Район": "Дарницький", "Вулиця": "Харківське шосе"}.
+    """
+    result: dict[str, str] = {}
+    for part in (p.strip() for p in (addr or "").split(",") if p.strip()):
+        low = part.lower()
+        if re.search(r"\bр-?н\b|\bрайон\b", low):
+            if "Район" not in result:
+                result["Район"] = re.sub(r"\s*(р-?н|район)\b\.?", "", part, flags=re.IGNORECASE).strip()
+        elif "Вулиця" not in result and any(
+            t.lower() in _REGISTRY_TYPE_WORDS for t in part.replace(".", " ").split()
+        ):
+            result["Вулиця"] = _format_registry_street(part)
+    return result
+
+
+def _street_base(street: str) -> str:
+    """Базова назва вулиці (без будь-яких типів, fold для RU↔UA звірки)."""
+    tokens = [t for t in (street or "").replace(".", " ").split() if t.lower() not in _REGISTRY_TYPE_WORDS]
+    return fold_cyrillic(" ".join(tokens))
+
+
+def _registry_matches_crm(crm_address: dict, registry_addr: str) -> bool:
+    """Чи парцель реєстру відповідає адресі CRM за тими ж критеріями, що й вибір
+    кадастрового номера: номер будинку з суфіксом (точно) + тип вулиці (за
+    відомого — збіг) + назва вулиці (фуззі). Використовується, щоб дозволити
+    перезапис Району/написання адреси з реєстру лише за впевненого збігу.
+    """
+    street = crm_address.get("Вулиця") or ""
+    house = crm_address.get("Будинок") or ""
+    if not street or not house or not registry_addr:
+        return False
+    return _pick_verified([("", registry_addr)], street, house) is not None
+
+
+def enrich_offer_data_with_cadastral(offer_data: dict) -> bool:
+    """Дозаповнити кадастровий номер, Район і тип вулиці з реєстру.
+
+    Перевіряє тип об'єкта через CRM_TYPE_TO_SCHEMA і пропускає типи, що не
+    підтримують кадастр на rieltor.ua (Будинок/Ділянка/Комерційна). Коли є
+    кадастровий номер (знайдений або вже збережений), бере з реєстру
+    канонічну адресу: Район (адмінрайон — CRM часто дає мікрорайон/масив) та
+    Вулицю з типом (сайту потрібен "шосе"/"проспект" для вибору зі списку).
 
     Returns:
-        True якщо кадастровий номер знайдено та записано, інакше False.
+        True якщо щось змінилось (номер, Район чи Вулиця).
     """
     try:
         from .html_parser import CRM_TYPE_TO_SCHEMA  # package context
@@ -252,41 +365,81 @@ def enrich_offer_data_with_cadastral(offer_data: dict) -> bool:
     if schema_type not in _CADASTRAL_SCHEMA_TYPES:
         return False
 
-    address = offer_data.get("address") or {}
-    if address.get("Кадастровий номер"):
-        return False
+    address = offer_data.setdefault("address", {})
+    label = offer_data.get("article") or offer_data.get("property_type", "?")
+    changed = False
 
-    # ── Крок 0: шукаємо кадастровий номер у тексті опису/нотаток ──────
-    _texts = [
-        (offer_data.get("apartment") or {}).get("description") or "",
-        offer_data.get("personal_notes") or "",
-    ]
-    for _text in _texts:
-        _match = _CADNUM_IN_TEXT_RE.search(_text)
-        if _match:
-            cadnum = _match.group()
-            offer_data.setdefault("address", {})["Кадастровий номер"] = cadnum
-            logger.info(
-                "Кадастровий номер знайдено в описі для %s: %s",
-                offer_data.get("article") or offer_data.get("property_type", "?"),
-                cadnum,
-            )
-            return True
-
-    cadnum = lookup_cadastral_number(
-        city=address.get("Місто") or "",
-        street=address.get("Вулиця") or "",
-        house=address.get("Будинок") or "",
-    )
-    if cadnum:
-        offer_data.setdefault("address", {})["Кадастровий номер"] = cadnum
-        logger.info(
-            "Кадастровий номер для %s: %s",
-            offer_data.get("article") or offer_data.get("property_type", "?"),
-            cadnum,
+    # ── Якщо у вулиці немає типу — спробувати знайти його в описі/нотатках ──
+    # (CRM часто зберігає вулицю без типу; тип потрібен для звірки з реєстром і
+    # для вибору варіанта на сайті). Робимо ДО пошуку — точніша верифікація.
+    _street = address.get("Вулиця") or ""
+    if _street:
+        _typed = recover_street_type(
+            _street,
+            (offer_data.get("apartment") or {}).get("description") or "",
+            offer_data.get("personal_notes") or "",
         )
-        return True
-    return False
+        if _typed != _street:
+            address["Вулиця"] = _typed
+            changed = True
+            logger.info("Тип вулиці з опису для %s: '%s' → '%s'", label, _street, _typed)
+
+    cadnum = (address.get("Кадастровий номер") or "").strip()
+    registry_addr: str | None = None
+
+    if not cadnum:
+        # ── Крок 0: кадастровий номер у тексті опису/нотаток ──
+        for _text in (
+            (offer_data.get("apartment") or {}).get("description") or "",
+            offer_data.get("personal_notes") or "",
+        ):
+            _match = _CADNUM_IN_TEXT_RE.search(_text)
+            if _match:
+                cadnum = _match.group()
+                address["Кадастровий номер"] = cadnum
+                changed = True
+                logger.info("Кадастровий номер знайдено в описі для %s: %s", label, cadnum)
+                break
+
+    if not cadnum:
+        # ── Крок 1: пошук за адресою (повертає й канонічну адресу реєстру) ──
+        rec = lookup_cadastral_record(
+            city=address.get("Місто") or "",
+            street=address.get("Вулиця") or "",
+            house=address.get("Будинок") or "",
+        )
+        if rec:
+            cadnum, registry_addr = rec
+            address["Кадастровий номер"] = cadnum
+            changed = True
+            logger.info("Кадастровий номер для %s: %s", label, cadnum)
+
+    if not cadnum:
+        return changed
+
+    # ── Район + тип вулиці з канонічної адреси реєстру ──
+    if registry_addr is None:
+        registry_addr = lookup_address_by_cadnum(cadnum)
+    if registry_addr:
+        parsed = parse_registry_address(registry_addr)
+        # Реєстр — джерело істини для Району/написання адреси ЛИШЕ за впевненого
+        # збігу (номер будинку з суфіксом + тип вулиці + назва). Інакше лишаємо
+        # дані CRM (кадастровий номер усе одно збережено вище).
+        if _registry_matches_crm(address, registry_addr):
+            raion = parsed.get("Район")
+            if raion and address.get("Район") != raion:
+                logger.info("Район з реєстру для %s: '%s' → '%s'", label, address.get("Район"), raion)
+                address["Район"] = raion
+                changed = True
+            reg_street = parsed.get("Вулиця")
+            if reg_street and reg_street != (address.get("Вулиця") or ""):
+                logger.info("Вулиця з реєстру для %s: '%s' → '%s'", label, address.get("Вулиця"), reg_street)
+                address["Вулиця"] = reg_street
+                changed = True
+        else:
+            logger.debug("Реєстр: не повний збіг адреси для %s — Район/вулицю лишаємо з CRM", label)
+
+    return changed
 
 
 def fill_missing_cadastral_numbers(max_count: int | None = None) -> int:
