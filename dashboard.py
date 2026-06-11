@@ -14,6 +14,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from main import read_drafts_count
 from offer_db import OfferDB
 
 # ── Конфіг ───────────────────────────────────────────────────────────
@@ -154,6 +155,10 @@ if "cadastral_proc" not in st.session_state:
     st.session_state.cadastral_proc = None
 if "cleanup_proc" not in st.session_state:
     st.session_state.cleanup_proc = None
+if "publish_drafts_proc" not in st.session_state:
+    st.session_state.publish_drafts_proc = None
+if "drafts_count" not in st.session_state:
+    st.session_state.drafts_count = None
 if "headless" not in st.session_state:
     st.session_state.headless = False
 if "log_level" not in st.session_state:
@@ -472,6 +477,88 @@ with right:
                 st.success("✅ Очистку завершено")
             else:
                 st.error(f"❌ Очистка завершилась з кодом {rc}")
+
+    # Масова публікація чернеток
+    with st.container(border=True):
+        st.markdown("**📤 Опублікувати чернетки** (rieltor.ua)")
+        st.caption("Крок 1 — перевірити кількість. Крок 2 — обрати скільки/за який період і опублікувати.")
+
+        # Крок 1 — перевірити
+        if st.button(
+            "🔍 Перевірити чернетки",
+            use_container_width=True,
+            disabled=proc_is_running(st.session_state.publish_drafts_proc),
+        ):
+            cmd = ["uv", "run", "python", "main.py", "publish-drafts", "--count-only"]
+            if st.session_state.headless:
+                cmd += ["--headless"]
+            proc = launch(cmd, log_level=st.session_state.log_level)
+            proc.wait()  # короткий: логін + читання лічильника
+            st.session_state.drafts_count = read_drafts_count()
+            st.rerun()
+
+        n = st.session_state.drafts_count
+        if n is not None:
+            st.info(f"Чернеток на сайті: **{n}**")
+
+        # Крок 2 — параметри + публікація (лише коли є чернетки)
+        if n:
+            pd1, pd2 = st.columns(2)
+            with pd1:
+                pub_max = st.number_input(
+                    "Скільки публікувати", min_value=0, value=0,
+                    key="pub_drafts_max", help="0 = всі",
+                )
+            with pd2:
+                pub_delay = st.number_input(
+                    "Затримка, с", min_value=0.0, value=3.0, step=0.5,
+                    key="pub_drafts_delay",
+                )
+            dd1, dd2 = st.columns(2)
+            with dd1:
+                pub_from = st.date_input("Дата з", value=None, key="pub_drafts_from")
+            with dd2:
+                pub_to = st.date_input("Дата по", value=None, key="pub_drafts_to")
+            confirm_pub = st.checkbox(
+                "Я підтверджую публікацію", value=False, key="confirm_pub_drafts",
+            )
+
+            if st.button(
+                "📤 Опублікувати",
+                use_container_width=True,
+                disabled=not confirm_pub or proc_is_running(st.session_state.publish_drafts_proc),
+            ):
+                cmd = ["uv", "run", "python", "main.py", "publish-drafts", "--delay", str(pub_delay)]
+                if pub_max:
+                    cmd += ["--max-count", str(int(pub_max))]
+                if pub_from:
+                    cmd += ["--date-from", pub_from.isoformat()]
+                if pub_to:
+                    cmd += ["--date-to", pub_to.isoformat()]
+                if st.session_state.headless:
+                    cmd += ["--headless"]
+                st.session_state.publish_drafts_proc = launch(cmd, log_level=st.session_state.log_level)
+                st.toast("Публікацію чернеток запущено!", icon="📤")
+                st.rerun()
+        elif n == 0:
+            st.caption("Чернеток немає — публікувати нічого.")
+
+        # Статус процесу публікації
+        if proc_is_running(st.session_state.publish_drafts_proc):
+            _ci, _cs = st.columns([3, 1])
+            with _ci:
+                st.info("⏳ Публікація чернеток виконується...")
+            with _cs:
+                if st.button("⏹ Зупинити", key="stop_publish_drafts", use_container_width=True):
+                    stop_proc(st.session_state.publish_drafts_proc)
+                    st.toast("Публікацію зупинено", icon="⏹")
+                    st.rerun()
+        elif st.session_state.publish_drafts_proc is not None:
+            rc = st.session_state.publish_drafts_proc.returncode
+            if rc == 0:
+                st.success("✅ Публікацію чернеток завершено")
+            else:
+                st.error(f"❌ Публікація завершилась з кодом {rc}")
 
     # Оновлення схем
     with st.container(border=True):
