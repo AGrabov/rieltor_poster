@@ -738,8 +738,12 @@ def phase_publish_drafts(
         logger.error("PHONE та PASSWORD повинні бути задані в .env")
         return 0
 
-    d_from = dt.date.fromisoformat(date_from) if date_from else None
-    d_to = dt.date.fromisoformat(date_to) if date_to else None
+    try:
+        d_from = dt.date.fromisoformat(date_from) if date_from else None
+        d_to = dt.date.fromisoformat(date_to) if date_to else None
+    except ValueError as e:
+        logger.error("Невірний формат дати: %s. Очікується YYYY-MM-DD", e)
+        return 0
 
     with RieltorSession(
         RieltorCredentials(phone=phone, password=password),
