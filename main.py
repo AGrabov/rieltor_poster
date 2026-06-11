@@ -30,6 +30,22 @@ from setup_logger import init_logging, setup_logger
 
 load_dotenv()
 
+# ── Drafts count file ────────────────────────────────────────────────
+
+DRAFTS_COUNT_FILE = Path(__file__).parent / "tmp" / "drafts_count.json"
+
+
+def write_drafts_count(count: int, path: Path = DRAFTS_COUNT_FILE) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"count": count}), encoding="utf-8")
+
+
+def read_drafts_count(path: Path = DRAFTS_COUNT_FILE) -> int | None:
+    try:
+        return int(json.loads(path.read_text(encoding="utf-8"))["count"])
+    except (FileNotFoundError, ValueError, KeyError, TypeError):
+        return None
+
 
 init_logging(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -697,6 +713,61 @@ def phase_clean_trash(
     return total
 
 
+# ── publish-drafts: bulk-publish rieltor.ua drafts ──────────────────
+
+
+def phase_publish_drafts(
+    count_only: bool = False,
+    max_count: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    delay: float = 3.0,
+    dry_run: bool = False,
+    headless: bool = True,
+    debug: bool = False,
+) -> int:
+    """Підрахувати або масово опублікувати чернетки на rieltor.ua."""
+    import datetime as dt
+
+    from rieltor_handler.drafts_publisher import DraftsPublisher
+    from rieltor_handler.rieltor_session import RieltorCredentials, RieltorSession
+
+    phone = os.environ.get("PHONE", "").strip()
+    password = os.environ.get("PASSWORD", "").strip()
+    if not phone or not password:
+        logger.error("PHONE та PASSWORD повинні бути задані в .env")
+        return 0
+
+    try:
+        d_from = dt.date.fromisoformat(date_from) if date_from else None
+        d_to = dt.date.fromisoformat(date_to) if date_to else None
+    except ValueError as e:
+        logger.error("Невірний формат дати: %s. Очікується YYYY-MM-DD", e)
+        return 0
+
+    with RieltorSession(
+        RieltorCredentials(phone=phone, password=password),
+        headless=headless,
+        debug=debug,
+    ) as session:
+        session.login()
+        publisher = DraftsPublisher(session.page)
+
+        if count_only:
+            n = publisher.count()
+            write_drafts_count(n)
+            logger.info("Чернеток на сайті: %d (записано у %s)", n, DRAFTS_COUNT_FILE)
+            return n
+
+        return publisher.publish_drafts(
+            max_count=max_count,
+            date_from=d_from,
+            date_to=d_to,
+            delay_sec=delay,
+            dry_run=dry_run,
+        )
+
+
 # ── post-one: single offer from JSON ────────────────────────────────
 
 
@@ -803,6 +874,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_clean.add_argument("--skip-deleted", action="store_true", help="Stage 1 only (do not purge «Видалені»)")
     p_clean.add_argument("--deleted-only", action="store_true", help="Stage 2 only (purge «Видалені» permanently)")
 
+    # publish-drafts
+    p_pub = sub.add_parser("publish-drafts", help="Bulk-publish drafts on rieltor.ua")
+    p_pub.add_argument("--count-only", action="store_true", help="Лише порахувати -> tmp/drafts_count.json")
+    p_pub.add_argument("--max-count", type=int, help="Макс. кількість публікацій")
+    p_pub.add_argument("--date-from", help="Дата з (YYYY-MM-DD)")
+    p_pub.add_argument("--date-to", help="Дата по (YYYY-MM-DD)")
+    p_pub.add_argument("--delay", type=float, default=3.0, help="Базова затримка між публікаціями, с")
+    p_pub.add_argument("--dry-run", action="store_true", help="Лише відібрати, нічого не публікувати")
+
     return parser
 
 
@@ -856,6 +936,18 @@ def main() -> None:
                 dry_run=args.dry_run,
                 skip_deleted=args.skip_deleted,
                 deleted_only=args.deleted_only,
+                headless=headless,
+                debug=args.debug,
+            )
+
+        elif args.command == "publish-drafts":
+            phase_publish_drafts(
+                count_only=args.count_only,
+                max_count=args.max_count,
+                date_from=args.date_from,
+                date_to=args.date_to,
+                delay=args.delay,
+                dry_run=args.dry_run,
                 headless=headless,
                 debug=args.debug,
             )
