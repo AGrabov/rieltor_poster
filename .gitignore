@@ -174,3 +174,4 @@ logs/schema_collector.log.1
 logs/schema_collector.log.2
 docs
 offers.db.*
+AGENTS.md
