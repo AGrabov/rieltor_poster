@@ -121,3 +121,112 @@ class DraftsPublisher:
             return dt.date(year, month, day)
         except ValueError:
             return None
+
+    # ── константи браузера ───────────────────────────────────────────
+
+    # limit підставляється динамічно (= кількість чернеток), щоб усі рядки
+    # рендерились на одній сторінці й фільтр дат не «виштовхував» потрібні далі.
+    DRAFTS_URL_TMPL = "https://my.rieltor.ua/offers/management?page=1&limit={limit}&mode=-2"
+    COUNT_LIMIT = 25  # для читання бейджа достатньо малого ліміту
+    TABLE = "table"
+    TAB_DRAFTS = "Чернетки"
+    ROW = "table tbody tr"
+    PUBLISH_BUTTON = "button:has-text('Опублікувати')"           # кнопка в рядку
+    DIALOG = "div[role='dialog']"
+    DIALOG_CONFIRM = "div[role='dialog'] button:has-text('Внести зміни')"
+    RENDER_TIMEOUT_MS = 15_000
+
+    def _drafts_url(self, limit: int) -> str:
+        return self.DRAFTS_URL_TMPL.format(limit=max(1, limit))
+
+    def _goto(self, url: str) -> None:
+        from playwright.sync_api import TimeoutError as PWTimeout
+
+        try:
+            self.page.goto(url, wait_until="networkidle")
+        except PWTimeout:
+            pass
+        try:
+            self.page.wait_for_selector(self.TABLE, timeout=self.RENDER_TIMEOUT_MS)
+        except PWTimeout:
+            pass
+
+    def _badge(self, label: str) -> int:
+        badge = self.page.locator(
+            f"xpath=//span[normalize-space()='{label}']/following-sibling::span[1]"
+        )
+        try:
+            badge.first.wait_for(state="visible", timeout=self.RENDER_TIMEOUT_MS)
+            digits = re.sub(r"\D", "", badge.first.inner_text() or "")
+            if digits:
+                return int(digits)
+        except Exception:
+            logger.debug("Не вдалося прочитати лічильник вкладки '%s'", label)
+        return len(self._collect_rows())
+
+    def _sleep(self, seconds: float) -> None:
+        """Затримка з невеликим джиттером (щоб не отримати бан)."""
+        import random
+
+        jitter = seconds * 0.4
+        self.page.wait_for_timeout(int(max(0.0, seconds + random.uniform(-jitter, jitter)) * 1000))
+
+    # ── браузерні методи (перевіряються на живому сайті, Task 6) ──────
+
+    def count(self) -> int:
+        """Повна кількість чернеток (з лічильника вкладки «Чернетки»)."""
+        self._goto(self._drafts_url(self.COUNT_LIMIT))
+        return self._badge(self.TAB_DRAFTS)
+
+    def _row_key(self, row) -> str:
+        """Стабільний ключ рядка: ID оголошення з href (fallback — текст рядка)."""
+        link = row.locator("a[href*='/offer']").first
+        try:
+            href = link.get_attribute("href") or ""
+            m = re.search(r"(\d{4,})", href)
+            if m:
+                return m.group(1)
+        except Exception:
+            pass
+        return (row.inner_text() or "").strip()[:80]
+
+    def _row_date(self, row) -> dt.date | None:
+        """Дата створення чернетки з рядка (селектор уточнюється в Task 6)."""
+        return self._parse_row_date(row.inner_text())
+
+    def _collect_rows(self) -> list[DraftRow]:
+        """Зчитати рядки чернеток. Перезавантажує список перед зчитуванням.
+
+        Використовує `self._page_limit` (= кількість чернеток), щоб усі рядки
+        були на одній сторінці. Дефолт `COUNT_LIMIT`, якщо ще не встановлено.
+        """
+        self._goto(self._drafts_url(getattr(self, "_page_limit", self.COUNT_LIMIT)))
+        rows = self.page.locator(self.ROW)
+        try:
+            rows.first.wait_for(state="visible", timeout=self.RENDER_TIMEOUT_MS)
+        except Exception:
+            return []
+        out: list[DraftRow] = []
+        for i in range(rows.count()):
+            row = rows.nth(i)
+            out.append(DraftRow(key=self._row_key(row), date=self._row_date(row)))
+        return out
+
+    def _publish_row(self, key: str) -> bool:
+        """Опублікувати рядок із заданим ключем. False — якщо не вдалося."""
+        rows = self.page.locator(self.ROW)
+        for i in range(rows.count()):
+            row = rows.nth(i)
+            if self._row_key(row) != key:
+                continue
+            try:
+                row.locator(self.PUBLISH_BUTTON).first.click()
+                dialog = self.page.locator(self.DIALOG)
+                dialog.wait_for(state="visible", timeout=self.RENDER_TIMEOUT_MS)
+                self.page.locator(self.DIALOG_CONFIRM).first.click()
+                dialog.wait_for(state="detached", timeout=self.RENDER_TIMEOUT_MS)
+                return True
+            except Exception as e:
+                logger.warning("Публікація %s не вдалася: %s", key, e)
+                return False
+        return False
