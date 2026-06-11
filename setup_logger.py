@@ -1,4 +1,5 @@
 # setup_logger.py
+import contextlib
 import logging
 import os
 from logging import Logger
@@ -126,6 +127,46 @@ def init_logging(
         base.addHandler(sh)
 
     return base
+
+
+@contextlib.contextmanager
+def extra_file_handler(filename, level: str | None = None):
+    """Тимчасово дублювати логи у окремий файл на час контексту.
+
+    Усе, що логується в межах ``with`` (будь-яким логером ієрархії APP_NAME),
+    додатково пишеться у ``filename`` — на додачу до загального лог-файлу.
+    Хендлер прибирається на виході. Зручно для збереження логів окремої
+    команди (напр. publish-drafts) у власний файл.
+
+    Args:
+        filename: шлях до окремого лог-файлу (батьківські теки створюються).
+        level:    рівень для цього файлу (за замовчуванням — рівень базового логера).
+    """
+    base = logging.getLogger(APP_NAME)
+    path = Path(filename)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    log_lvl = getattr(logging, str(level).upper(), base.level) if level else base.level
+
+    fh = FlushFileHandler(
+        str(path),
+        mode="a",
+        maxBytes=5 * 1024 * 1024,
+        backupCount=2,
+        encoding="utf-8",
+    )
+    fh.setLevel(log_lvl)
+    fh.setFormatter(
+        logging.Formatter(
+            "%(asctime)s [%(name)s] -%(levelname)s- %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+    base.addHandler(fh)
+    try:
+        yield path
+    finally:
+        base.removeHandler(fh)
+        fh.close()
 
 
 def setup_logger(name=__name__) -> Logger:

@@ -26,13 +26,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from setup_logger import init_logging, setup_logger
+from setup_logger import extra_file_handler, init_logging, setup_logger
 
 load_dotenv()
 
 # ── Drafts count file ────────────────────────────────────────────────
 
 DRAFTS_COUNT_FILE = Path(__file__).parent / "tmp" / "drafts_count.json"
+DRAFTS_LOG_FILE = Path(__file__).parent / "logs" / "drafts_publish.log"
 
 
 def write_drafts_count(count: int, path: Path = DRAFTS_COUNT_FILE) -> None:
@@ -943,11 +944,14 @@ def phase_publish_drafts(
         logger.error("Невірний формат дати: %s. Очікується YYYY-MM-DD", e)
         return 0
 
-    with RieltorSession(
-        RieltorCredentials(phone=phone, password=password),
-        headless=headless,
-        debug=debug,
-    ) as session:
+    with (
+        extra_file_handler(DRAFTS_LOG_FILE),
+        RieltorSession(
+            RieltorCredentials(phone=phone, password=password),
+            headless=headless,
+            debug=debug,
+        ) as session,
+    ):
         session.login()
         publisher = DraftsPublisher(session.page)
 
