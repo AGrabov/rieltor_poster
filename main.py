@@ -758,6 +758,108 @@ def phase_clean_trash(
     return total
 
 
+# ── prune-stale: зняти неактуальні опубліковані з реклами ───────────
+
+
+def phase_prune_stale(
+    max_count: int | None = None,
+    deal_type: str | None = None,
+    property_type: str | None = None,
+    dry_run: bool = False,
+    headless: bool = True,
+    debug: bool = False,
+) -> int:
+    """Зняти з реклами опубліковані об'єкти, що закрилися в CRM (→ «Закрита база»).
+
+    Два проходи (щоб не тримати два браузери одночасно):
+      1. CRM — серед опублікованих (status='posted') знайти закриті.
+      2. Rieltor — перенести знайдені у «Закриту базу», у БД → skipped.
+
+    Returns:
+        Кількість знятих об'єктів (або кандидатів при dry_run).
+    """
+    from crm_data_parser import CrmCredentials, CrmSession, EstateListCollector
+    from offer_db import OfferDB
+    from rieltor_handler import PublishedOfferUnpublisher
+    from rieltor_handler.rieltor_session import RieltorCredentials, RieltorSession
+
+    crm_email = os.environ.get("CRM_EMAIL", "").strip()
+    crm_password = os.environ.get("CRM_PASSWORD", "").strip()
+    phone = os.environ.get("PHONE", "").strip()
+    password = os.environ.get("PASSWORD", "").strip()
+    if not crm_email or not crm_password:
+        logger.error("CRM_EMAIL та CRM_PASSWORD повинні бути задані в .env")
+        return 0
+    if not phone or not password:
+        logger.error("PHONE та PASSWORD повинні бути задані в .env")
+        return 0
+
+    db_deal_type = _normalize_deal_type(deal_type) if deal_type else None
+
+    with OfferDB() as db:
+        posted = db.get_posted()
+        if db_deal_type:
+            posted = [o for o in posted if (o.deal_type or "").lower() == db_deal_type.lower()]
+        if property_type:
+            posted = [o for o in posted if (o.property_type or "").lower() == property_type.lower()]
+        if not posted:
+            logger.info("Немає опублікованих об'єктів для перевірки")
+            return 0
+
+        logger.info("Перевірка актуальності %d опублікованих об'єктів...", len(posted))
+
+        # Прохід 1 (CRM): зібрати закриті
+        stale: list = []
+        crm_creds = CrmCredentials(email=crm_email, password=crm_password)
+        with CrmSession(crm_creds, headless=headless, debug=debug) as crm:
+            crm.login()
+            collector = EstateListCollector(crm.page, debug=debug)
+            for offer in posted:
+                if collector.is_estate_closed(offer.estate_id):
+                    logger.info(
+                        "Об'єкт %d (rieltor_id=%s) закрито в CRM — кандидат на зняття",
+                        offer.estate_id,
+                        offer.rieltor_offer_id,
+                    )
+                    stale.append(offer)
+
+        if max_count is not None:
+            stale = stale[:max_count]
+
+        logger.info("Закрилося в CRM: %d об'єктів", len(stale))
+        if not stale:
+            return 0
+
+        if dry_run:
+            for offer in stale:
+                logger.info(
+                    "[dry-run] Зняв би rieltor_id=%s (estate %d, article=%s)",
+                    offer.rieltor_offer_id,
+                    offer.estate_id,
+                    offer.article,
+                )
+            return len(stale)
+
+        # Прохід 2 (Rieltor): зняти з реклами
+        rid_to_estate = {o.rieltor_offer_id: o.estate_id for o in stale}
+        with RieltorSession(
+            RieltorCredentials(phone=phone, password=password),
+            headless=headless,
+            debug=debug,
+        ) as session:
+            session.login()
+            unpublisher = PublishedOfferUnpublisher(session.page)
+            done = unpublisher.unpublish_offers([o.rieltor_offer_id for o in stale])
+
+        for rid in done:
+            estate_id = rid_to_estate.get(rid)
+            if estate_id is not None:
+                db.mark_skipped(estate_id, "закрито в CRM, знято з реклами")
+
+        logger.info("prune-stale завершено: знято %d об'єктів", len(done))
+        return len(done)
+
+
 # ── publish-drafts: bulk-publish rieltor.ua drafts ──────────────────
 
 
@@ -928,6 +1030,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_pub.add_argument("--delay", type=float, default=3.0, help="Базова затримка між публікаціями, с")
     p_pub.add_argument("--dry-run", action="store_true", help="Лише відібрати, нічого не публікувати")
 
+    # prune-stale
+    p_prune = sub.add_parser(
+        "prune-stale",
+        help="Зняти з реклами опубліковані об'єкти, що закрилися в CRM (→ «Закрита база»)",
+    )
+    p_prune.add_argument("--max-count", type=int, help="Макс. кількість знятих")
+    p_prune.add_argument("--deal-type", help="Фільтр: sell або lease")
+    p_prune.add_argument("--property-type", help="Фільтр: Квартира, Будинок тощо")
+    p_prune.add_argument("--dry-run", action="store_true", help="Лише показати кандидатів, нічого не знімати")
+
     return parser
 
 
@@ -992,6 +1104,16 @@ def main() -> None:
                 date_from=args.date_from,
                 date_to=args.date_to,
                 delay=args.delay,
+                dry_run=args.dry_run,
+                headless=headless,
+                debug=args.debug,
+            )
+
+        elif args.command == "prune-stale":
+            phase_prune_stale(
+                max_count=args.max_count,
+                deal_type=args.deal_type,
+                property_type=args.property_type,
                 dry_run=args.dry_run,
                 headless=headless,
                 debug=args.debug,
