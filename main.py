@@ -863,6 +863,50 @@ def phase_prune_stale(
 # ── publish-drafts: bulk-publish rieltor.ua drafts ──────────────────
 
 
+def _build_crm_actuality_skip_fn(stack, dry_run: bool, headless: bool, debug: bool):
+    """Скласти предикат key -> bool для перевірки актуальності чернеток у CRM.
+
+    Зв'язок rieltor_id ↔ estate_id береться з БД. Предикат повертає True, якщо
+    чернетку треба пропустити (об'єкт закрито в CRM); закриті позначаються в БД
+    як skipped (окрім dry_run). Чернетки, яких немає в БД, не перевіряються
+    (предикат повертає False — публікуються як є).
+
+    Відкриває CRM-сесію та БД у переданому ``ExitStack``. Повертає None, якщо
+    креди CRM не задані — тоді перевірка вимикається, а публікація не блокується.
+    """
+    crm_email = os.environ.get("CRM_EMAIL", "").strip()
+    crm_password = os.environ.get("CRM_PASSWORD", "").strip()
+    if not crm_email or not crm_password:
+        logger.warning("CRM_EMAIL/CRM_PASSWORD не задані — перевірка актуальності чернеток пропущена")
+        return None
+
+    from crm_data_parser import CrmCredentials, CrmSession, EstateListCollector
+    from offer_db import OfferDB
+
+    db = stack.enter_context(OfferDB())
+    rid_to_estate = {o.rieltor_offer_id: o.estate_id for o in db.get_posted()}
+    crm = stack.enter_context(
+        CrmSession(CrmCredentials(email=crm_email, password=crm_password), headless=headless, debug=debug)
+    )
+    crm.login()
+    collector = EstateListCollector(crm.page, debug=debug)
+    cache: dict[int, bool] = {}
+
+    def _skip(key: str) -> bool:
+        estate_id = rid_to_estate.get(key)
+        if estate_id is None:
+            return False  # немає в БД — публікуємо без перевірки
+        closed = cache.get(estate_id)
+        if closed is None:
+            closed = collector.is_estate_closed(estate_id)
+            cache[estate_id] = closed
+        if closed and not dry_run:
+            db.mark_skipped(estate_id, "закрито в CRM")
+        return closed
+
+    return _skip
+
+
 def phase_publish_drafts(
     count_only: bool = False,
     max_count: int | None = None,
@@ -870,10 +914,17 @@ def phase_publish_drafts(
     date_to: str | None = None,
     delay: float = 3.0,
     dry_run: bool = False,
+    check_actuality: bool = False,
     headless: bool = True,
     debug: bool = False,
 ) -> int:
-    """Підрахувати або масово опублікувати чернетки на rieltor.ua."""
+    """Підрахувати або масово опублікувати чернетки на rieltor.ua.
+
+    check_actuality — якщо True, перед публікацією кожної чернетки перевіряє в
+    CRM, чи об'єкт не закрито (закриті не публікуються, позначаються skipped).
+    Без CRM-кред перевірка пропускається, публікація не блокується.
+    """
+    import contextlib
     import datetime as dt
 
     from rieltor_handler.drafts_publisher import DraftsPublisher
@@ -906,13 +957,16 @@ def phase_publish_drafts(
             logger.info("Чернеток на сайті: %d (записано у %s)", n, DRAFTS_COUNT_FILE)
             return n
 
-        return publisher.publish_drafts(
-            max_count=max_count,
-            date_from=d_from,
-            date_to=d_to,
-            delay_sec=delay,
-            dry_run=dry_run,
-        )
+        with contextlib.ExitStack() as stack:
+            skip_fn = _build_crm_actuality_skip_fn(stack, dry_run, headless, debug) if check_actuality else None
+            return publisher.publish_drafts(
+                max_count=max_count,
+                date_from=d_from,
+                date_to=d_to,
+                delay_sec=delay,
+                dry_run=dry_run,
+                skip_fn=skip_fn,
+            )
 
 
 # ── post-one: single offer from JSON ────────────────────────────────
@@ -1029,6 +1083,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_pub.add_argument("--date-to", help="Дата по (YYYY-MM-DD)")
     p_pub.add_argument("--delay", type=float, default=3.0, help="Базова затримка між публікаціями, с")
     p_pub.add_argument("--dry-run", action="store_true", help="Лише відібрати, нічого не публікувати")
+    p_pub.add_argument(
+        "--check-actuality",
+        action="store_true",
+        help="Перевіряти в CRM, чи об'єкт не закрито (закриті чернетки не публікуються)",
+    )
 
     # prune-stale
     p_prune = sub.add_parser(
@@ -1105,6 +1164,7 @@ def main() -> None:
                 date_to=args.date_to,
                 delay=args.delay,
                 dry_run=args.dry_run,
+                check_actuality=args.check_actuality,
                 headless=headless,
                 debug=args.debug,
             )
