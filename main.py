@@ -337,59 +337,101 @@ def _photos_missing(offer_data: dict) -> bool:
     return not any(Path(p).exists() for p in photos if isinstance(p, str))
 
 
-def _redownload_missing_photos(offers: list, db, headless: bool, debug: bool) -> None:
-    """Re-download photos via CRM for offers whose local files are missing.
+def _redownload_photos_in_session(page, offers: list, db) -> None:
+    """Перезавантажити фото для об'єктів з відсутніми локально файлами.
 
-    Opens a single CRM session for the whole batch (if credentials are set).
-    Updates offer_data and DB in place.
+    Використовує вже відкриту CRM-сторінку ``page`` (сесію відкриває викликач).
+    Оновлює offer_data та БД на місці.
     """
-    needing = [o for o in offers if _photos_missing(o.offer_data) and o.offer_data.get("photo_download_link")]
+    from crm_data_parser import download_estate_photos, download_watermark_zip
+
+    needing = [
+        o
+        for o in offers
+        if _photos_missing(o.offer_data) and o.offer_data.get("photo_download_link")
+    ]
     if not needing:
         return
 
+    logger.info("Перезавантаження фото для %d об'єктів через CRM...", len(needing))
+    add_watermark = os.getenv("ADD_WATERMARK", "true").lower() == "true"
+    for offer in needing:
+        article = offer.article or str(offer.estate_id)
+        offer_data = offer.offer_data
+        photo_dl_link = offer_data.get("photo_download_link")
+        photo_urls = [
+            p
+            for p in (offer_data.get("apartment") or {}).get("photos", [])
+            if isinstance(p, str) and p.startswith("http")
+        ]
+        if add_watermark:
+            # Качаємо фото без вотермарки — наш логотип додасть photo_processing
+            local_paths = download_estate_photos(page, photo_urls, article) if photo_urls else []
+        else:
+            local_paths = download_watermark_zip(page, photo_dl_link, article) if photo_dl_link else []
+            if not local_paths and photo_urls:
+                local_paths = download_estate_photos(page, photo_urls, article)
+        if local_paths:
+            offer_data.setdefault("apartment", {})["photos"] = local_paths
+            db.update_offer_data(offer.estate_id, offer_data)
+            logger.info("Перезавантажено %d фото для %s", len(local_paths), article)
+        else:
+            logger.warning("Не вдалось перезавантажити фото для %s", article)
+
+
+def _crm_preflight(offers: list, db, headless: bool, debug: bool) -> list:
+    """Пре-флайт перед публікацією: один захід у CRM.
+
+    1. Перевіряє актуальність кожного об'єкта: закриті в CRM → mark_skipped,
+       виключаються зі списку на публікацію.
+    2. Для «живих» з відсутніми локально фото — перезавантажує фото.
+
+    Якщо CRM_EMAIL/CRM_PASSWORD не задані — перевірка та перезавантаження
+    пропускаються, повертається вихідний список (публікація не блокується).
+
+    Returns:
+        Відфільтрований список «живих» оголошень.
+    """
     crm_email = os.environ.get("CRM_EMAIL", "").strip()
     crm_password = os.environ.get("CRM_PASSWORD", "").strip()
     if not crm_email or not crm_password:
         logger.warning(
-            "Фото відсутні для %d об'єктів, але CRM_EMAIL/CRM_PASSWORD не задані — пропуск",
-            len(needing),
+            "CRM_EMAIL/CRM_PASSWORD не задані — перевірка актуальності та "
+            "перезавантаження фото пропущені (%d об'єктів публікуються як є)",
+            len(offers),
         )
-        return
+        return offers
 
-    from crm_data_parser import (
-        CrmCredentials,
-        CrmSession,
-        download_estate_photos,
-        download_watermark_zip,
-    )
+    from crm_data_parser import CrmCredentials, CrmSession, EstateListCollector
 
-    logger.info("Перезавантаження фото для %d об'єктів через CRM...", len(needing))
     crm_creds = CrmCredentials(email=crm_email, password=crm_password)
+    live: list = []
     with CrmSession(crm_creds, headless=headless, debug=debug) as crm:
         crm.login()
-        add_watermark = os.getenv("ADD_WATERMARK", "true").lower() == "true"
-        for offer in needing:
-            article = offer.article or str(offer.estate_id)
-            offer_data = offer.offer_data
-            photo_dl_link = offer_data.get("photo_download_link")
-            photo_urls = [
-                p
-                for p in (offer_data.get("apartment") or {}).get("photos", [])
-                if isinstance(p, str) and p.startswith("http")
-            ]
-            if add_watermark:
-                # Качаємо фото без вотермарки — наш логотип додасть photo_processing
-                local_paths = download_estate_photos(crm.page, photo_urls, article) if photo_urls else []
+        collector = EstateListCollector(crm.page, debug=debug)
+
+        # 1. Перевірка актуальності
+        for offer in offers:
+            if collector.is_estate_closed(offer.estate_id):
+                logger.warning(
+                    "Об'єкт %d (article=%s) закрито в CRM — пропускаємо публікацію",
+                    offer.estate_id,
+                    offer.article,
+                )
+                db.mark_skipped(offer.estate_id, "закрито в CRM")
             else:
-                local_paths = download_watermark_zip(crm.page, photo_dl_link, article) if photo_dl_link else []
-                if not local_paths and photo_urls:
-                    local_paths = download_estate_photos(crm.page, photo_urls, article)
-            if local_paths:
-                offer_data.setdefault("apartment", {})["photos"] = local_paths
-                db.update_offer_data(offer.estate_id, offer_data)
-                logger.info("Перезавантажено %d фото для %s", len(local_paths), article)
-            else:
-                logger.warning("Не вдалось перезавантажити фото для %s", article)
+                live.append(offer)
+
+        logger.info(
+            "Перевірка актуальності: %d живих, %d закрито",
+            len(live),
+            len(offers) - len(live),
+        )
+
+        # 2. Перезавантаження відсутніх фото для живих
+        _redownload_photos_in_session(crm.page, live, db)
+
+    return live
 
 
 # ── Phase 2: Rieltor posting ────────────────────────────────────────
@@ -453,10 +495,13 @@ def phase2_post(
             logger.info("Необроблених оголошень у БД не знайдено")
             return 0
 
-        # Pre-flight: re-download photos that were deleted / never saved locally
-        _redownload_missing_photos(offers, db, headless=headless, debug=debug)
+        # Pre-flight: відсіяти закриті в CRM + перезавантажити відсутні фото
+        offers = _crm_preflight(offers, db, headless=headless, debug=debug)
+        if not offers:
+            logger.info("Після перевірки актуальності немає живих оголошень для публікації")
+            return 0
 
-        logger.info("Знайдено %d необроблених оголошень для публікації", len(offers))
+        logger.info("Знайдено %d живих оголошень для публікації", len(offers))
 
         with RieltorOfferPoster(
             phone=phone,
