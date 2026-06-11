@@ -117,3 +117,19 @@ def test_publish_drafts_dry_run_publishes_nothing():
     assert would == 4
     assert p.published == []
     assert p.sleeps == []
+
+
+def test_parse_row_date_dotted():
+    p = _pub()
+    assert p._parse_row_date("15.01.2026") == dt.date(2026, 1, 15)
+
+
+def test_parse_row_date_with_surrounding_text():
+    p = _pub()
+    assert p._parse_row_date("  15.01.2026 12:30 ") == dt.date(2026, 1, 15)
+
+
+def test_parse_row_date_empty_or_garbage_is_none():
+    p = _pub()
+    assert p._parse_row_date("") is None
+    assert p._parse_row_date("—") is None

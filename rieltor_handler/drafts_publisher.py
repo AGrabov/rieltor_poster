@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from dataclasses import dataclass
 
 from playwright.sync_api import Page
@@ -104,3 +105,19 @@ class DraftsPublisher:
 
         logger.info("Публікацію завершено: опубліковано %d", published)
         return published
+
+    _DATE_RE = re.compile(r"(\d{2})\.(\d{2})\.(\d{4})")
+
+    @classmethod
+    def _parse_row_date(cls, text: str | None) -> dt.date | None:
+        """Витягти дату формату DD.MM.YYYY із тексту комірки (None, якщо нема)."""
+        if not text:
+            return None
+        m = cls._DATE_RE.search(text)
+        if not m:
+            return None
+        day, month, year = (int(g) for g in m.groups())
+        try:
+            return dt.date(year, month, day)
+        except ValueError:
+            return None
