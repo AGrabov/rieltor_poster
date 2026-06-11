@@ -489,12 +489,17 @@ with right:
             use_container_width=True,
             disabled=proc_is_running(st.session_state.publish_drafts_proc),
         ):
-            cmd = ["uv", "run", "python", "main.py", "publish-drafts", "--count-only"]
-            if st.session_state.headless:
-                cmd += ["--headless"]
-            proc = launch(cmd, log_level=st.session_state.log_level)
-            proc.wait()  # короткий: логін + читання лічильника
-            st.session_state.drafts_count = read_drafts_count()
+            proc = launch(
+                ["uv", "run", "python", "main.py", "publish-drafts", "--count-only"]
+                + (["--headless"] if st.session_state.headless else []),
+                log_level=st.session_state.log_level,
+            )
+            try:
+                proc.wait(timeout=90)
+                st.session_state.drafts_count = read_drafts_count()
+            except subprocess.TimeoutExpired:
+                stop_proc(proc)
+                st.warning("Перевірка зависла — процес зупинено. Спробуйте ще раз.")
             st.rerun()
 
         n = st.session_state.drafts_count
