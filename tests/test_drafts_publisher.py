@@ -129,6 +129,13 @@ def test_parse_row_date_with_surrounding_text():
     assert p._parse_row_date("  15.01.2026 12:30 ") == dt.date(2026, 1, 15)
 
 
+def test_parse_row_date_two_digit_year():
+    # На сайті рік двозначний: «30.04.26» → 2026-04-30, «08.06.26» → 2026-06-08
+    p = _pub()
+    assert p._parse_row_date("30.04.26") == dt.date(2026, 4, 30)
+    assert p._parse_row_date("08.06.26") == dt.date(2026, 6, 8)
+
+
 def test_parse_row_date_empty_or_garbage_is_none():
     p = _pub()
     assert p._parse_row_date("") is None

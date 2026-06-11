@@ -106,17 +106,20 @@ class DraftsPublisher:
         logger.info("Публікацію завершено: опубліковано %d", published)
         return published
 
-    _DATE_RE = re.compile(r"(\d{2})\.(\d{2})\.(\d{4})")
+    # Дата у форматі DD.MM.YY або DD.MM.YYYY (на сайті — двозначний рік, напр. «30.04.26»).
+    _DATE_RE = re.compile(r"(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})")
 
     @classmethod
     def _parse_row_date(cls, text: str | None) -> dt.date | None:
-        """Витягти дату формату DD.MM.YYYY із тексту комірки (None, якщо нема)."""
+        """Витягти дату формату DD.MM.YY[YY] із тексту комірки (None, якщо нема)."""
         if not text:
             return None
         m = cls._DATE_RE.search(text)
         if not m:
             return None
         day, month, year = (int(g) for g in m.groups())
+        if year < 100:  # двозначний рік → 20YY
+            year += 2000
         try:
             return dt.date(year, month, day)
         except ValueError:
@@ -226,8 +229,19 @@ class DraftsPublisher:
             pass
         return (row.inner_text() or "").strip()[:80]
 
+    DATE_CELL = "td.actionColumn"  # комірка з датою створення/оновлення чернетки
+
     def _row_date(self, row) -> dt.date | None:
-        """Дата створення чернетки з рядка (селектор уточнюється в Task 6)."""
+        """Дата створення чернетки з комірки `td.actionColumn`.
+
+        Fallback — перша дата в тексті всього рядка (на випадок зміни розмітки).
+        """
+        try:
+            cell = row.locator(self.DATE_CELL).first
+            if cell.count() > 0:
+                return self._parse_row_date(cell.inner_text())
+        except Exception:
+            logger.debug("Не вдалося прочитати комірку дати '%s'", self.DATE_CELL)
         return self._parse_row_date(row.inner_text())
 
     def _collect_rows(self, page_limit: int | None = None) -> list[DraftRow]:
