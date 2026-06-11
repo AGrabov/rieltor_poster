@@ -66,7 +66,7 @@ class _FakePublisher(DraftsPublisher):
     def count(self) -> int:
         return len(self._rows)
 
-    def _collect_rows(self) -> list[DraftRow]:
+    def _collect_rows(self, page_limit=None) -> list[DraftRow]:
         return list(self._rows)
 
     def _publish_row(self, key: str) -> bool:
@@ -133,3 +133,8 @@ def test_parse_row_date_empty_or_garbage_is_none():
     p = _pub()
     assert p._parse_row_date("") is None
     assert p._parse_row_date("—") is None
+
+
+def test_parse_row_date_invalid_calendar_date_is_none():
+    p = _pub()
+    assert p._parse_row_date("32.13.2026") is None

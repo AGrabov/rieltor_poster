@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import random
 import re
 from dataclasses import dataclass
 
 from playwright.sync_api import Page
+from playwright.sync_api import TimeoutError as PWTimeout
 
 from setup_logger import setup_logger
 
@@ -65,7 +67,7 @@ class DraftsPublisher:
             return row
         return None
 
-    # ── цикл публікації (чистий; браузерні методи переоприділяються) ──
+    # ── цикл публікації (чистий; браузерні методи перевизначаються) ──
 
     def publish_drafts(
         self,
@@ -78,8 +80,6 @@ class DraftsPublisher:
         """Опублікувати чернетки в діапазоні дат, до max_count. Повертає кількість."""
         total = self.count()
         logger.info("Чернеток на сайті: %d (max_count=%s, dry_run=%s)", total, max_count, dry_run)
-        # Вантажити всі чернетки на одній сторінці (без штучного ліміту):
-        self._page_limit = total
 
         processed: set[str] = set()
         published = 0
@@ -87,7 +87,7 @@ class DraftsPublisher:
             if max_count is not None and published >= max_count:
                 logger.info("Досягнуто ліміту %d", max_count)
                 break
-            rows = self._collect_rows()
+            rows = self._collect_rows(page_limit=total)
             target = self._select_next(rows, processed, date_from, date_to)
             if target is None:
                 logger.info("Немає більше чернеток у діапазоні")
@@ -140,8 +140,6 @@ class DraftsPublisher:
         return self.DRAFTS_URL_TMPL.format(limit=max(1, limit))
 
     def _goto(self, url: str) -> None:
-        from playwright.sync_api import TimeoutError as PWTimeout
-
         try:
             self.page.goto(url, wait_until="networkidle")
         except PWTimeout:
@@ -162,12 +160,10 @@ class DraftsPublisher:
                 return int(digits)
         except Exception:
             logger.debug("Не вдалося прочитати лічильник вкладки '%s'", label)
-        return len(self._collect_rows())
+        return len(self._collect_rows(page_limit=self.COUNT_LIMIT))
 
     def _sleep(self, seconds: float) -> None:
         """Затримка з невеликим джиттером (щоб не отримати бан)."""
-        import random
-
         jitter = seconds * 0.4
         self.page.wait_for_timeout(int(max(0.0, seconds + random.uniform(-jitter, jitter)) * 1000))
 
@@ -194,13 +190,14 @@ class DraftsPublisher:
         """Дата створення чернетки з рядка (селектор уточнюється в Task 6)."""
         return self._parse_row_date(row.inner_text())
 
-    def _collect_rows(self) -> list[DraftRow]:
+    def _collect_rows(self, page_limit: int | None = None) -> list[DraftRow]:
         """Зчитати рядки чернеток. Перезавантажує список перед зчитуванням.
 
-        Використовує `self._page_limit` (= кількість чернеток), щоб усі рядки
-        були на одній сторінці. Дефолт `COUNT_LIMIT`, якщо ще не встановлено.
+        page_limit — кількість рядків для URL (= загальна кількість чернеток,
+        щоб усі рядки були на одній сторінці). Дефолт `COUNT_LIMIT`.
         """
-        self._goto(self._drafts_url(getattr(self, "_page_limit", self.COUNT_LIMIT)))
+        limit = page_limit if page_limit is not None else self.COUNT_LIMIT
+        self._goto(self._drafts_url(limit))
         rows = self.page.locator(self.ROW)
         try:
             rows.first.wait_for(state="visible", timeout=self.RENDER_TIMEOUT_MS)
