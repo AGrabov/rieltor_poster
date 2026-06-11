@@ -108,7 +108,11 @@ def build_collect_cmd(
     property_type: str | None = None,
     deal_type: str | None = None,
 ) -> list[str]:
-    cmd = ["uv", "run", "python", "main.py", "collect"]
+    # --headless — глобальний прапорець, має йти ПЕРЕД підкомандою.
+    cmd = ["uv", "run", "python", "main.py"]
+    if headless:
+        cmd += ["--headless"]
+    cmd += ["collect"]
     if max_pages:
         cmd += ["--max-pages", str(max_pages)]
     if max_count:
@@ -117,8 +121,6 @@ def build_collect_cmd(
         cmd += ["--deal-type", deal_type]
     if property_type:
         cmd += ["--property-type", property_type]
-    if headless:
-        cmd += ["--headless"]
     return cmd
 
 
@@ -129,7 +131,11 @@ def build_post_cmd(
     property_type: str | None = None,
     deal_type: str | None = None,
 ) -> list[str]:
-    cmd = ["uv", "run", "python", "main.py", "post"]
+    # --headless — глобальний прапорець, має йти ПЕРЕД підкомандою.
+    cmd = ["uv", "run", "python", "main.py"]
+    if headless:
+        cmd += ["--headless"]
+    cmd += ["post"]
     if publish:
         cmd += ["--publish"]
     if max_count:
@@ -138,8 +144,6 @@ def build_post_cmd(
         cmd += ["--deal-type", deal_type]
     if property_type:
         cmd += ["--property-type", property_type]
-    if headless:
-        cmd += ["--headless"]
     return cmd
 
 
@@ -489,9 +493,11 @@ with right:
             use_container_width=True,
             disabled=proc_is_running(st.session_state.publish_drafts_proc),
         ):
+            # --headless — глобальний прапорець, має йти ПЕРЕД підкомандою.
             proc = launch(
-                ["uv", "run", "python", "main.py", "publish-drafts", "--count-only"]
-                + (["--headless"] if st.session_state.headless else []),
+                ["uv", "run", "python", "main.py"]
+                + (["--headless"] if st.session_state.headless else [])
+                + ["publish-drafts", "--count-only"],
                 log_level=st.session_state.log_level,
             )
             try:
@@ -533,15 +539,17 @@ with right:
                 use_container_width=True,
                 disabled=not confirm_pub or proc_is_running(st.session_state.publish_drafts_proc),
             ):
-                cmd = ["uv", "run", "python", "main.py", "publish-drafts", "--delay", str(pub_delay)]
+                # --headless — глобальний прапорець, має йти ПЕРЕД підкомандою.
+                cmd = ["uv", "run", "python", "main.py"]
+                if st.session_state.headless:
+                    cmd += ["--headless"]
+                cmd += ["publish-drafts", "--delay", str(pub_delay)]
                 if pub_max:
                     cmd += ["--max-count", str(int(pub_max))]
                 if pub_from:
                     cmd += ["--date-from", pub_from.isoformat()]
                 if pub_to:
                     cmd += ["--date-to", pub_to.isoformat()]
-                if st.session_state.headless:
-                    cmd += ["--headless"]
                 st.session_state.publish_drafts_proc = launch(cmd, log_level=st.session_state.log_level)
                 st.toast("Публікацію чернеток запущено!", icon="📤")
                 st.rerun()
