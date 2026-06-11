@@ -129,38 +129,75 @@ class DraftsPublisher:
     DRAFTS_URL_TMPL = "https://my.rieltor.ua/offers/management?page=1&limit={limit}&mode=-2"
     COUNT_LIMIT = 25  # для читання бейджа достатньо малого ліміту
     TABLE = "table"
-    TAB_DRAFTS = "Чернетки"
+    TAB_DRAFTS = "Чорновики"  # назва вкладки на сайті (саме «Чорновики», не «Чернетки»)
     ROW = "table tbody tr"
+    # select «На сторінці» дає максимум 200 → більше рядків на одну сторінку сайт не віддає.
+    MAX_PAGE_LIMIT = 200
     PUBLISH_BUTTON = "button:has-text('Опублікувати')"           # кнопка в рядку
     DIALOG = "div[role='dialog']"
     DIALOG_CONFIRM = "div[role='dialog'] button:has-text('Внести зміни')"
+    # MUI TablePagination toolbar: текст на кшталт «Рядків: 25  1–25 з 708».
+    PAGINATION_TOOLBAR = "[class*='MuiTablePagination-toolbar']"
+    # «X–Y з Z» / «X-Y of Z» — Z (остання група) є повною кількістю.
+    _RANGE_RE = re.compile(r"\d+\s*[–-]\s*\d+\s+(?:з|із|of)\s+(?:понад\s+|більш(?:е)?\s+ніж\s+)?(\d+)", re.IGNORECASE)
     RENDER_TIMEOUT_MS = 15_000
 
     def _drafts_url(self, limit: int) -> str:
         return self.DRAFTS_URL_TMPL.format(limit=max(1, limit))
 
     def _goto(self, url: str) -> None:
+        logger.info("Перехід: %s", url)
         try:
             self.page.goto(url, wait_until="networkidle")
         except PWTimeout:
-            pass
+            logger.debug("networkidle не настав — продовжуємо")
         try:
             self.page.wait_for_selector(self.TABLE, timeout=self.RENDER_TIMEOUT_MS)
+            logger.debug("Таблиця відрендерена")
         except PWTimeout:
-            pass
+            logger.warning("Таблиця не з'явилася за %d мс (можливо, список порожній)", self.RENDER_TIMEOUT_MS)
 
-    def _badge(self, label: str) -> int:
-        badge = self.page.locator(
-            f"xpath=//span[normalize-space()='{label}']/following-sibling::span[1]"
-        )
+    def _read_total_count(self, label: str) -> int:
+        """Повна кількість чернеток. Кілька стратегій, кожна логується.
+
+        1) MUI-пагінація «X – Y з Z» → Z (найнадійніше).
+        2) Бейдж біля назви вкладки.
+        3) Підрахунок видимих рядків (нижня межа).
+        """
+        # Стратегія 1: пагінація
         try:
+            toolbar = self.page.locator(self.PAGINATION_TOOLBAR).first
+            toolbar.wait_for(state="visible", timeout=self.RENDER_TIMEOUT_MS)
+            text = toolbar.inner_text() or ""
+            logger.debug("Текст пагінації: %r", text)
+            m = self._RANGE_RE.search(text)
+            if m:
+                total = int(m.group(1))
+                logger.info("Лічильник із пагінації: %d", total)
+                return total
+            logger.debug("Шаблон «X-Y з Z» у пагінації не знайдено")
+        except Exception as e:
+            logger.debug("Пагінацію прочитати не вдалося: %s", e)
+
+        # Стратегія 2: бейдж біля вкладки
+        try:
+            badge = self.page.locator(
+                f"xpath=//span[normalize-space()='{label}']/following-sibling::span[1]"
+            )
             badge.first.wait_for(state="visible", timeout=self.RENDER_TIMEOUT_MS)
             digits = re.sub(r"\D", "", badge.first.inner_text() or "")
             if digits:
+                logger.info("Лічильник із бейджа вкладки '%s': %s", label, digits)
                 return int(digits)
         except Exception:
-            logger.debug("Не вдалося прочитати лічильник вкладки '%s'", label)
-        return len(self._collect_rows(page_limit=self.COUNT_LIMIT))
+            logger.debug("Бейдж вкладки '%s' прочитати не вдалося", label)
+
+        # Стратегія 3: підрахунок рядків (нижня межа)
+        n = len(self._collect_rows(page_limit=self.COUNT_LIMIT))
+        logger.warning(
+            "Лічильник не зчитано напряму — рахуємо видимі рядки: %d (може бути занижено)", n
+        )
+        return n
 
     def _sleep(self, seconds: float) -> None:
         """Затримка з невеликим джиттером (щоб не отримати бан)."""
@@ -170,9 +207,12 @@ class DraftsPublisher:
     # ── браузерні методи (перевіряються на живому сайті, Task 6) ──────
 
     def count(self) -> int:
-        """Повна кількість чернеток (з лічильника вкладки «Чернетки»)."""
+        """Повна кількість чернеток (з лічильника вкладки «Чорновики»)."""
+        logger.info("Підрахунок чернеток…")
         self._goto(self._drafts_url(self.COUNT_LIMIT))
-        return self._badge(self.TAB_DRAFTS)
+        total = self._read_total_count(self.TAB_DRAFTS)
+        logger.info("Усього чернеток: %d", total)
+        return total
 
     def _row_key(self, row) -> str:
         """Стабільний ключ рядка: ID оголошення з href (fallback — текст рядка)."""
@@ -196,17 +236,28 @@ class DraftsPublisher:
         page_limit — кількість рядків для URL (= загальна кількість чернеток,
         щоб усі рядки були на одній сторінці). Дефолт `COUNT_LIMIT`.
         """
-        limit = page_limit if page_limit is not None else self.COUNT_LIMIT
+        requested = page_limit if page_limit is not None else self.COUNT_LIMIT
+        limit = min(requested, self.MAX_PAGE_LIMIT)
+        if requested > self.MAX_PAGE_LIMIT:
+            logger.warning(
+                "Запитано %d рядків, але сайт віддає максимум %d на сторінку — "
+                "за один прогін опрацюються перші %d.",
+                requested,
+                self.MAX_PAGE_LIMIT,
+                self.MAX_PAGE_LIMIT,
+            )
         self._goto(self._drafts_url(limit))
         rows = self.page.locator(self.ROW)
         try:
             rows.first.wait_for(state="visible", timeout=self.RENDER_TIMEOUT_MS)
         except Exception:
+            logger.info("Рядків на сторінці немає")
             return []
         out: list[DraftRow] = []
         for i in range(rows.count()):
             row = rows.nth(i)
             out.append(DraftRow(key=self._row_key(row), date=self._row_date(row)))
+        logger.info("Зчитано рядків: %d (limit=%d)", len(out), limit)
         return out
 
     def _publish_row(self, key: str) -> bool:
@@ -217,13 +268,17 @@ class DraftsPublisher:
             if self._row_key(row) != key:
                 continue
             try:
+                logger.info("Публікація %s: клік «Опублікувати»", key)
                 row.locator(self.PUBLISH_BUTTON).first.click()
                 dialog = self.page.locator(self.DIALOG)
                 dialog.wait_for(state="visible", timeout=self.RENDER_TIMEOUT_MS)
+                logger.debug("Діалог «Підняти оголошення» відкрито — підтверджуємо")
                 self.page.locator(self.DIALOG_CONFIRM).first.click()
                 dialog.wait_for(state="detached", timeout=self.RENDER_TIMEOUT_MS)
+                logger.info("Публікація %s: підтверджено", key)
                 return True
             except Exception as e:
                 logger.warning("Публікація %s не вдалася: %s", key, e)
                 return False
+        logger.warning("Рядок із ключем %s не знайдено для публікації", key)
         return False
