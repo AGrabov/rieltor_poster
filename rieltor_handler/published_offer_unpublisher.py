@@ -65,7 +65,7 @@ class PublishedOfferUnpublisher:
         try:
             self.page.wait_for_selector(self.TABLE, timeout=self.RENDER_TIMEOUT_MS)
         except PWTimeout:
-            pass
+            logger.warning("Таблиця «Опубліковані» не з'явилася за %d мс", self.RENDER_TIMEOUT_MS)
 
     def _row_locator(self, rieltor_offer_id: str):
         """Локатор рядка, що містить посилання редагування з цим ID."""
