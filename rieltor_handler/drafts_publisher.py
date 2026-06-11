@@ -63,3 +63,44 @@ class DraftsPublisher:
                 continue
             return row
         return None
+
+    # ── цикл публікації (чистий; браузерні методи переоприділяються) ──
+
+    def publish_drafts(
+        self,
+        max_count: int | None = None,
+        date_from: dt.date | None = None,
+        date_to: dt.date | None = None,
+        delay_sec: float = 3.0,
+        dry_run: bool = False,
+    ) -> int:
+        """Опублікувати чернетки в діапазоні дат, до max_count. Повертає кількість."""
+        total = self.count()
+        logger.info("Чернеток на сайті: %d (max_count=%s, dry_run=%s)", total, max_count, dry_run)
+        # Вантажити всі чернетки на одній сторінці (без штучного ліміту):
+        self._page_limit = total
+
+        processed: set[str] = set()
+        published = 0
+        while True:
+            if max_count is not None and published >= max_count:
+                logger.info("Досягнуто ліміту %d", max_count)
+                break
+            rows = self._collect_rows()
+            target = self._select_next(rows, processed, date_from, date_to)
+            if target is None:
+                logger.info("Немає більше чернеток у діапазоні")
+                break
+            processed.add(target.key)
+            if dry_run:
+                published += 1
+                continue
+            if self._publish_row(target.key):
+                published += 1
+                logger.info("Опубліковано %d (%s)", published, target.key)
+                self._sleep(delay_sec)
+            else:
+                logger.warning("Пропущено (не вдалося опублікувати): %s", target.key)
+
+        logger.info("Публікацію завершено: опубліковано %d", published)
+        return published
