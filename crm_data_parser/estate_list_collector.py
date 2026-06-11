@@ -224,6 +224,25 @@ class EstateListCollector:
 
         return html
 
+    def is_estate_closed(self, estate_id: int) -> bool:
+        """Перевірити, чи об'єкт закрито в CRM (актуальність для публікації).
+
+        Переходить на сторінку об'єкта та шукає сповіщення «Причина закриття» /
+        «закрито». Легша альтернатива :meth:`get_estate_html`, коли потрібен лише
+        факт закриття, а не повний HTML.
+
+        Args:
+            estate_id: ID об'єкта в CRM.
+
+        Returns:
+            True, якщо об'єкт закрито; False — якщо активний.
+        """
+        url = f"{CRM_BASE_URL}/estate/{estate_id}"
+        logger.info("Перевірка актуальності об'єкта в CRM: %s", url)
+        self.page.goto(url, wait_until="domcontentloaded")
+        self.page.wait_for_selector(".page-content", timeout=15_000)
+        return self._html_has_closure_alert(self.page.content())
+
     def enrich_with_commission(self, offer_data: dict, item: EstateListItem) -> None:
         """Додати поля комісії до offer_data безумовно.
 

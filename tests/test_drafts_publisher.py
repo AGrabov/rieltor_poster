@@ -119,6 +119,22 @@ def test_publish_drafts_dry_run_publishes_nothing():
     assert p.sleeps == []
 
 
+def test_publish_drafts_skip_fn_skips_closed_keys():
+    p = _FakePublisher(_rows(3))            # keys "0", "1", "2"
+    closed = {"1"}
+    published = p.publish_drafts(skip_fn=lambda key: key in closed)
+    assert published == 2
+    assert p.published == ["0", "2"]        # "1" skipped (closed in CRM)
+
+
+def test_publish_drafts_skip_fn_in_dry_run_still_skips():
+    p = _FakePublisher(_rows(3))            # keys "0", "1", "2"
+    closed = {"0", "2"}
+    would = p.publish_drafts(dry_run=True, skip_fn=lambda key: key in closed)
+    assert would == 1                       # only "1" would be published
+    assert p.published == []                # dry-run publishes nothing
+
+
 def test_parse_row_date_dotted():
     p = _pub()
     assert p._parse_row_date("15.01.2026") == dt.date(2026, 1, 15)

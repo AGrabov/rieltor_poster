@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import random
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from playwright.sync_api import Page
@@ -76,8 +77,14 @@ class DraftsPublisher:
         date_to: dt.date | None = None,
         delay_sec: float = 3.0,
         dry_run: bool = False,
+        skip_fn: Callable[[str], bool] | None = None,
     ) -> int:
-        """Опублікувати чернетки в діапазоні дат, до max_count. Повертає кількість."""
+        """Опублікувати чернетки в діапазоні дат, до max_count. Повертає кількість.
+
+        skip_fn — необов'язковий предикат key -> bool. Якщо повертає True для
+        ключа чернетки, її НЕ публікують (і не рахують). Використовується для
+        перевірки актуальності в CRM (закриті об'єкти пропускаються).
+        """
         total = self.count()
         logger.info("Чернеток на сайті: %d (max_count=%s, dry_run=%s)", total, max_count, dry_run)
 
@@ -93,6 +100,9 @@ class DraftsPublisher:
                 logger.info("Немає більше чернеток у діапазоні")
                 break
             processed.add(target.key)
+            if skip_fn is not None and skip_fn(target.key):
+                logger.info("Пропущено (неактуальне, закрито в CRM): %s", target.key)
+                continue
             if dry_run:
                 published += 1
                 continue

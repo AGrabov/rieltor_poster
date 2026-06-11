@@ -167,6 +167,20 @@ class OfferDB:
         rows = self.conn.execute(query, params).fetchall()
         return [_row_to_record(r) for r in rows]
 
+    def get_posted(self, max_count: int | None = None) -> list[OfferRecord]:
+        """Повернути опубліковані оголошення (status='posted') з rieltor_offer_id."""
+        query = (
+            "SELECT * FROM offers "
+            "WHERE status = 'posted' AND rieltor_offer_id IS NOT NULL "
+            "ORDER BY id"
+        )
+        params: list = []
+        if max_count:
+            query += " LIMIT ?"
+            params.append(max_count)
+        rows = self.conn.execute(query, params).fetchall()
+        return [_row_to_record(r) for r in rows]
+
     def mark_posted(self, estate_id: int, rieltor_offer_id: str) -> None:
         self.conn.execute(
             """UPDATE offers

@@ -26,13 +26,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from setup_logger import init_logging, setup_logger
+from setup_logger import extra_file_handler, init_logging, setup_logger
 
 load_dotenv()
 
 # ── Drafts count file ────────────────────────────────────────────────
 
 DRAFTS_COUNT_FILE = Path(__file__).parent / "tmp" / "drafts_count.json"
+DRAFTS_LOG_FILE = Path(__file__).parent / "logs" / "drafts_publish.log"
 
 
 def write_drafts_count(count: int, path: Path = DRAFTS_COUNT_FILE) -> None:
@@ -337,59 +338,101 @@ def _photos_missing(offer_data: dict) -> bool:
     return not any(Path(p).exists() for p in photos if isinstance(p, str))
 
 
-def _redownload_missing_photos(offers: list, db, headless: bool, debug: bool) -> None:
-    """Re-download photos via CRM for offers whose local files are missing.
+def _redownload_photos_in_session(page, offers: list, db) -> None:
+    """Перезавантажити фото для об'єктів з відсутніми локально файлами.
 
-    Opens a single CRM session for the whole batch (if credentials are set).
-    Updates offer_data and DB in place.
+    Використовує вже відкриту CRM-сторінку ``page`` (сесію відкриває викликач).
+    Оновлює offer_data та БД на місці.
     """
-    needing = [o for o in offers if _photos_missing(o.offer_data) and o.offer_data.get("photo_download_link")]
+    from crm_data_parser import download_estate_photos, download_watermark_zip
+
+    needing = [
+        o
+        for o in offers
+        if _photos_missing(o.offer_data) and o.offer_data.get("photo_download_link")
+    ]
     if not needing:
         return
 
+    logger.info("Перезавантаження фото для %d об'єктів через CRM...", len(needing))
+    add_watermark = os.getenv("ADD_WATERMARK", "true").lower() == "true"
+    for offer in needing:
+        article = offer.article or str(offer.estate_id)
+        offer_data = offer.offer_data
+        photo_dl_link = offer_data.get("photo_download_link")
+        photo_urls = [
+            p
+            for p in (offer_data.get("apartment") or {}).get("photos", [])
+            if isinstance(p, str) and p.startswith("http")
+        ]
+        if add_watermark:
+            # Качаємо фото без вотермарки — наш логотип додасть photo_processing
+            local_paths = download_estate_photos(page, photo_urls, article) if photo_urls else []
+        else:
+            local_paths = download_watermark_zip(page, photo_dl_link, article) if photo_dl_link else []
+            if not local_paths and photo_urls:
+                local_paths = download_estate_photos(page, photo_urls, article)
+        if local_paths:
+            offer_data.setdefault("apartment", {})["photos"] = local_paths
+            db.update_offer_data(offer.estate_id, offer_data)
+            logger.info("Перезавантажено %d фото для %s", len(local_paths), article)
+        else:
+            logger.warning("Не вдалось перезавантажити фото для %s", article)
+
+
+def _crm_preflight(offers: list, db, headless: bool, debug: bool) -> list:
+    """Пре-флайт перед публікацією: один захід у CRM.
+
+    1. Перевіряє актуальність кожного об'єкта: закриті в CRM → mark_skipped,
+       виключаються зі списку на публікацію.
+    2. Для «живих» з відсутніми локально фото — перезавантажує фото.
+
+    Якщо CRM_EMAIL/CRM_PASSWORD не задані — перевірка та перезавантаження
+    пропускаються, повертається вихідний список (публікація не блокується).
+
+    Returns:
+        Відфільтрований список «живих» оголошень.
+    """
     crm_email = os.environ.get("CRM_EMAIL", "").strip()
     crm_password = os.environ.get("CRM_PASSWORD", "").strip()
     if not crm_email or not crm_password:
         logger.warning(
-            "Фото відсутні для %d об'єктів, але CRM_EMAIL/CRM_PASSWORD не задані — пропуск",
-            len(needing),
+            "CRM_EMAIL/CRM_PASSWORD не задані — перевірка актуальності та "
+            "перезавантаження фото пропущені (%d об'єктів публікуються як є)",
+            len(offers),
         )
-        return
+        return offers
 
-    from crm_data_parser import (
-        CrmCredentials,
-        CrmSession,
-        download_estate_photos,
-        download_watermark_zip,
-    )
+    from crm_data_parser import CrmCredentials, CrmSession, EstateListCollector
 
-    logger.info("Перезавантаження фото для %d об'єктів через CRM...", len(needing))
     crm_creds = CrmCredentials(email=crm_email, password=crm_password)
+    live: list = []
     with CrmSession(crm_creds, headless=headless, debug=debug) as crm:
         crm.login()
-        add_watermark = os.getenv("ADD_WATERMARK", "true").lower() == "true"
-        for offer in needing:
-            article = offer.article or str(offer.estate_id)
-            offer_data = offer.offer_data
-            photo_dl_link = offer_data.get("photo_download_link")
-            photo_urls = [
-                p
-                for p in (offer_data.get("apartment") or {}).get("photos", [])
-                if isinstance(p, str) and p.startswith("http")
-            ]
-            if add_watermark:
-                # Качаємо фото без вотермарки — наш логотип додасть photo_processing
-                local_paths = download_estate_photos(crm.page, photo_urls, article) if photo_urls else []
+        collector = EstateListCollector(crm.page, debug=debug)
+
+        # 1. Перевірка актуальності
+        for offer in offers:
+            if collector.is_estate_closed(offer.estate_id):
+                logger.warning(
+                    "Об'єкт %d (article=%s) закрито в CRM — пропускаємо публікацію",
+                    offer.estate_id,
+                    offer.article,
+                )
+                db.mark_skipped(offer.estate_id, "закрито в CRM")
             else:
-                local_paths = download_watermark_zip(crm.page, photo_dl_link, article) if photo_dl_link else []
-                if not local_paths and photo_urls:
-                    local_paths = download_estate_photos(crm.page, photo_urls, article)
-            if local_paths:
-                offer_data.setdefault("apartment", {})["photos"] = local_paths
-                db.update_offer_data(offer.estate_id, offer_data)
-                logger.info("Перезавантажено %d фото для %s", len(local_paths), article)
-            else:
-                logger.warning("Не вдалось перезавантажити фото для %s", article)
+                live.append(offer)
+
+        logger.info(
+            "Перевірка актуальності: %d живих, %d закрито",
+            len(live),
+            len(offers) - len(live),
+        )
+
+        # 2. Перезавантаження відсутніх фото для живих
+        _redownload_photos_in_session(crm.page, live, db)
+
+    return live
 
 
 # ── Phase 2: Rieltor posting ────────────────────────────────────────
@@ -453,10 +496,13 @@ def phase2_post(
             logger.info("Необроблених оголошень у БД не знайдено")
             return 0
 
-        # Pre-flight: re-download photos that were deleted / never saved locally
-        _redownload_missing_photos(offers, db, headless=headless, debug=debug)
+        # Pre-flight: відсіяти закриті в CRM + перезавантажити відсутні фото
+        offers = _crm_preflight(offers, db, headless=headless, debug=debug)
+        if not offers:
+            logger.info("Після перевірки актуальності немає живих оголошень для публікації")
+            return 0
 
-        logger.info("Знайдено %d необроблених оголошень для публікації", len(offers))
+        logger.info("Знайдено %d живих оголошень для публікації", len(offers))
 
         with RieltorOfferPoster(
             phone=phone,
@@ -713,7 +759,153 @@ def phase_clean_trash(
     return total
 
 
+# ── prune-stale: зняти неактуальні опубліковані з реклами ───────────
+
+
+def phase_prune_stale(
+    max_count: int | None = None,
+    deal_type: str | None = None,
+    property_type: str | None = None,
+    dry_run: bool = False,
+    headless: bool = True,
+    debug: bool = False,
+) -> int:
+    """Зняти з реклами опубліковані об'єкти, що закрилися в CRM (→ «Закрита база»).
+
+    Два проходи (щоб не тримати два браузери одночасно):
+      1. CRM — серед опублікованих (status='posted') знайти закриті.
+      2. Rieltor — перенести знайдені у «Закриту базу», у БД → skipped.
+
+    Returns:
+        Кількість знятих об'єктів (або кандидатів при dry_run).
+    """
+    from crm_data_parser import CrmCredentials, CrmSession, EstateListCollector
+    from offer_db import OfferDB
+    from rieltor_handler import PublishedOfferUnpublisher
+    from rieltor_handler.rieltor_session import RieltorCredentials, RieltorSession
+
+    crm_email = os.environ.get("CRM_EMAIL", "").strip()
+    crm_password = os.environ.get("CRM_PASSWORD", "").strip()
+    phone = os.environ.get("PHONE", "").strip()
+    password = os.environ.get("PASSWORD", "").strip()
+    if not crm_email or not crm_password:
+        logger.error("CRM_EMAIL та CRM_PASSWORD повинні бути задані в .env")
+        return 0
+    if not phone or not password:
+        logger.error("PHONE та PASSWORD повинні бути задані в .env")
+        return 0
+
+    db_deal_type = _normalize_deal_type(deal_type) if deal_type else None
+
+    with OfferDB() as db:
+        posted = db.get_posted()
+        if db_deal_type:
+            posted = [o for o in posted if (o.deal_type or "").lower() == db_deal_type.lower()]
+        if property_type:
+            posted = [o for o in posted if (o.property_type or "").lower() == property_type.lower()]
+        if not posted:
+            logger.info("Немає опублікованих об'єктів для перевірки")
+            return 0
+
+        logger.info("Перевірка актуальності %d опублікованих об'єктів...", len(posted))
+
+        # Прохід 1 (CRM): зібрати закриті
+        stale: list = []
+        crm_creds = CrmCredentials(email=crm_email, password=crm_password)
+        with CrmSession(crm_creds, headless=headless, debug=debug) as crm:
+            crm.login()
+            collector = EstateListCollector(crm.page, debug=debug)
+            for offer in posted:
+                if collector.is_estate_closed(offer.estate_id):
+                    logger.info(
+                        "Об'єкт %d (rieltor_id=%s) закрито в CRM — кандидат на зняття",
+                        offer.estate_id,
+                        offer.rieltor_offer_id,
+                    )
+                    stale.append(offer)
+
+        if max_count is not None:
+            stale = stale[:max_count]
+
+        logger.info("Закрилося в CRM: %d об'єктів", len(stale))
+        if not stale:
+            return 0
+
+        if dry_run:
+            for offer in stale:
+                logger.info(
+                    "[dry-run] Зняв би rieltor_id=%s (estate %d, article=%s)",
+                    offer.rieltor_offer_id,
+                    offer.estate_id,
+                    offer.article,
+                )
+            return len(stale)
+
+        # Прохід 2 (Rieltor): зняти з реклами
+        rid_to_estate = {o.rieltor_offer_id: o.estate_id for o in stale}
+        with RieltorSession(
+            RieltorCredentials(phone=phone, password=password),
+            headless=headless,
+            debug=debug,
+        ) as session:
+            session.login()
+            unpublisher = PublishedOfferUnpublisher(session.page)
+            done = unpublisher.unpublish_offers([o.rieltor_offer_id for o in stale])
+
+        for rid in done:
+            estate_id = rid_to_estate.get(rid)
+            if estate_id is not None:
+                db.mark_skipped(estate_id, "закрито в CRM, знято з реклами")
+
+        logger.info("prune-stale завершено: знято %d об'єктів", len(done))
+        return len(done)
+
+
 # ── publish-drafts: bulk-publish rieltor.ua drafts ──────────────────
+
+
+def _build_crm_actuality_skip_fn(stack, dry_run: bool, headless: bool, debug: bool):
+    """Скласти предикат key -> bool для перевірки актуальності чернеток у CRM.
+
+    Зв'язок rieltor_id ↔ estate_id береться з БД. Предикат повертає True, якщо
+    чернетку треба пропустити (об'єкт закрито в CRM); закриті позначаються в БД
+    як skipped (окрім dry_run). Чернетки, яких немає в БД, не перевіряються
+    (предикат повертає False — публікуються як є).
+
+    Відкриває CRM-сесію та БД у переданому ``ExitStack``. Повертає None, якщо
+    креди CRM не задані — тоді перевірка вимикається, а публікація не блокується.
+    """
+    crm_email = os.environ.get("CRM_EMAIL", "").strip()
+    crm_password = os.environ.get("CRM_PASSWORD", "").strip()
+    if not crm_email or not crm_password:
+        logger.warning("CRM_EMAIL/CRM_PASSWORD не задані — перевірка актуальності чернеток пропущена")
+        return None
+
+    from crm_data_parser import CrmCredentials, CrmSession, EstateListCollector
+    from offer_db import OfferDB
+
+    db = stack.enter_context(OfferDB())
+    rid_to_estate = {o.rieltor_offer_id: o.estate_id for o in db.get_posted()}
+    crm = stack.enter_context(
+        CrmSession(CrmCredentials(email=crm_email, password=crm_password), headless=headless, debug=debug)
+    )
+    crm.login()
+    collector = EstateListCollector(crm.page, debug=debug)
+    cache: dict[int, bool] = {}
+
+    def _skip(key: str) -> bool:
+        estate_id = rid_to_estate.get(key)
+        if estate_id is None:
+            return False  # немає в БД — публікуємо без перевірки
+        closed = cache.get(estate_id)
+        if closed is None:
+            closed = collector.is_estate_closed(estate_id)
+            cache[estate_id] = closed
+        if closed and not dry_run:
+            db.mark_skipped(estate_id, "закрито в CRM")
+        return closed
+
+    return _skip
 
 
 def phase_publish_drafts(
@@ -723,10 +915,17 @@ def phase_publish_drafts(
     date_to: str | None = None,
     delay: float = 3.0,
     dry_run: bool = False,
+    check_actuality: bool = False,
     headless: bool = True,
     debug: bool = False,
 ) -> int:
-    """Підрахувати або масово опублікувати чернетки на rieltor.ua."""
+    """Підрахувати або масово опублікувати чернетки на rieltor.ua.
+
+    check_actuality — якщо True, перед публікацією кожної чернетки перевіряє в
+    CRM, чи об'єкт не закрито (закриті не публікуються, позначаються skipped).
+    Без CRM-кред перевірка пропускається, публікація не блокується.
+    """
+    import contextlib
     import datetime as dt
 
     from rieltor_handler.drafts_publisher import DraftsPublisher
@@ -745,11 +944,14 @@ def phase_publish_drafts(
         logger.error("Невірний формат дати: %s. Очікується YYYY-MM-DD", e)
         return 0
 
-    with RieltorSession(
-        RieltorCredentials(phone=phone, password=password),
-        headless=headless,
-        debug=debug,
-    ) as session:
+    with (
+        extra_file_handler(DRAFTS_LOG_FILE),
+        RieltorSession(
+            RieltorCredentials(phone=phone, password=password),
+            headless=headless,
+            debug=debug,
+        ) as session,
+    ):
         session.login()
         publisher = DraftsPublisher(session.page)
 
@@ -759,13 +961,16 @@ def phase_publish_drafts(
             logger.info("Чернеток на сайті: %d (записано у %s)", n, DRAFTS_COUNT_FILE)
             return n
 
-        return publisher.publish_drafts(
-            max_count=max_count,
-            date_from=d_from,
-            date_to=d_to,
-            delay_sec=delay,
-            dry_run=dry_run,
-        )
+        with contextlib.ExitStack() as stack:
+            skip_fn = _build_crm_actuality_skip_fn(stack, dry_run, headless, debug) if check_actuality else None
+            return publisher.publish_drafts(
+                max_count=max_count,
+                date_from=d_from,
+                date_to=d_to,
+                delay_sec=delay,
+                dry_run=dry_run,
+                skip_fn=skip_fn,
+            )
 
 
 # ── post-one: single offer from JSON ────────────────────────────────
@@ -882,6 +1087,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_pub.add_argument("--date-to", help="Дата по (YYYY-MM-DD)")
     p_pub.add_argument("--delay", type=float, default=3.0, help="Базова затримка між публікаціями, с")
     p_pub.add_argument("--dry-run", action="store_true", help="Лише відібрати, нічого не публікувати")
+    p_pub.add_argument(
+        "--check-actuality",
+        action="store_true",
+        help="Перевіряти в CRM, чи об'єкт не закрито (закриті чернетки не публікуються)",
+    )
+
+    # prune-stale
+    p_prune = sub.add_parser(
+        "prune-stale",
+        help="Зняти з реклами опубліковані об'єкти, що закрилися в CRM (→ «Закрита база»)",
+    )
+    p_prune.add_argument("--max-count", type=int, help="Макс. кількість знятих")
+    p_prune.add_argument("--deal-type", help="Фільтр: sell або lease")
+    p_prune.add_argument("--property-type", help="Фільтр: Квартира, Будинок тощо")
+    p_prune.add_argument("--dry-run", action="store_true", help="Лише показати кандидатів, нічого не знімати")
 
     return parser
 
@@ -947,6 +1167,17 @@ def main() -> None:
                 date_from=args.date_from,
                 date_to=args.date_to,
                 delay=args.delay,
+                dry_run=args.dry_run,
+                check_actuality=args.check_actuality,
+                headless=headless,
+                debug=args.debug,
+            )
+
+        elif args.command == "prune-stale":
+            phase_prune_stale(
+                max_count=args.max_count,
+                deal_type=args.deal_type,
+                property_type=args.property_type,
                 dry_run=args.dry_run,
                 headless=headless,
                 debug=args.debug,
