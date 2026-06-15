@@ -343,6 +343,39 @@ def test_lookup_finds_ru_street_via_transliteration(monkeypatch):
     assert got[0] == "8000000000:82:262:0002"
 
 
+def test_lookup_geocoder_fallback_when_rules_fail(monkeypatch):
+    # Rules can't crack a lexical translation (Шёлковичная→Шовковична); the
+    # geocoder supplies the canonical name and zem.center then resolves it.
+    reg = "м.Київ, Печерський р-н, вулиця Шовковична, 30"
+
+    def fake_zem(query, street, house):
+        if "Шовковична" in query:  # only the geocoded canonical spelling matches
+            return ("8000000000:76:036:0041", reg)
+        return None
+
+    monkeypatch.setattr(cl, "_search_zem_center", fake_zem)
+    monkeypatch.setattr(cl, "_search_kadastrova_karta", lambda q, s, h: None)
+    monkeypatch.setattr(cl, "geocode_canonical_street", lambda c, s, h: "вулиця Шовковична")
+
+    got = cl.lookup_cadastral_record("Київ", "Шелковичная", "30")
+    assert got is not None
+    assert got[0] == "8000000000:76:036:0041"
+
+
+def test_lookup_no_geocoder_call_when_rules_succeed(monkeypatch):
+    # The geocoder is a fallback — it must NOT be called if zem already resolves.
+    monkeypatch.setattr(
+        cl, "_search_zem_center", lambda q, s, h: ("8000000000:75:214:0010", "м.Київ, вул. Львівська, 19")
+    )
+
+    def no_geocode(c, s, h):
+        raise AssertionError("geocoder must not run when rules succeed")
+
+    monkeypatch.setattr(cl, "geocode_canonical_street", no_geocode)
+    got = cl.lookup_cadastral_record("Київ", "Львівська", "19")
+    assert got[0] == "8000000000:75:214:0010"
+
+
 # ── kadastrova-karta.com unavailable: quiet, no traceback, returns None ────
 def test_search_kadastrova_karta_503_is_quiet(monkeypatch, caplog):
     import logging

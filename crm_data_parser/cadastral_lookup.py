@@ -33,6 +33,11 @@ except ImportError:  # direct-run fallback
         strip_street_type,
     )
 
+try:
+    from .geocoder import geocode_canonical_street
+except ImportError:  # direct-run fallback
+    from geocoder import geocode_canonical_street  # noqa: I001
+
 logger = setup_logger(__name__)
 
 # Мінімальна схожість назви вулиці (folded) для впевненого збігу.
@@ -279,11 +284,12 @@ def _search_kadastrova_karta(query: str, street: str, house: str) -> tuple[str, 
 def lookup_cadastral_record(city: str, street: str, house: str) -> tuple[str, str] | None:
     """Знайти (кадастровий номер, адресу реєстру) ділянки за адресою.
 
-    Стратегія (zem.center JSON API, потім kadastrova-karta.com як fallback).
-    Для кожного джерела перебираємо запити: для кожного варіанта написання
-    вулиці (оригінал + «титул попереду») — спершу з будинком, потім без:
-      1. zem.center: усі запити по черзі
-      2. kadastrova-karta.com: усі запити по черзі (fallback)
+    Стратегія (варіанти написання вулиці: оригінал + «титул попереду» +
+    RU→UA-транслітерація; для кожного — з будинком, потім без):
+      1. zem.center за всіма варіантами з CRM-даних
+      2. геокодер OSM (fallback, мережа лише коли крок 1 не дав збігу): канонічна
+         укр. назва вулиці → ще раз zem.center
+      3. kadastrova-karta.com за всіма варіантами (часто недоступна)
 
     Returns:
         (cadnum, registry_address) або None. cadnum у форматі
@@ -329,13 +335,35 @@ def lookup_cadastral_record(city: str, street: str, house: str) -> tuple[str, st
     if not attempts:
         return None
 
+    # ── 1) zem.center за варіантами написання з CRM-даних ──
     for q, verify_street in attempts:
         rec = _search_zem_center(q, verify_street, house_orig)
         if rec:
             logger.debug("Знайдено zem.center: %s (запит '%s')", rec[0], q)
             return rec
 
-    for q, verify_street in attempts:
+    # ── 2) Геокодер (OSM) як fallback ──
+    # Мережевий виклик робимо ЛИШЕ коли дешева нормалізація не дала збігу: OSM дає
+    # канонічну укр. назву вулиці (покриває лексичні переклади/відмінювання, які
+    # правила не беруть). Верифікація лишається суворою — хибний геокод не заповнить.
+    geo_attempts: list[tuple[str, str]] = []
+    canonical = geocode_canonical_street(city_clean, street, house_orig)
+    if canonical:
+        canon_clean = strip_street_type(canonical)
+        if canon_clean:
+            for parts in ((city_clean, canon_clean, house_query), (city_clean, canon_clean)):
+                gq = " ".join(p for p in parts if p)
+                if gq and gq not in seen_q:
+                    seen_q.add(gq)
+                    geo_attempts.append((gq, canonical))
+    for q, verify_street in geo_attempts:
+        rec = _search_zem_center(q, verify_street, house_orig)
+        if rec:
+            logger.debug("Знайдено zem.center (геокодер): %s (запит '%s')", rec[0], q)
+            return rec
+
+    # ── 3) kadastrova-karta.com (часто недоступна) ──
+    for q, verify_street in attempts + geo_attempts:
         rec = _search_kadastrova_karta(q, verify_street, house_orig)
         if rec:
             logger.debug("Знайдено kadastrova-karta.com: %s (запит '%s')", rec[0], q)
