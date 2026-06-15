@@ -199,9 +199,33 @@ _TYPE_CANON_DISPLAY: dict[str, str] = {
 
 # Токени типів для пошуку в описі (розрізняльні; без однобуквених неоднозначних «ш»/«пр»).
 _RECOVER_TYPE_TOKENS = [
-    "шосе", "шоссе", "проспект", "просп", "пр-т", "пр-кт", "бульвар", "бульв", "бул", "б-р",
-    "провулок", "пров", "переулок", "пер", "площа", "площадь", "пл", "набережна", "набережная",
-    "наб", "тупик", "туп", "узвіз", "проїзд", "проезд", "дорога", "алея",
+    "шосе",
+    "шоссе",
+    "проспект",
+    "просп",
+    "пр-т",
+    "пр-кт",
+    "бульвар",
+    "бульв",
+    "бул",
+    "б-р",
+    "провулок",
+    "пров",
+    "переулок",
+    "пер",
+    "площа",
+    "площадь",
+    "пл",
+    "набережна",
+    "набережная",
+    "наб",
+    "тупик",
+    "туп",
+    "узвіз",
+    "проїзд",
+    "проезд",
+    "дорога",
+    "алея",
 ]
 _RECOVER_TYPE_ALT = "|".join(re.escape(t) for t in sorted(_RECOVER_TYPE_TOKENS, key=len, reverse=True))
 _NOT_CYR_LAT = r"(?![А-Яа-яІіЇїЄєҐґA-Za-z])"
@@ -237,6 +261,107 @@ def recover_street_type(street: str, *texts: str) -> str:
             if disp:
                 return f"{name} {disp}"
     return street
+
+
+# ── RU→UA транслітерація назви вулиці ─────────────────────────────────────
+# zem.center шукає лише за українським написанням (рос. → 0 результатів). CRM
+# часто зберігає вулицю російською ("Якубенковская", "Дегтяревская"). Нижче —
+# best-effort транслітерація: системні закінчення прикметників + букви. Стемові
+# чергування (о/е→і всередині кореня) частково покриті закінченнями; решта —
+# лексичні (Шёлковичная→Шовковична) — не передаються правилами. Це лише ДОДАТКОВИЙ
+# варіант запиту: невдала транслітерація просто не дасть збігу (верифікація суворо
+# звіряє номер будинку й усі слова назви), тож хибних заповнень вона не створює.
+
+# Закінчення прикметників → варіанти укр. написання (довші суфікси — раніше).
+# Деякі неоднозначні: "-овская" може бути -ів- (Якубенків-ська) АБО стем+ська
+# (Москов-ська). Даємо обидва — пошук (zem) + верифікація відберуть правильний.
+_RU_UA_SUFFIX_VARIANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("овская", ("івська", "овська")),
+    ("ёвская", ("івська", "ьовська")),
+    ("евская", ("івська", "евська")),
+    ("инская", ("инська",)),
+    ("ынская", ("инська",)),
+    ("цкая", ("цька",)),
+    ("ская", ("ська",)),
+    ("овский", ("івський", "овський")),
+    ("евский", ("івський", "евський")),
+    ("ёвский", ("івський",)),
+    ("цкий", ("цький",)),
+    ("ский", ("ський",)),
+    ("ской", ("ської",)),
+    ("ная", ("на",)),
+    ("ный", ("ний",)),
+    ("ний", ("ний",)),
+    ("ая", ("а",)),
+    ("ое", ("е",)),
+    ("ый", ("ий",)),
+    ("ий", ("ий",)),
+    ("ой", ("ий",)),
+)
+# Побуквений мапінг рос.-специфічних літер (поза закінченням).
+_RU_LETTER_MAP = str.maketrans({"ы": "и", "э": "е", "ё": "о", "ъ": ""})
+
+
+def _finish_token(stem_repl: str, upper: bool) -> str:
+    low = stem_repl.translate(_RU_LETTER_MAP)
+    if low.startswith("и"):  # рос. И- на початку → укр. І- (Ирпенская→Ірпін…)
+        low = "і" + low[1:]
+    return low.capitalize() if upper else low
+
+
+def _translit_ru_token_variants(token: str) -> list[str]:
+    """Best-effort укр. форми одного рос. токена (1–2 варіанти)."""
+    low = token.lower()
+    upper = token[:1].isupper()
+    for suf, repls in _RU_UA_SUFFIX_VARIANTS:
+        if low.endswith(suf) and len(low) > len(suf):
+            stem = low[: -len(suf)]
+            out: list[str] = []
+            for r in repls:
+                v = _finish_token(stem + r, upper)
+                if v not in out:
+                    out.append(v)
+            return out
+    return [_finish_token(low, upper)]
+
+
+def ru_to_ua_variants(name: str) -> list[str]:
+    """Список best-effort укр. написань назви (для неоднозначних закінчень — кілька).
+
+    Верифікація суворо звіряє результат, тож зайві варіанти безпечні: хибний
+    просто не дасть збігу. Обмежено кількома, щоб не плодити запитів.
+    """
+    parts = re.split(r"(\s+)", name)
+    combos: list[str] = [""]
+    for part in parts:
+        if not part.strip():
+            combos = [c + part for c in combos]
+            continue
+        variants = _translit_ru_token_variants(part)
+        combos = [c + v for c in combos for v in variants]
+        if len(combos) > 4:  # обмежуємо комбінаторику
+            combos = combos[:4]
+    out: list[str] = []
+    for c in combos:
+        if c and c not in out:
+            out.append(c)
+    return out
+
+
+def transliterate_ru_to_ua(name: str) -> str:
+    """RU→UA транслітерація назви (перший/основний варіант). Див. ``ru_to_ua_variants``."""
+    variants = ru_to_ua_variants(name)
+    return variants[0] if variants else name
+
+
+def looks_russian(name: str) -> bool:
+    """Евристика: назва радше російська (варто спробувати транслітерацію)."""
+    low = (name or "").lower()
+    if any(c in low for c in "ыэёъ"):
+        return True
+    if any(c in low for c in "іїєґ"):  # вже українські літери — не чіпаємо
+        return False
+    return bool(re.search(r"(ая|ий|ый|ой|ое)(\b|$)", low))
 
 
 def street_type_canon(text: str) -> str:

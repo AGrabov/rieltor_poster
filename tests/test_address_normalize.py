@@ -148,3 +148,50 @@ def test_fold_cyrillic_russian_only_letters():
 
 def test_fold_cyrillic_strips_apostrophes_and_lowercases():
     assert an.fold_cyrillic("Сом'я") == "сомя"
+
+
+# ── RU→UA transliteration ─────────────────────────────────────────────────
+def test_transliterate_adjective_endings():
+    # -цкая → -цька; -ская → -ська.
+    assert an.transliterate_ru_to_ua("Зверинецкая") == "Зверинецька"
+    assert an.transliterate_ru_to_ua("Пушкинская") == "Пушкинська"
+
+
+def test_ru_to_ua_variants_covers_ambiguous_ov_ending():
+    # "-овская" is ambiguous: patronymic (Якубенків-ська) vs stem+ська
+    # (Москов-ська). Both must be offered so verification can pick the real one.
+    yak = an.ru_to_ua_variants("Якубенковская")
+    assert "Якубенківська" in yak and "Якубенковська" in yak
+    msk = an.ru_to_ua_variants("Московская")
+    assert "Московська" in msk and "Москівська" in msk
+    deg = an.ru_to_ua_variants("Дегтяревская")
+    assert "Дегтярівська" in deg
+
+
+def test_transliterate_masculine_and_genitive_endings():
+    # -овский is ambiguous → both offered; -ой → -ий.
+    assert "Кловський" in an.ru_to_ua_variants("Кловский")
+    assert an.transliterate_ru_to_ua("Полевой") == "Полевий"
+
+
+def test_transliterate_russian_letters_and_leading_i():
+    assert an.transliterate_ru_to_ua("Ирпенская") == "Ірпенська"
+    assert "Обездна" in an.ru_to_ua_variants("Объездная")  # ъ dropped, -ая→-а
+
+
+def test_transliterate_multiword_preserves_order():
+    assert an.transliterate_ru_to_ua("Эрнста Федора") == "Ернста Федора"
+
+
+def test_looks_russian_detects_ru_streets():
+    assert an.looks_russian("Якубенковская") is True
+    assert an.looks_russian("Дегтяревская") is True
+    assert an.looks_russian("Эрнста") is True
+
+
+def test_looks_russian_skips_ukrainian():
+    # Already-Ukrainian names (і/ї/є/ґ present) must not be flagged.
+    assert an.looks_russian("Калинівський") is False
+    assert an.looks_russian("Львівська") is False
+    assert an.looks_russian("Садова") is False
+    assert an.looks_russian("Лук'янівська") is False

@@ -13,18 +13,22 @@ from setup_logger import setup_logger
 try:
     from .address_normalize import (
         fold_cyrillic,
+        looks_russian,
         normalize_city,
         normalize_house,
         recover_street_type,
+        ru_to_ua_variants,
         street_type_canon,
         strip_street_type,
     )
 except ImportError:  # direct-run fallback
     from address_normalize import (  # noqa: I001
         fold_cyrillic,
+        looks_russian,
         normalize_city,
         normalize_house,
         recover_street_type,
+        ru_to_ua_variants,
         street_type_canon,
         strip_street_type,
     )
@@ -52,6 +56,68 @@ _ZEM_HEADERS = {
 # Schema types (rieltor.ua) that have a "Кадастровий номер" field
 _CADASTRAL_SCHEMA_TYPES = frozenset({"будинок", "ділянка", "комерційна"})
 
+# Почесні титули у назвах вулиць. У реєстрі вони СТОЯТЬ ПЕРЕД прізвищем
+# ("Академіка Туполєва"), а CRM часто зберігає прізвище першим ("Туполєва
+# Академіка"). Зберігаємо у folded-формі для RU↔UA-толерантного порівняння.
+_HONORIFIC_TITLES = frozenset(
+    fold_cyrillic(w)
+    for w in (
+        "академіка",
+        "генерала",
+        "генерал",
+        "маршала",
+        "адмірала",
+        "професора",
+        "інженера",
+        "конструктора",
+        "льотчика",
+        "пілота",
+        "отамана",
+        "гетьмана",
+        "князя",
+        "княгині",
+        "митрополита",
+        "єпископа",
+        "доктора",
+        "лікаря",
+        "командарма",
+    )
+)
+
+
+def _significant_tokens(text: str) -> list[str]:
+    """Folded-токени назви (без слів-типів вулиці) для збігу незалежно від порядку."""
+    out: list[str] = []
+    for tok in _WORD_RE.findall(text or ""):
+        if street_type_canon(tok):  # тип вулиці (вул/пров/шосе…) — не частина назви
+            continue
+        folded = fold_cyrillic(tok)
+        if folded:
+            out.append(folded)
+    return out
+
+
+def _street_variants(street_clean: str) -> list[str]:
+    """Варіанти написання вулиці для пошуку (recall).
+
+    Якщо назва містить почесний титул не на першому місці ("Туполєва Академіка"),
+    додає варіант із титулом попереду ("Академіка Туполєва") — канонічний для
+    реєстру. Звичайні «ім'я прізвище» (без титулу) НЕ переставляємо, щоб не
+    плодити зайвих запитів.
+    """
+    variants = [street_clean]
+    tokens = street_clean.split()
+    if len(tokens) >= 2:
+        hon_idx = [i for i, t in enumerate(tokens) if fold_cyrillic(t) in _HONORIFIC_TITLES]
+        if hon_idx and hon_idx != list(range(len(hon_idx))):
+            fronted = [tokens[i] for i in hon_idx] + [tokens[i] for i in range(len(tokens)) if i not in hon_idx]
+            variants.append(" ".join(fronted))
+    out: list[str] = []
+    for v in variants:
+        if v and v not in out:
+            out.append(v)
+    return out
+
 
 def _house_matches(addr: str, house: str) -> bool:
     """Збіг номера будинку, толерантний до формату (``19А`` = ``19-а`` = ``19 а``).
@@ -70,16 +136,19 @@ def _street_matches(street: str, addr: str) -> bool:
     """Чи присутня назва вулиці ``street`` в адресі кандидата (фуззі, RU↔UA).
 
     Порівнює ``fold_cyrillic``-форми, толеруючи и↔і та інші RU/UA відмінності.
-    Перевіряє окремі токени адреси та сусідні пари (для двослівних назв).
+    Збіг НЕЗАЛЕЖНИЙ ВІД ПОРЯДКУ слів: кожне значуще слово запиту має фуззі-
+    збігтися з якимось словом адреси. Це покриває перестановку титулу
+    ("Туполєва Академіка" ↔ "Академіка Туполєва"), бо обидва слова присутні.
     """
-    q = fold_cyrillic(strip_street_type(street))
-    if not q:
+    q_tokens = _significant_tokens(strip_street_type(street))
+    if not q_tokens:
         return False
-    tokens = [fold_cyrillic(t) for t in _WORD_RE.findall(addr)]
-    tokens = [t for t in tokens if t]
-    phrases = list(tokens)
-    phrases += [f"{tokens[i]} {tokens[i + 1]}" for i in range(len(tokens) - 1)]
-    return any(SequenceMatcher(None, q, p).ratio() >= _STREET_MATCH_THRESHOLD for p in phrases)
+    addr_tokens = _significant_tokens(addr)
+    if not addr_tokens:
+        return False
+    return all(
+        any(SequenceMatcher(None, q, a).ratio() >= _STREET_MATCH_THRESHOLD for a in addr_tokens) for q in q_tokens
+    )
 
 
 def _pick_verified(candidates: list[tuple[str, str]], street: str, house: str) -> tuple[str, str] | None:
@@ -138,9 +207,9 @@ def _search_zem_center(query: str, street: str, house: str) -> tuple[str, str] |
             headers=_ZEM_HEADERS,
             timeout=(5, 12),  # (connect, read)
         )
-        if resp.status_code == 404:
+        if resp.status_code >= 400:
+            logger.debug("zem.center недоступна (HTTP %s) для '%s'", resp.status_code, query)
             return None
-        resp.raise_for_status()
 
         items = (resp.json() or {}).get("items") or []
         candidates: list[tuple[str, str]] = []
@@ -148,9 +217,17 @@ def _search_zem_center(query: str, street: str, house: str) -> tuple[str, str] |
             cadnum = (item.get("cadnum") or "").strip()
             if _CADNUM_RE.match(cadnum):
                 candidates.append((cadnum, item.get("address") or ""))
-        return _pick_verified(candidates, street, house)
+        rec = _pick_verified(candidates, street, house)
+        if rec is None:
+            # Видимий слід «спробували, але без впевненого збігу» — інакше здається,
+            # ніби zem.center пропущено й одразу пішов fallback kadastrova-karta.
+            logger.debug("zem.center: немає впевненого збігу для '%s' (кандидатів: %d)", query, len(candidates))
+        return rec
     except requests.exceptions.Timeout:
         logger.debug("Timeout zem.center для '%s'", query)
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.debug("zem.center недоступна для '%s': %s", query, e)
         return None
     except Exception:
         logger.warning("Помилка zem.center для '%s'", query, exc_info=True)
@@ -169,9 +246,11 @@ def _search_kadastrova_karta(query: str, street: str, house: str) -> tuple[str, 
             headers=_KK_HEADERS,
             timeout=(5, 8),  # (connect, read)
         )
-        if resp.status_code == 404:
+        if resp.status_code >= 400:
+            # Сайт часто віддає 503 (анти-бот) — це очікувана недоступність,
+            # не помилка: тихо, без traceback (інакше лог засмічується).
+            logger.debug("kadastrova-karta.com недоступна (HTTP %s) для '%s'", resp.status_code, query)
             return None
-        resp.raise_for_status()
 
         soup = BeautifulSoup(resp.text, "html.parser")
         candidates: list[tuple[str, str]] = []
@@ -189,6 +268,9 @@ def _search_kadastrova_karta(query: str, street: str, house: str) -> tuple[str, 
     except requests.exceptions.Timeout:
         logger.debug("Timeout kadastrova-karta.com для '%s'", query)
         return None
+    except requests.exceptions.RequestException as e:
+        logger.debug("kadastrova-karta.com недоступна для '%s': %s", query, e)
+        return None
     except Exception:
         logger.warning("Помилка kadastrova-karta.com для '%s'", query, exc_info=True)
         return None
@@ -197,11 +279,11 @@ def _search_kadastrova_karta(query: str, street: str, house: str) -> tuple[str, 
 def lookup_cadastral_record(city: str, street: str, house: str) -> tuple[str, str] | None:
     """Знайти (кадастровий номер, адресу реєстру) ділянки за адресою.
 
-    Стратегія (zem.center JSON API, потім kadastrova-karta.com як fallback):
-      1. zem.center: місто + вулиця + будинок
-      2. zem.center: місто + вулиця
-      3. kadastrova-karta.com: місто + вулиця + будинок
-      4. kadastrova-karta.com: місто + вулиця
+    Стратегія (zem.center JSON API, потім kadastrova-karta.com як fallback).
+    Для кожного джерела перебираємо запити: для кожного варіанта написання
+    вулиці (оригінал + «титул попереду») — спершу з будинком, потім без:
+      1. zem.center: усі запити по черзі
+      2. kadastrova-karta.com: усі запити по черзі (fallback)
 
     Returns:
         (cadnum, registry_address) або None. cadnum у форматі
@@ -216,26 +298,45 @@ def lookup_cadastral_record(city: str, street: str, house: str) -> tuple[str, st
     # Compact house for QUERY recall — "19 б" splits and returns 0, "19б" works.
     house_query = normalize_house(house_orig)
 
-    full = " ".join(p for p in [city_clean, street_clean, house_query] if p)
-    short = " ".join(p for p in [city_clean, street_clean] if p)
-    # Preserve order, drop empties and duplicates (full == short when no house)
-    queries: list[str] = []
-    for q in (full, short):
-        if q and q not in queries:
-            queries.append(q)
-    if not queries:
+    # Спроби (запит, вулиця-для-верифікації). Порядок слів: оригінал, потім
+    # «титул попереду» (CRM "Туполєва Академіка" → реєстр "Академіка Туполєва").
+    # Однакові за мовою варіанти верифікуємо ОРИГІНАЛЬНОЮ вулицею (зберігає тип
+    # для розрізнення вул./пров.); транслітерований варіант — самим UA-написанням
+    # (рос. оригінал не збігся б з укр. адресою реєстру).
+    attempts: list[tuple[str, str]] = []
+    seen_q: set[str] = set()
+
+    def _add(name: str, verify_street: str) -> None:
+        full = " ".join(p for p in [city_clean, name, house_query] if p)
+        short = " ".join(p for p in [city_clean, name] if p)
+        for q in (full, short):
+            if q and q not in seen_q:
+                seen_q.add(q)
+                attempts.append((q, verify_street))
+
+    for street_variant in _street_variants(street_clean):
+        _add(street_variant, street)
+
+    # RU→UA: CRM зберігає вулицю російською ("Якубенковская") — реєстр шукає лише
+    # за укр. написанням. Додаємо транслітеровані варіанти (best-effort, кілька
+    # для неоднозначних закінчень); верифікація відсіє хибні.
+    if looks_russian(street_clean):
+        for ua in ru_to_ua_variants(street_clean):
+            if ua and fold_cyrillic(ua) != fold_cyrillic(street_clean):
+                for ua_variant in _street_variants(ua):
+                    _add(ua_variant, ua_variant)
+
+    if not attempts:
         return None
 
-    # Verification gets the ORIGINAL street (keeps the type for disambiguation);
-    # the query `q` uses the stripped form (the registry chokes on any type).
-    for q in queries:
-        rec = _search_zem_center(q, street, house_orig)
+    for q, verify_street in attempts:
+        rec = _search_zem_center(q, verify_street, house_orig)
         if rec:
             logger.debug("Знайдено zem.center: %s (запит '%s')", rec[0], q)
             return rec
 
-    for q in queries:
-        rec = _search_kadastrova_karta(q, street, house_orig)
+    for q, verify_street in attempts:
+        rec = _search_kadastrova_karta(q, verify_street, house_orig)
         if rec:
             logger.debug("Знайдено kadastrova-karta.com: %s (запит '%s')", rec[0], q)
             return rec
@@ -281,9 +382,26 @@ def lookup_address_by_cadnum(cadnum: str) -> str | None:
 # Слова-типи вулиць у канонічному (повному) вигляді з реєстру.
 _REGISTRY_TYPE_WORDS = frozenset(
     {
-        "шосе", "проспект", "просп", "бульвар", "бул", "провулок", "пров",
-        "площа", "пл", "узвіз", "набережна", "проїзд", "тупик", "тупік",
-        "алея", "дорога", "дор", "вулиця", "вул", "майдан",
+        "шосе",
+        "проспект",
+        "просп",
+        "бульвар",
+        "бул",
+        "провулок",
+        "пров",
+        "площа",
+        "пл",
+        "узвіз",
+        "набережна",
+        "проїзд",
+        "тупик",
+        "тупік",
+        "алея",
+        "дорога",
+        "дор",
+        "вулиця",
+        "вул",
+        "майдан",
     }
 )
 _REGISTRY_DEFAULT_TYPES = frozenset({"вулиця", "вул"})
@@ -317,9 +435,7 @@ def parse_registry_address(addr: str) -> dict:
         if re.search(r"\bр-?н\b|\bрайон\b", low):
             if "Район" not in result:
                 result["Район"] = re.sub(r"\s*(р-?н|район)\b\.?", "", part, flags=re.IGNORECASE).strip()
-        elif "Вулиця" not in result and any(
-            t.lower() in _REGISTRY_TYPE_WORDS for t in part.replace(".", " ").split()
-        ):
+        elif "Вулиця" not in result and any(t.lower() in _REGISTRY_TYPE_WORDS for t in part.replace(".", " ").split()):
             result["Вулиця"] = _format_registry_street(part)
     return result
 

@@ -269,3 +269,90 @@ def test_lookup_no_kadastr_live_references():
     src = inspect.getsource(cl)
     assert "kadastr.live" not in src
     assert "_search_raw" not in src
+
+
+# ── word-order / honorific tolerance ──────────────────────────────────────
+# CRM stores "Туполєва Академіка"; the registry's canonical form is
+# "Академіка Туполєва" (the honorific title precedes the surname).
+_TUPOLEVA_REG = "м.Київ, Солом'янський р-н, вулиця Академіка Туполєва, 18Д"
+
+
+def test_street_matches_ignores_word_order():
+    # Same words, swapped order must still verify as the same street.
+    assert cl._street_matches("Туполєва Академіка", _TUPOLEVA_REG) is True
+    assert cl._street_matches("Академіка Туполєва", _TUPOLEVA_REG) is True
+
+
+def test_street_matches_rejects_when_a_word_is_absent():
+    # All query words must be present — a different surname must not pass.
+    assert cl._street_matches("Академіка Глушкова", _TUPOLEVA_REG) is False
+
+
+def test_pick_verified_accepts_swapped_honorific_street():
+    candidates = [("8000000000:69:001:0001", _TUPOLEVA_REG)]
+    got = cl._pick_verified(candidates, "Туполєва Академіка", "18д")
+    assert got is not None
+    assert got[0] == "8000000000:69:001:0001"
+
+
+def test_street_variants_fronts_the_honorific():
+    variants = cl._street_variants("Туполєва Академіка")
+    assert "Туполєва Академіка" in variants
+    assert "Академіка Туполєва" in variants
+
+
+def test_street_variants_no_honorific_is_single():
+    # Ordinary given-name + surname must NOT spawn a reversed query (avoid noise).
+    assert cl._street_variants("Григорія Кочура") == ["Григорія Кочура"]
+
+
+def test_lookup_finds_via_reordered_query(monkeypatch):
+    # zem.center only returns the parcel for the corrected word order.
+    seen_queries = []
+
+    def fake_get(url, **kwargs):
+        q = kwargs["params"]["q"]
+        seen_queries.append(q)
+        if "Академіка Туполєва" in q:
+            return _FakeResp(json_data={"items": [{"cadnum": "8000000000:69:001:0001", "address": _TUPOLEVA_REG}]})
+        return _FakeResp(json_data={"items": []})
+
+    monkeypatch.setattr(cl.requests, "get", fake_get)
+    got = cl.lookup_cadastral_record("Київ", "Туполєва Академіка", "18д")
+    assert got is not None
+    assert got[0] == "8000000000:69:001:0001"
+    # The CRM word order was tried first, then the corrected variant.
+    assert any("Академіка Туполєва" in q for q in seen_queries)
+
+
+def test_lookup_finds_ru_street_via_transliteration(monkeypatch):
+    # CRM stores the street in Russian; the registry only answers to Ukrainian.
+    reg = "м.Київ, Печерський р-н, вулиця Звіринецька, 72"
+
+    def fake_get(url, **kwargs):
+        q = kwargs["params"]["q"]
+        # Rule-based translit yields "Зверинецька" (stem е→і is lexical); the
+        # registry answers to that and returns the "Звіринецька" parcel.
+        if "Зверинецька" in q:
+            return _FakeResp(json_data={"items": [{"cadnum": "8000000000:82:262:0002", "address": reg}]})
+        return _FakeResp(json_data={"items": []})
+
+    monkeypatch.setattr(cl.requests, "get", fake_get)
+    got = cl.lookup_cadastral_record("Киев", "Зверинецкая", "72")
+    assert got is not None
+    assert got[0] == "8000000000:82:262:0002"
+
+
+# ── kadastrova-karta.com unavailable: quiet, no traceback, returns None ────
+def test_search_kadastrova_karta_503_is_quiet(monkeypatch, caplog):
+    import logging
+
+    def fake_get(url, **kwargs):
+        return _FakeResp(status_code=503, text="Service Unavailable")
+
+    monkeypatch.setattr(cl.requests, "get", fake_get)
+    with caplog.at_level(logging.WARNING):
+        got = cl._search_kadastrova_karta("Київ Туполєва Академіка", "Туполєва Академіка", "18д")
+    assert got is None
+    # An expected "site down" must not be logged at WARNING (no traceback spam).
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
