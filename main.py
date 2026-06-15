@@ -223,8 +223,8 @@ def phase1_collect(
                 property_type or "будь-який",
             )
 
-        # Display denominator for progress logs: the target count, or "?" when unbounded.
-        total_label = str(max_count) if max_count else "?"
+        # Denominator shown in "saved" progress logs: target new saves, or "?" when unbounded.
+        target_label = str(max_count) if max_count else "?"
         idx = 0
         for item in collector.iter_advertisable(max_pages=max_pages, item_filter=item_filter):
             if max_count and saved >= max_count:
@@ -234,9 +234,8 @@ def phase1_collect(
 
             if db.estate_exists(item.estate_id):
                 logger.info(
-                    "[%d/%s] Об'єкт %d вже є в БД, пропускаємо",
+                    "[%d] Об'єкт %d вже є в БД, пропускаємо",
                     idx,
-                    total_label,
                     item.estate_id,
                 )
                 continue
@@ -253,9 +252,8 @@ def phase1_collect(
                         status="skipped",
                     )
                     logger.warning(
-                        "[%d/%s] Об'єкт %d закрито, пропущено",
+                        "[%d] Об'єкт %d закрито, пропущено",
                         idx,
-                        total_label,
                         item.estate_id,
                     )
                     continue
@@ -300,18 +298,17 @@ def phase1_collect(
                 )
                 saved += 1
                 logger.info(
-                    "[%d/%s] Збережено об'єкт %d (article=%s)",
-                    idx,
-                    total_label,
+                    "[збережено %d/%s] Об'єкт %d (article=%s)",
+                    saved,
+                    target_label,
                     item.estate_id,
                     article,
                 )
 
             except Exception:
                 logger.exception(
-                    "[%d/%s] Помилка обробки об'єкта %d",
+                    "[%d] Помилка обробки об'єкта %d",
                     idx,
-                    total_label,
                     item.estate_id,
                 )
                 db.insert_offer(

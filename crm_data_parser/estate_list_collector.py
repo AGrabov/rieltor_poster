@@ -167,7 +167,15 @@ class EstateListCollector:
                 total_matched,
             )
 
+            list_url = self.page.url
             yield from matched
+
+            # Consumer may have navigated to individual estate pages.
+            # Restore the list page so pagination checks work correctly.
+            if self.page.url != list_url:
+                logger.debug("Повертаємось до сторінки списку: %s", list_url)
+                self.page.goto(list_url, wait_until="domcontentloaded")
+                self.page.wait_for_selector(".estate-list", timeout=15_000)
 
             if max_pages and page_num >= max_pages:
                 logger.info("Досягнуто max_pages=%d, зупинка", max_pages)
