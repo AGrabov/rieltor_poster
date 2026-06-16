@@ -1,0 +1,19 @@
+# Тема: ТЕМНА (за замовчуванням).
+# Активується через base = "themes/dark.toml" у .streamlit/config.toml.
+
+[theme]
+base = "dark"
+primaryColor = "#7C83FF"               # індиго-акцент (світліший — для контрасту на темному)
+backgroundColor = "#0F1117"            # глибокий графіт
+secondaryBackgroundColor = "#171A23"   # картки / віджети
+textColor = "#E6E8EE"
+linkColor = "#9AA0FF"
+borderColor = "#262A36"
+baseRadius = "0.65rem"
+baseFontSize = 15
+dataframeHeaderBackgroundColor = "#1B1F2A"
+
+# Шрифти (Google Fonts; за відсутності мережі — системний фолбек)
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+headingFont = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@600;700;800&display=swap"
+codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"

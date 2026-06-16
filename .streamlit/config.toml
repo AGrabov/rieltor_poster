@@ -1,0 +1,15 @@
+# Rieltor Dashboard — оформлення.
+#
+# ПЕРЕМИКАННЯ ТЕМИ — одним рядком нижче:
+#   темна (за замовчуванням):  base = "themes/dark.toml"
+#   світла:                    base = "themes/light.toml"
+# Самі палітри/шрифти — у файлах themes/*.toml.
+
+[theme]
+base = "themes/dark.toml"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

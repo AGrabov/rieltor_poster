@@ -1,0 +1,19 @@
+# Тема: СВІТЛА.
+# Щоб увімкнути — у .streamlit/config.toml постав: base = "themes/light.toml".
+
+[theme]
+base = "light"
+primaryColor = "#4F46E5"               # індиго-акцент
+backgroundColor = "#FBFBFD"
+secondaryBackgroundColor = "#F2F3F7"
+textColor = "#1E2330"
+linkColor = "#4F46E5"
+borderColor = "#E4E6EE"
+baseRadius = "0.65rem"
+baseFontSize = 15
+dataframeHeaderBackgroundColor = "#F2F3F7"
+
+# Шрифти (Google Fonts; за відсутності мережі — системний фолбек)
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+headingFont = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@600;700;800&display=swap"
+codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"

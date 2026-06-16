@@ -6,13 +6,17 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 import time
 from collections import deque
+from html import escape
 from pathlib import Path
 
 import streamlit as st
+from streamlit.components.v1 import html as components_html
 
 from main import read_drafts_count
 from offer_db import OfferDB
@@ -37,11 +41,90 @@ DEAL_OPTIONS = ["Всі", *DEAL_TYPES]
 DEFAULT_PROP = "Безкоштовне"
 DEFAULT_MAX_COUNT = 50
 
+# Лог-консоль: рівні логування і поріг фільтра за серйозністю.
+LEVEL_RE = re.compile(r"-(DEBUG|INFO|WARNING|ERROR|CRITICAL)-")
+LEVEL_SEVERITY = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
+LEVEL_COLORS = {
+    "DEBUG": "#7A808F",
+    "INFO": "#D7DAE3",
+    "WARNING": "#F5A524",
+    "ERROR": "#FF6B6B",
+    "CRITICAL": "#FF6B6B",
+}
+LOG_FILTERS = {"Всі": 0, "INFO": 20, "WARN": 30, "ERROR": 40}
+
 st.set_page_config(
     page_title="Rieltor Dashboard",
     page_icon="🏠",
     layout="wide",
 )
+
+
+# ── Стилі (залежать від активної теми) ────────────────────────────────
+
+# Палітра тонкого «дотюнінгу» поверх нативної теми Streamlit.
+# Сама тема (темна/світла) перемикається у .streamlit/config.toml → base.
+THEME_PALETTES = {
+    "dark": {
+        "card_bg": "#171A23", "card_border": "#262A36",
+        "title": "#E6E8EE", "subtitle": "#9097A8",
+        "accent": "#7C83FF", "accent2": "#5A57E6",
+        "shadow": "0 1px 2px rgba(0,0,0,.35)", "hover": "0 6px 16px rgba(124,131,255,.28)",
+    },
+    "light": {
+        "card_bg": "#FFFFFF", "card_border": "#E4E6EE",
+        "title": "#1E2330", "subtitle": "#6B7180",
+        "accent": "#4F46E5", "accent2": "#8B83FF",
+        "shadow": "0 1px 2px rgba(16,22,40,.04)", "hover": "0 4px 12px rgba(79,70,229,.16)",
+    },
+}
+
+
+def active_theme() -> str:
+    """Визначити активну тему ('dark'/'light') з config.toml → theme.base."""
+    try:
+        base = str(st.get_option("theme.base") or "").lower()
+    except Exception:
+        base = ""
+    return "light" if "light" in base else "dark"
+
+
+def inject_css(theme: str) -> None:
+    p = THEME_PALETTES.get(theme, THEME_PALETTES["dark"])
+    st.markdown(
+        f"""
+        <style>
+          [data-testid="stMainBlockContainer"] {{ padding-top: 2.2rem; padding-bottom: 3rem; }}
+
+          .app-brand {{ display: flex; align-items: center; gap: .75rem; }}
+          .app-logo {{ font-size: 2.1rem; line-height: 1; }}
+          .app-title {{ font-size: 1.65rem; font-weight: 800; letter-spacing: -.02em;
+            color: {p["title"]}; line-height: 1.1; }}
+          .app-subtitle {{ font-size: .85rem; color: {p["subtitle"]}; margin-top: 2px; }}
+          .app-accent {{ height: 3px; border-radius: 3px; margin: .55rem 0 .2rem;
+            background: linear-gradient(90deg, {p["accent"]}, {p["accent2"]} 50%, transparent 100%); }}
+
+          [data-testid="stMetric"] {{
+            background: {p["card_bg"]}; border: 1px solid {p["card_border"]}; border-radius: .8rem;
+            padding: .85rem 1rem; box-shadow: {p["shadow"]}; }}
+          [data-testid="stMetricValue"] {{ font-weight: 700; }}
+
+          .stButton > button {{ border-radius: .6rem; font-weight: 600;
+            transition: transform .06s ease, box-shadow .15s ease; }}
+          .stButton > button:hover {{ transform: translateY(-1px); box-shadow: {p["hover"]}; }}
+
+          [data-testid="stVerticalBlockBorderWrapper"] {{ border-radius: .85rem; }}
+          [data-testid="stTabs"] button[role="tab"] {{ font-weight: 600; }}
+
+          [data-testid="stProgress"] > div > div > div {{
+            background-image: linear-gradient(90deg, {p["accent"]}, {p["accent2"]}); }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+inject_css(active_theme())
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -59,7 +142,7 @@ def get_summary() -> dict[str, int]:
 
 def read_log_tail(n: int = LOG_TAIL) -> str:
     if not LOG_FILE.exists():
-        return "_Лог-файл не знайдено_"
+        return ""
     lines = deque(LOG_FILE.open(encoding="utf-8", errors="replace"), maxlen=n)
     return "".join(lines)
 
@@ -158,6 +241,62 @@ def render_proc_status(proc_key: str, running_msg: str, done_msg: str = "Гот�
             st.error(f"❌ Завершилось з кодом {rc}")
 
 
+def _fmt_errors(errors) -> str:
+    """Стиснути список помилок у короткий рядок для таблиці."""
+    if not errors:
+        return ""
+    if isinstance(errors, list):
+        parts = []
+        for e in errors:
+            if isinstance(e, dict):
+                parts.append(str(e.get("message") or e.get("error") or json.dumps(e, ensure_ascii=False)))
+            else:
+                parts.append(str(e))
+        return " | ".join(parts)
+    return str(errors)
+
+
+def render_log_console(text: str, level_filter: str, search: str) -> None:
+    """Кольорова прокручувана консоль логів з авто-прокруткою донизу."""
+    threshold = LOG_FILTERS.get(level_filter, 0)
+    needle = search.lower().strip() if search else ""
+    current = "INFO"  # рівень за замовчуванням для рядків без мітки (продовження трейсбеків)
+    rows: list[str] = []
+    for line in text.splitlines():
+        m = LEVEL_RE.search(line)
+        if m:
+            current = m.group(1)
+        sev = LEVEL_SEVERITY.get(current, 20)
+        if sev < threshold:
+            continue
+        if needle and needle not in line.lower():
+            continue
+        color = LEVEL_COLORS.get(current, "#AEB3BF")
+        rows.append(f'<div class="ln" style="color:{color}">{escape(line) or "&nbsp;"}</div>')
+
+    body = "".join(rows) or '<div class="ln empty">— порожньо —</div>'
+    doc = f"""
+    <div id="box">{body}</div>
+    <style>
+      html, body {{ margin: 0; }}
+      #box {{
+        height: 372px; overflow-y: auto; background: #15171E; border-radius: 10px;
+        padding: 12px 14px; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 12.5px;
+        line-height: 1.55; color: #AEB3BF; border: 1px solid #2A2E3A;
+      }}
+      #box .ln {{ white-space: pre-wrap; word-break: break-word; }}
+      #box .empty {{ color: #6B7180; font-style: italic; }}
+      #box::-webkit-scrollbar {{ width: 10px; }}
+      #box::-webkit-scrollbar-thumb {{ background: #3A3F4D; border-radius: 5px; }}
+    </style>
+    <script>
+      const box = document.getElementById('box');
+      if (box) box.scrollTop = box.scrollHeight;
+    </script>
+    """
+    components_html(doc, height=392, scrolling=False)
+
+
 # ── Session state ─────────────────────────────────────────────────────
 
 for _k in ("collect_proc", "post_proc", "schema_proc", "cadastral_proc", "cleanup_proc", "publish_drafts_proc"):
@@ -169,7 +308,19 @@ st.session_state.setdefault("drafts_count", None)
 
 header_left, header_right = st.columns([3, 1])
 with header_left:
-    st.title("🏠 Rieltor Dashboard")
+    st.markdown(
+        """
+        <div class="app-brand">
+          <span class="app-logo">🏠</span>
+          <div>
+            <div class="app-title">Rieltor Dashboard</div>
+            <div class="app-subtitle">Автоматизація публікації оголошень · CRM → Rieltor.ua</div>
+          </div>
+        </div>
+        <div class="app-accent"></div>
+        """,
+        unsafe_allow_html=True,
+    )
 with header_right:
     st.write("")
     col_refresh, col_auto = st.columns(2)
@@ -186,7 +337,7 @@ total = sum(summary.values())
 
 stat_cols = st.columns([2, 2, 2, 2, 1])
 for col, status in zip(stat_cols[:4], STATUSES):
-    col.metric(label=STATUS_LABELS[status], value=summary[status])
+    col.metric(label=STATUS_LABELS[status], value=summary[status], border=True)
 with stat_cols[4]:
     st.caption("Кадастр")
     if st.button(
@@ -194,6 +345,7 @@ with stat_cols[4]:
         key="cadastral_btn",
         help="Знайти кадастрові номери для всіх об'єктів без нього "
         "(Будинок, Ділянка, Комерційна). Фоновий процес, без налаштувань.",
+        use_container_width=True,
         disabled=proc_is_running(st.session_state.cadastral_proc),
     ):
         st.session_state.cadastral_proc = launch(["uv", "run", "python", "main.py", "cadastral"])
@@ -209,7 +361,9 @@ st.divider()
 
 # ── Вкладки ───────────────────────────────────────────────────────────
 
-tab_main, tab_service, tab_db = st.tabs(["📋 Основне", "🛠 Сервіс", "🗄 База / ⚠ Небезпечна зона"])
+tab_main, tab_objects, tab_service, tab_db = st.tabs(
+    ["📋 Основне", "📂 Об'єкти", "🛠 Сервіс", "🗄 База / ⚠ Небезпечна зона"]
+)
 
 # ── Вкладка: Основне (головний потік) ─────────────────────────────────
 with tab_main:
@@ -260,6 +414,68 @@ with tab_main:
             st.toast("Публікацію запущено!", icon="▶")
             st.rerun()
         render_proc_status("post_proc", "Публікація виконується...", "Публікацію завершено")
+
+
+# ── Вкладка: Об'єкти (перегляд БД) ────────────────────────────────────
+with tab_objects:
+    f1, f2, f3, f4 = st.columns([3, 2, 2, 1])
+    with f1:
+        obj_statuses = st.multiselect(
+            "Статус",
+            options=STATUSES,
+            default=[],
+            format_func=lambda s: STATUS_LABELS.get(s, s),
+            key="obj_statuses",
+            placeholder="Всі статуси",
+        )
+    with f2:
+        obj_pt = st.selectbox("Тип об'єкта", options=PROP_OPTIONS, index=0, key="obj_pt")
+    with f3:
+        obj_search = st.text_input("Пошук", key="obj_search", placeholder="артикул / заголовок / ID")
+    with f4:
+        obj_limit = st.number_input("Ліміт", min_value=10, max_value=2000, value=200, step=50, key="obj_limit")
+
+    try:
+        with OfferDB() as db:
+            records = db.list_offers(
+                statuses=obj_statuses or None,
+                property_type=_opt(obj_pt),
+                search=obj_search or None,
+                limit=int(obj_limit),
+            )
+    except Exception as e:
+        records = []
+        st.error(f"Помилка читання БД: {e}")
+
+    if not records:
+        st.info("Нічого не знайдено за заданими фільтрами.")
+    else:
+        st.caption(f"Показано об'єктів: **{len(records)}**")
+        table = [
+            {
+                "ID": r.estate_id,
+                "Артикул": r.article or "",
+                "Заголовок": r.title or "",
+                "Тип": r.property_type or "",
+                "Угода": r.deal_type or "",
+                "Статус": STATUS_LABELS.get(r.status, r.status),
+                "Створено": r.created_at,
+                "Оновлено": r.updated_at,
+                "Rieltor ID": r.rieltor_offer_id or "",
+                "Помилки": _fmt_errors(r.errors),
+            }
+            for r in records
+        ]
+        st.dataframe(
+            table,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "ID": st.column_config.NumberColumn(width="small", format="%d"),
+                "Заголовок": st.column_config.TextColumn(width="large"),
+                "Помилки": st.column_config.TextColumn(width="medium"),
+            },
+        )
 
 
 # ── Вкладка: Сервіс (рідкі/допоміжні дії) ─────────────────────────────
@@ -394,27 +610,34 @@ with tab_db:
 # ── Логи ─────────────────────────────────────────────────────────────
 
 st.divider()
-log_header_left, log_header_right = st.columns([3, 1])
-with log_header_left:
+lh_title, lh_btn, _lh_spacer = st.columns([1.3, 1, 10], vertical_alignment="center")
+with lh_title:
     st.subheader("Логи")
-with log_header_right:
-    st.write("")
-    if st.button("🗑 Очистити логи", use_container_width=True):
+with lh_btn:
+    if st.button("🗑", key="clear_logs", help="Очистити лог-файл"):
         try:
             LOG_FILE.write_text("", encoding="utf-8")
             st.toast("Логи очищено", icon="🗑")
         except Exception as e:
             st.error(f"Помилка очищення: {e}")
 
-log_lines = st.number_input(
-    "Рядків",
-    min_value=20,
-    max_value=500,
-    value=LOG_TAIL,
-    step=50,
-    label_visibility="collapsed",
-)
-st.code(read_log_tail(int(log_lines)), language=None)
+lc1, lc2, lc3 = st.columns([2, 3, 1])
+with lc1:
+    log_level = st.segmented_control(
+        "Рівень", options=list(LOG_FILTERS.keys()), default="Всі", key="log_level", label_visibility="collapsed"
+    )
+with lc2:
+    log_search = st.text_input("Пошук у логах", key="log_search", placeholder="🔍 пошук у логах", label_visibility="collapsed")
+with lc3:
+    log_lines = st.number_input(
+        "Рядків", min_value=20, max_value=500, value=LOG_TAIL, step=50, label_visibility="collapsed"
+    )
+
+log_text = read_log_tail(int(log_lines))
+if not log_text.strip():
+    st.caption("_Лог-файл порожній або не знайдено._")
+else:
+    render_log_console(log_text, log_level or "Всі", log_search)
 
 # ── Автооновлення ─────────────────────────────────────────────────────
 

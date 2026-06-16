@@ -251,6 +251,51 @@ class OfferDB:
         rows = self.conn.execute(query, params).fetchall()
         return [_row_to_record(r) for r in rows]
 
+    def list_offers(
+        self,
+        statuses: list[str] | None = None,
+        property_type: str | None = None,
+        deal_type: str | None = None,
+        search: str | None = None,
+        limit: int | None = None,
+    ) -> list[OfferRecord]:
+        """Повернути оголошення з необов'язковими фільтрами (для перегляду в дашборді).
+
+        `search` шукає підрядок в article / title / estate_id.
+        """
+        query = "SELECT * FROM offers WHERE 1=1"
+        params: list = []
+
+        if statuses:
+            placeholders = ", ".join("?" * len(statuses))
+            query += f" AND status IN ({placeholders})"
+            params.extend(statuses)
+
+        if property_type:
+            if property_type.lower() == "паркомісце":
+                query += " AND LOWER(property_type) LIKE 'паркомісце%'"
+            else:
+                query += " AND LOWER(property_type) = LOWER(?)"
+                params.append(property_type)
+
+        if deal_type:
+            query += " AND LOWER(deal_type) = LOWER(?)"
+            params.append(deal_type)
+
+        if search:
+            term = f"%{search.strip()}%"
+            query += " AND (article LIKE ? OR title LIKE ? OR CAST(estate_id AS TEXT) LIKE ?)"
+            params.extend([term, term, term])
+
+        query += " ORDER BY updated_at DESC, id DESC"
+
+        if limit:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        rows = self.conn.execute(query, params).fetchall()
+        return [_row_to_record(r) for r in rows]
+
     def delete_by_statuses(self, statuses: list[str]) -> int:
         """Видаляє всі записи зі вказаними статусами. Повертає кількість видалених."""
         if not statuses:
