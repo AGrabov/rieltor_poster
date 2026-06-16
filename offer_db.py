@@ -65,13 +65,11 @@ class OfferDB:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self._create_tables()
-        logger.debug("Відкрито БД: %s", self.db_path)
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
         if self.conn:
             self.conn.close()
-            logger.debug("БД закрито")
 
     def _create_tables(self) -> None:
         self.conn.execute("""
