@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from bs4 import BeautifulSoup, Tag
 from playwright.sync_api import Page
@@ -73,6 +74,8 @@ class EstateListCollector:
     # CRM filter: "Закритий/відкритий продаж" = "Відкритий продаж можна рекламувати" (value=2)
     ADVERTISABLE_FILTER = "property_69[]=2"
     PER_PAGE = 50
+    # Where debug CRM HTML is dumped when SAVE_CRM_HTML is set (one file per estate).
+    _DEBUG_HTML_DIR = Path("logs/debug_html")
 
     def __init__(
         self,
@@ -225,12 +228,31 @@ class EstateListCollector:
         self.page.wait_for_selector(".page-content", timeout=15_000)
 
         html = self.page.content()
+        self._save_debug_html(estate_id, html)
 
         if self._html_has_closure_alert(html):
             logger.warning("Об'єкт %d закрито (знайдено сповіщення про закриття), пропускаємо", estate_id)
             return None
 
         return html
+
+    def _save_debug_html(self, estate_id: int, html: str) -> Path | None:
+        """Зберегти сирий HTML об'єкта для дебагу (напр. розбір блоку «Контакти»).
+
+        Вимкнено за замовчуванням. Увімкнути: SAVE_CRM_HTML=1 у .env. Зберігає по
+        одному файлу на об'єкт у :pyattr:`_DEBUG_HTML_DIR` (перезаписує наявний).
+        """
+        if os.getenv("SAVE_CRM_HTML", "").strip().lower() not in ("1", "true", "yes", "on"):
+            return None
+        try:
+            self._DEBUG_HTML_DIR.mkdir(parents=True, exist_ok=True)
+            path = self._DEBUG_HTML_DIR / f"estate_{estate_id}.html"
+            path.write_text(html or "", encoding="utf-8")
+            logger.info("Збережено CRM HTML для дебагу: %s", path)
+            return path
+        except Exception:
+            logger.warning("Не вдалось зберегти debug HTML для об'єкта %s", estate_id, exc_info=True)
+            return None
 
     def is_estate_closed(self, estate_id: int) -> bool:
         """Перевірити, чи об'єкт закрито в CRM (актуальність для публікації).

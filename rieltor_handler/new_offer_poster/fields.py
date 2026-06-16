@@ -364,121 +364,138 @@ class FieldsMixin:
             except Exception:
                 pass
 
-            opened_lb = None
-            for _ in range(2):
-                # primary click
-                try:
-                    select_btn.click(timeout=1500)
-                except Exception:
+            # Retry the whole open→pick→verify cycle: a MUI Select can register the
+            # click yet silently keep the form default (e.g. валюта→гривень замість
+            # доларів) if the listbox was still settling. Re-pick until it sticks.
+            for _attempt in range(3):
+                opened_lb = None
+                for _ in range(2):
+                    # primary click
                     try:
-                        select_btn.click(force=True, timeout=1500)
+                        select_btn.click(timeout=1500)
+                    except Exception:
+                        try:
+                            select_btn.click(force=True, timeout=1500)
+                        except Exception:
+                            pass
+
+                    opened_lb = self._active_listbox(prefer_menu_id=menu_id)
+                    if opened_lb:
+                        break
+
+                    # fallback: click arrow icon
+                    try:
+                        form.locator("css=svg.MuiSelect-icon").first.click(timeout=1200)
                     except Exception:
                         pass
 
-                opened_lb = self._active_listbox(prefer_menu_id=menu_id)
-                if opened_lb:
-                    break
+                    opened_lb = self._active_listbox(prefer_menu_id=menu_id)
+                    if opened_lb:
+                        break
 
-                # fallback: click arrow icon
-                try:
-                    form.locator("css=svg.MuiSelect-icon").first.click(timeout=1200)
-                except Exception:
-                    pass
-
-                opened_lb = self._active_listbox(prefer_menu_id=menu_id)
-                if opened_lb:
-                    break
-
-                # fallback: click input root
-                try:
-                    form.locator("css=.MuiInputBase-root").first.click(timeout=1200)
-                except Exception:
-                    pass
-
-                opened_lb = self._active_listbox(prefer_menu_id=menu_id)
-                if opened_lb:
-                    break
-
-                # keyboard fallback
-                try:
-                    select_btn.press("Enter")
-                except Exception:
+                    # fallback: click input root
                     try:
-                        select_btn.press("Space")
+                        form.locator("css=.MuiInputBase-root").first.click(timeout=1200)
                     except Exception:
                         pass
 
-                opened_lb = self._active_listbox(prefer_menu_id=menu_id)
-                if opened_lb:
-                    break
+                    opened_lb = self._active_listbox(prefer_menu_id=menu_id)
+                    if opened_lb:
+                        break
 
-            lb = opened_lb or self._active_listbox(prefer_menu_id=menu_id)
-            if not lb:
-                logger.warning("Listbox Select не відкрився для %s/%s", section, key)
-                return
+                    # keyboard fallback
+                    try:
+                        select_btn.press("Enter")
+                    except Exception:
+                        try:
+                            select_btn.press("Space")
+                        except Exception:
+                            pass
 
-            opt = self._find_option_in_listbox(lb, desired)
-            ceiling_applied = False
-            if not opt and desired.isdigit():
-                # Numeric value exceeds available options → try last "і більше" ceiling option
-                try:
-                    all_texts = self._list_listbox_options(lb)
-                    ceiling_text = next((t for t in reversed(all_texts) if "більше" in t.lower()), None)
-                    if ceiling_text:
-                        opt = self._find_option_in_listbox(lb, ceiling_text)
-                        if opt:
-                            ceiling_applied = True
-                            logger.info(
-                                "Select ceiling fallback %s/%s: '%s' → '%s'",
-                                section,
-                                key,
-                                desired,
-                                ceiling_text,
-                            )
-                except Exception:
-                    pass
-            if not opt:
-                logger.warning("Опцію '%s' не знайдено для %s/%s", desired, section, key)
-                try:
-                    texts = self._list_listbox_options(lb)
-                    logger.debug("Доступні опції Select для %s/%s: %s", section, key, texts)
-                except Exception:
-                    pass
-                try:
-                    self.page.keyboard.press("Escape")
-                except Exception:
-                    pass
-                return
+                    opened_lb = self._active_listbox(prefer_menu_id=menu_id)
+                    if opened_lb:
+                        break
 
-            try:
-                opt.click()
-            finally:
+                lb = opened_lb or self._active_listbox(prefer_menu_id=menu_id)
+                if not lb:
+                    logger.warning(
+                        "Listbox Select не відкрився для %s/%s (спроба %d)", section, key, _attempt + 1
+                    )
+                    continue
+
+                opt = self._find_option_in_listbox(lb, desired)
+                ceiling_applied = False
+                if not opt and desired.isdigit():
+                    # Numeric value exceeds available options → try last "і більше" ceiling option
+                    try:
+                        all_texts = self._list_listbox_options(lb)
+                        ceiling_text = next((t for t in reversed(all_texts) if "більше" in t.lower()), None)
+                        if ceiling_text:
+                            opt = self._find_option_in_listbox(lb, ceiling_text)
+                            if opt:
+                                ceiling_applied = True
+                                logger.info(
+                                    "Select ceiling fallback %s/%s: '%s' → '%s'",
+                                    section,
+                                    key,
+                                    desired,
+                                    ceiling_text,
+                                )
+                    except Exception:
+                        pass
+                if not opt:
+                    # Option genuinely absent from the list — retrying won't help.
+                    logger.warning("Опцію '%s' не знайдено для %s/%s", desired, section, key)
+                    try:
+                        texts = self._list_listbox_options(lb)
+                        logger.debug("Доступні опції Select для %s/%s: %s", section, key, texts)
+                    except Exception:
+                        pass
+                    try:
+                        self.page.keyboard.press("Escape")
+                    except Exception:
+                        pass
+                    return
+
                 try:
-                    self._mark_touched(form)
-                except Exception:
-                    pass
-                try:
-                    self.page.keyboard.press("Escape")
-                except Exception:
-                    pass
-            # Verify selection was applied.
-            # For multi-select fields (e.g. "У будинку є"), value accumulates:
-            # after clicking "Камін" when "Ванна" is already chosen the text becomes
-            # "Ванна, Камін" — check containment, not equality.
-            # Skip warning when ceiling fallback was intentionally applied.
-            if not ceiling_applied:
+                    opt.click()
+                finally:
+                    try:
+                        self._mark_touched(form)
+                    except Exception:
+                        pass
+                    try:
+                        self.page.keyboard.press("Escape")
+                    except Exception:
+                        pass
+
+                # Ceiling fallback intentionally picks a different label — accept as-is.
+                if ceiling_applied:
+                    return
+
+                # Verify selection stuck. Multi-select accumulates ("Ванна, Камін"),
+                # so check containment, not equality.
                 try:
                     new_cur = self._norm_text(select_btn.inner_text() or "")
-                    if desired.lower() not in new_cur.lower():
-                        logger.warning(
-                            "Select %s/%s: після кліку значення '%s', очікувалось '%s'",
-                            section,
-                            key,
-                            new_cur,
-                            desired,
-                        )
                 except Exception:
-                    pass
+                    new_cur = ""
+                if desired.lower() in new_cur.lower():
+                    return  # success
+                logger.warning(
+                    "Select %s/%s: після кліку значення '%s', очікувалось '%s' (спроба %d)",
+                    section,
+                    key,
+                    new_cur,
+                    desired,
+                    _attempt + 1,
+                )
+
+            logger.warning(
+                "Select %s/%s: не вдалося встановити '%s' після повторних спроб",
+                section,
+                key,
+                desired,
+            )
             return
 
         # ---------- Plain input / textarea ----------

@@ -113,7 +113,7 @@ class AutocompleteMixin:
         if not desired:
             return False
 
-        self.page.wait_for_timeout(80)
+        self.page.wait_for_timeout(115)
 
         res = self.page.evaluate(
             """(params) => {
@@ -439,7 +439,7 @@ class AutocompleteMixin:
                 logger.debug("Autocomplete підтверджено наступним полем: %s", next_key)
                 return True
 
-        self.page.wait_for_timeout(80)
+        self.page.wait_for_timeout(115)
         try:
             cur = (inp.input_value() or "").strip()
         except Exception:
@@ -619,7 +619,7 @@ class AutocompleteMixin:
             # Typing/filling is not possible — just wait for the dropdown to appear.
             if _is_readonly:
                 try:
-                    self.page.wait_for_timeout(250)
+                    self.page.wait_for_timeout(425)
                 except Exception:
                     pass
                 return
@@ -700,7 +700,7 @@ class AutocompleteMixin:
                     inp.click()
                     inp.fill("")
                     inp.type(stem, delay=30)
-                    self.page.wait_for_timeout(350)
+                    self.page.wait_for_timeout(675)
                 except Exception:
                     pass
                 if _try_pick():
@@ -729,7 +729,7 @@ class AutocompleteMixin:
             try:
                 inp.press("End")
                 inp.type(" ")
-                self.page.wait_for_timeout(60)
+                self.page.wait_for_timeout(90)
                 inp.press("Backspace")
             except Exception:
                 pass
@@ -737,7 +737,7 @@ class AutocompleteMixin:
             # Re-click to re-open the dropdown for another pick attempt
             try:
                 inp.click()
-                self.page.wait_for_timeout(200)
+                self.page.wait_for_timeout(300)
             except Exception:
                 pass
 
@@ -758,7 +758,7 @@ class AutocompleteMixin:
                     inp.click()
                     inp.fill("")
                     inp.type(stem, delay=25)
-                    self.page.wait_for_timeout(250)
+                    self.page.wait_for_timeout(425)
                 except Exception:
                     pass
                 if _try_pick():

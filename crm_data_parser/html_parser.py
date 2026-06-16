@@ -66,6 +66,21 @@ CRM_TYPE_TO_SCHEMA = {
     "виробництво": "Комерційна",
 }
 
+# CRM "Тип" → Rieltor "Призначення" option (commercial only). Commercial CRM cards
+# have no purpose field, so the structured CRM type is the most reliable source —
+# far better than guessing the purpose from description keywords.
+CRM_TYPE_TO_PURPOSE = {
+    "офіс": "Офісне приміщення",
+    "торговельне": "Торгівельне приміщення",
+    "торгівельне": "Торгівельне приміщення",
+    "магазин": "Торгівельне приміщення",
+    "склад": "Склад",
+    "виробництво": "Виробниче приміщення",
+    "виробниче": "Виробниче приміщення",
+    "банк": "Банківське приміщення",
+    "банківське": "Банківське приміщення",
+}
+
 # Fields handled by dedicated extraction methods — skip in generic characteristics loop
 _SKIP_LABELS = frozenset(
     {
@@ -279,6 +294,24 @@ class HTMLOfferParser:
             f"Known types: {list(CRM_TYPE_TO_SCHEMA.keys())}"
         )
 
+    def _purpose_from_crm_type(self, crm_type: str) -> str | None:
+        """Map the CRM 'Тип' value to a Rieltor 'Призначення' option.
+
+        Commercial only — apartments/plots/parking carry their own purpose
+        semantics. Returns None when the property is non-commercial, the type is
+        unknown, or the mapped value is not a valid option in the current schema.
+        """
+        if self.property_type != "Комерційна":
+            return None
+        target = CRM_TYPE_TO_PURPOSE.get((crm_type or "").lower().strip())
+        if not target:
+            return None
+        field_info = self.label_to_field.get("призначення")
+        options = field_info.get("options", []) if field_info else []
+        if options and target not in options:
+            return None
+        return target
+
     # ==================== Schema helpers ====================
 
     def _get_required_fields(self) -> list[dict]:
@@ -433,6 +466,14 @@ class HTMLOfferParser:
                 if key in result and result[key] != value:
                     logger.debug("Опис перезаписує CRM: %s='%s' → '%s'", key, result[key], value)
                 result[key] = value
+
+        # Призначення (комерційна): структурований CRM «Тип» точніший за здогад із
+        # опису — встановлюємо ПІСЛЯ аналізу опису, щоб він мав пріоритет.
+        crm_type = self._read_characteristics_table().get("тип", "")
+        purpose = self._purpose_from_crm_type(crm_type)
+        if purpose and result.get("Призначення") != purpose:
+            logger.debug("Призначення з CRM 'Тип'='%s' → '%s'", crm_type, purpose)
+            result["Призначення"] = purpose
 
         # Validate and fill defaults
         result = self._fill_missing_with_defaults(result)
@@ -1152,6 +1193,24 @@ class HTMLOfferParser:
         # Ensure address dict exists
         if "address" not in data:
             data["address"] = {}
+
+        # Floor sanity: поверх не може перевищувати поверховість. Така інверсія
+        # майже завжди означає хибну CRM-ячейку «Поверх» (підтверджено на
+        # комерційних об'єктах). Якщо опис не виправив значення — прибираємо
+        # поверх, щоб не публікувати фізично неможливий (напр. 40-й поверх у
+        # 7-поверховій будівлі).
+        try:
+            _floor = int(str(data.get("Поверх")))
+            _storeys = int(str(data.get("Поверховість")))
+            if _floor > _storeys:
+                logger.warning(
+                    "Поверх=%s > Поверховість=%s — суперечливо, прибираємо Поверх",
+                    _floor,
+                    _storeys,
+                )
+                data.pop("Поверх", None)
+        except (TypeError, ValueError):
+            pass
 
         # Default currency if price exists but currency doesn't
         if "Ціна" in data and not data.get("Валюта"):

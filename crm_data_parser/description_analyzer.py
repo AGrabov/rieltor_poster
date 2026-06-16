@@ -498,10 +498,17 @@ class DescriptionAnalyzer:
         # --- Floor ---
         if "Поверх" not in existing_data and "Поверх" not in extracted:
             floor = total = None
-            # Pattern 1: "N поверх / M" or "N поверх з M" (without ordinal suffix)
-            m = re.search(r"(\d+)\s*поверх\s*[/зі]+\s*(\d+)", text)
+            # Pattern 0: "N/M поверх" — digit/digit BEFORE the word (the common
+            # commercial format, e.g. "3/7 поверх"). Runs first so the reliable
+            # description value can override a bad CRM "Поверх" cell.
+            m = re.search(r"(\d+)\s*[/\\]\s*(\d+)\s*поверх(?![а-яіїєґ])", text)
             if m:
                 floor, total = m.group(1), m.group(2)
+            if floor is None:
+                # Pattern 1: "N поверх / M" or "N поверх з M" (without ordinal suffix)
+                m = re.search(r"(\d+)\s*поверх\s*[/зі]+\s*(\d+)", text)
+                if m:
+                    floor, total = m.group(1), m.group(2)
             if floor is None:
                 # Pattern 2: "12-й поверх із 31" (ordinal suffix before поверх)
                 m = re.search(r"(\d+)\s*[-–—]?\s*[а-яіїєґ]{0,3}\s+поверх\s+(?:із?|з)\s+(\d+)", text)
@@ -513,6 +520,11 @@ class DescriptionAnalyzer:
                 m = re.search(r"поверх(?![а-яіїєґ])\s*[-–—:]\s*(\d+)", text)
                 if m:
                     floor = m.group(1)
+
+            # Sanity: поверх не може бути вищим за поверховість (напр. "40/7" —
+            # суперечливе значення). Відкидаємо обидва, а не зберігаємо інверсію.
+            if floor is not None and total is not None and int(floor) > int(total):
+                floor = total = None
 
             # Правдоподібність: відкидаємо нереальні номери (це площа/потужність, не поверх).
             if floor is not None and 0 < int(floor) <= _MAX_FLOOR:
