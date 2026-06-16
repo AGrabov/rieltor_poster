@@ -1,16 +1,14 @@
-"""Запуск дашборду Rieltor без вікна терміналу.
+"""Запуск дашборду Rieltor з маленьким вікном-керуванням (без терміналу).
 
-Збирається в .exe через PyInstaller (--noconsole --onefile): подвійний клік
-запускає Streamlit прихованим процесом (без терміналу) і відкриває браузер на
-http://localhost:8501. Якщо дашборд уже працює — просто відкриває вкладку.
+Збирається в .exe через PyInstaller (--noconsole --onefile). Подвійний клік:
+відкриває невелике вікно «Rieltor Dashboard» (видно на панелі задач), запускає
+Streamlit прихованим процесом і відкриває браузер на http://localhost:8501.
+Закриття вікна (× або «Зупинити та вийти») зупиняє дашборд — як звичайна програма.
 
 Зборка:
     uv run --with pyinstaller pyinstaller --noconsole --onefile ^
         --name RieltorDashboard --distpath dist --workpath build/pyinstaller ^
         --specpath build launch_dashboard.py
-
-Зупинка дашборду: через «Диспетчер задач» (процес streamlit/pythonw) або з
-самого дашборду.
 """
 
 from __future__ import annotations
@@ -19,9 +17,12 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
+import tkinter as tk
 import webbrowser
 from pathlib import Path
+from tkinter import ttk
 
 HOST = "127.0.0.1"
 PORT = 8501
@@ -32,10 +33,7 @@ FALLBACK_PROJECT_DIR = Path(r"D:\Coding\web_projects\Rieltor")
 
 
 def find_project_dir() -> Path:
-    """Знайти теку проєкту (де лежить dashboard.py).
-
-    Шукаємо від розташування .exe/скрипта вгору по дереву, потім — запасний шлях.
-    """
+    """Знайти теку проєкту (де лежить dashboard.py): від .exe/скрипта вгору, далі — запасний шлях."""
     if getattr(sys, "frozen", False):
         start = Path(sys.executable).resolve().parent
     else:
@@ -48,7 +46,7 @@ def find_project_dir() -> Path:
     return start
 
 
-def port_open(host: str, port: int, timeout: float = 0.5) -> bool:
+def port_open(host: str = HOST, port: int = PORT, timeout: float = 0.5) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(timeout)
         return s.connect_ex((host, port)) == 0
@@ -74,9 +72,9 @@ def streamlit_cmd(project: Path) -> list[str]:
     ]
 
 
-def start_streamlit(project: Path) -> None:
+def start_streamlit(project: Path) -> subprocess.Popen:
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if os.name == "nt" else 0
-    subprocess.Popen(
+    return subprocess.Popen(
         streamlit_cmd(project),
         cwd=str(project),
         stdout=subprocess.DEVNULL,
@@ -86,16 +84,90 @@ def start_streamlit(project: Path) -> None:
     )
 
 
+class DashboardApp:
+    """Маленьке вікно-керування: видно на панелі задач, × зупиняє дашборд."""
+
+    def __init__(self) -> None:
+        self.project = find_project_dir()
+        self.proc: subprocess.Popen | None = None
+
+        self.root = tk.Tk()
+        self.root.title("Rieltor Dashboard")
+        self.root.geometry("380x170")
+        self.root.resizable(False, False)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        self.status = tk.StringVar(value="Запуск дашборду…")
+        ttk.Label(self.root, textvariable=self.status, wraplength=348, justify="left").pack(
+            padx=16, pady=(18, 10), anchor="w"
+        )
+
+        btns = ttk.Frame(self.root)
+        btns.pack(padx=16, pady=(4, 16), fill="x", side="bottom")
+        self.open_btn = ttk.Button(btns, text="Відкрити в браузері", command=self.open_browser, state="disabled")
+        self.open_btn.pack(side="left")
+        ttk.Button(btns, text="Зупинити та вийти", command=self.on_close).pack(side="right")
+
+        threading.Thread(target=self._boot, daemon=True).start()
+
+    def _boot(self) -> None:
+        started_here = False
+        if not port_open():
+            self._set_status("Запуск дашборду…")
+            try:
+                self.proc = start_streamlit(self.project)
+                started_here = True
+            except Exception as e:  # noqa: BLE001
+                self._set_status(f"Помилка запуску: {e}")
+                return
+            for _ in range(60):  # ~30 с очікування сервера
+                if port_open():
+                    break
+                time.sleep(0.5)
+
+        if port_open():
+            self._set_status(f"Дашборд працює:\n{URL}")
+            self.root.after(0, lambda: self.open_btn.config(state="normal"))
+            if started_here:
+                self.root.after(0, self.open_browser)
+        else:
+            self._set_status("Не вдалося запустити дашборд.\nПеревірте середовище (.venv / uv).")
+
+    def _set_status(self, text: str) -> None:
+        self.root.after(0, lambda: self.status.set(text))
+
+    def open_browser(self) -> None:
+        webbrowser.open(URL)
+
+    def _stop_streamlit(self) -> None:
+        # Зупиняємо лише той процес, який ми запустили самі.
+        if self.proc and self.proc.poll() is None:
+            try:
+                if os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(self.proc.pid)],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                else:
+                    self.proc.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def on_close(self) -> None:
+        self._stop_streamlit()
+        try:
+            self.root.destroy()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def run(self) -> None:
+        self.root.mainloop()
+
+
 def main() -> None:
-    project = find_project_dir()
-    if not port_open(HOST, PORT):
-        start_streamlit(project)
-        # Чекаємо до ~30 с, поки сервер підніметься
-        for _ in range(60):
-            if port_open(HOST, PORT):
-                break
-            time.sleep(0.5)
-    webbrowser.open(URL)
+    DashboardApp().run()
 
 
 if __name__ == "__main__":
