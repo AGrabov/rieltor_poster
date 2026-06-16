@@ -175,3 +175,8 @@ logs/schema_collector.log.2
 docs
 offers.db.*
 AGENTS.md
+
+# Зібраний лаунчер .exe — тримаємо в репозиторії (решта dist/ далі ігнорується)
+!dist/
+dist/*
+!dist/RieltorDashboard.exe
