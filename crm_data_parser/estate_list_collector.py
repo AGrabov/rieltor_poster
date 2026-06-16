@@ -29,11 +29,29 @@ from playwright.sync_api import Page
 from setup_logger import setup_logger
 
 from .cadastral_lookup import lookup_cadastral_number
-from .html_parser import CRM_TYPE_TO_SCHEMA
+from .html_parser import CRM_TYPE_TO_SCHEMA, parse_price
 
 logger = setup_logger(__name__)
 
 CRM_BASE_URL = "https://crm-capital.realtsoft.net"
+
+
+@dataclass
+class EstateActuality:
+    """Стан об'єкта в CRM на момент перевірки актуальності."""
+
+    closed: bool
+    price: int | None = None
+    currency: str | None = None
+
+
+def parse_estate_price_from_html(html: str) -> tuple[int | None, str | None]:
+    """Витягти поточну ціну зі сторінки об'єкта CRM (елемент .price-per-object)."""
+    soup = BeautifulSoup(html, "html.parser")
+    el = soup.select_one(".price-per-object")
+    if not el:
+        return None, None
+    return parse_price(el.get_text(strip=True))
 
 # Property schema types that have a "Кадастровий номер" field on rieltor.ua
 _CADASTRAL_SCHEMA_TYPES = frozenset({"будинок", "ділянка", "комерційна"})
@@ -254,24 +272,36 @@ class EstateListCollector:
             logger.warning("Не вдалось зберегти debug HTML для об'єкта %s", estate_id, exc_info=True)
             return None
 
-    def is_estate_closed(self, estate_id: int) -> bool:
-        """Перевірити, чи об'єкт закрито в CRM (актуальність для публікації).
+    def check_actuality(self, estate_id: int) -> EstateActuality:
+        """Завантажити сторінку об'єкта один раз → статус закриття + поточна ціна.
 
-        Переходить на сторінку об'єкта та шукає сповіщення «Причина закриття» /
-        «закрито». Легша альтернатива :meth:`get_estate_html`, коли потрібен лише
-        факт закриття, а не повний HTML.
+        Об'єднує перевірку «закрито в CRM» і зчитування ціни в одному переході,
+        щоб не вантажити сторінку двічі.
 
         Args:
             estate_id: ID об'єкта в CRM.
 
         Returns:
-            True, якщо об'єкт закрито; False — якщо активний.
+            EstateActuality(closed, price, currency).
         """
         url = f"{CRM_BASE_URL}/estate/{estate_id}"
         logger.info("Перевірка актуальності об'єкта в CRM: %s", url)
         self.page.goto(url, wait_until="domcontentloaded")
         self.page.wait_for_selector(".page-content", timeout=15_000)
-        return self._html_has_closure_alert(self.page.content())
+        html = self.page.content()
+        price, currency = parse_estate_price_from_html(html)
+        return EstateActuality(
+            closed=self._html_has_closure_alert(html),
+            price=price,
+            currency=currency,
+        )
+
+    def is_estate_closed(self, estate_id: int) -> bool:
+        """Перевірити, чи об'єкт закрито в CRM (актуальність для публікації).
+
+        Тонка обгортка над :meth:`check_actuality` — повертає лише факт закриття.
+        """
+        return self.check_actuality(estate_id).closed
 
     def enrich_with_commission(self, offer_data: dict, item: EstateListItem) -> None:
         """Додати поля комісії до offer_data безумовно.

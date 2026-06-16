@@ -377,6 +377,42 @@ def _redownload_photos_in_session(page, offers: list, db) -> None:
             logger.warning("Не вдалось перезавантажити фото для %s", article)
 
 
+def _price_changed(stored_price, stored_currency, current_price, current_currency) -> bool:
+    """Чи відрізняється поточна ціна в CRM від збереженої.
+
+    None у будь-якій із поточних/збережених сум трактуємо як «порівняти не можна»
+    (не зміна), щоб не зчиняти хибних тривог, коли ціну не вдалось зчитати.
+    """
+    if current_price is None or stored_price is None:
+        return False
+    try:
+        amount_changed = int(float(str(stored_price))) != int(current_price)
+    except (TypeError, ValueError):
+        amount_changed = str(stored_price).strip() != str(current_price).strip()
+    currency_changed = bool(
+        stored_currency and current_currency and str(stored_currency).strip() != str(current_currency).strip()
+    )
+    return amount_changed or currency_changed
+
+
+def _log_price_change(offer, actuality) -> bool:
+    """Залогувати зміну ціни об'єкта в CRM («було → стало»). True, якщо змінилась."""
+    stored_price = (offer.offer_data or {}).get("Ціна")
+    stored_currency = (offer.offer_data or {}).get("Валюта")
+    if _price_changed(stored_price, stored_currency, actuality.price, actuality.currency):
+        logger.warning(
+            "Ціна змінилась у CRM для об'єкта %d (article=%s): було %s %s → стало %s %s",
+            offer.estate_id,
+            offer.article,
+            stored_price,
+            stored_currency or "",
+            actuality.price,
+            actuality.currency or "",
+        )
+        return True
+    return False
+
+
 def _crm_preflight(offers: list, db, headless: bool, debug: bool) -> list:
     """Пре-флайт перед публікацією: один захід у CRM.
 
@@ -408,9 +444,11 @@ def _crm_preflight(offers: list, db, headless: bool, debug: bool) -> list:
         crm.login()
         collector = EstateListCollector(crm.page, debug=debug)
 
-        # 1. Перевірка актуальності
+        # 1. Перевірка актуальності (статус закриття + ціна за один перехід)
         for offer in offers:
-            if collector.is_estate_closed(offer.estate_id):
+            actuality = collector.check_actuality(offer.estate_id)
+            _log_price_change(offer, actuality)
+            if actuality.closed:
                 logger.warning(
                     "Об'єкт %d (article=%s) закрито в CRM — пропускаємо публікацію",
                     offer.estate_id,
@@ -813,7 +851,9 @@ def phase_prune_stale(
             crm.login()
             collector = EstateListCollector(crm.page, debug=debug)
             for offer in posted:
-                if collector.is_estate_closed(offer.estate_id):
+                actuality = collector.check_actuality(offer.estate_id)
+                _log_price_change(offer, actuality)
+                if actuality.closed:
                     logger.info(
                         "Об'єкт %d (rieltor_id=%s) закрито в CRM — кандидат на зняття",
                         offer.estate_id,
@@ -882,7 +922,9 @@ def _build_crm_actuality_skip_fn(stack, dry_run: bool, headless: bool, debug: bo
     from offer_db import OfferDB
 
     db = stack.enter_context(OfferDB())
-    rid_to_estate = {o.rieltor_offer_id: o.estate_id for o in db.get_posted()}
+    posted = db.get_posted()
+    rid_to_estate = {o.rieltor_offer_id: o.estate_id for o in posted}
+    rid_to_offer = {o.rieltor_offer_id: o for o in posted}
     crm = stack.enter_context(
         CrmSession(CrmCredentials(email=crm_email, password=crm_password), headless=headless, debug=debug)
     )
@@ -896,7 +938,11 @@ def _build_crm_actuality_skip_fn(stack, dry_run: bool, headless: bool, debug: bo
             return False  # немає в БД — публікуємо без перевірки
         closed = cache.get(estate_id)
         if closed is None:
-            closed = collector.is_estate_closed(estate_id)
+            actuality = collector.check_actuality(estate_id)
+            offer = rid_to_offer.get(key)
+            if offer is not None:
+                _log_price_change(offer, actuality)
+            closed = actuality.closed
             cache[estate_id] = closed
         if closed and not dry_run:
             db.mark_skipped(estate_id, "закрито в CRM")

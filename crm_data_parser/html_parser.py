@@ -123,6 +123,39 @@ _INFRA_TO_NEARBY = {
 }
 
 
+def parse_price(text: str) -> tuple[int | None, str | None]:
+    """Розпарсити текст ціни на суму та валюту.
+
+    Args:
+        text: Текст ціни вигляду "182 000 $" або "50000 грн".
+
+    Returns:
+        Кортеж (сума, текст_валюти) — напр. (182000, "доларів").
+    """
+    # Remove spaces and find number
+    text_clean = (text or "").replace(" ", "").replace(" ", "").replace(",", "")
+
+    match = re.search(r"([\d.]+)", text_clean)
+    if not match:
+        return None, None
+
+    try:
+        amount = int(float(match.group(1)))
+    except ValueError:
+        return None, None
+
+    currency = None
+    text_lower = (text or "").lower()
+    if "$" in text or "dollar" in text_lower or "usd" in text_lower:
+        currency = "доларів"
+    elif "€" in text or "euro" in text_lower or "eur" in text_lower or "євро" in text_lower:
+        currency = "євро"
+    elif "грн" in text or "₴" in text or "uah" in text_lower or "гривень" in text_lower:
+        currency = "гривень"
+
+    return amount, currency
+
+
 class HTMLOfferParser:
     """Розпарсити HTML об'єкта нерухомості та вилучити дані для dict_filler.
 
@@ -1076,38 +1109,8 @@ class HTMLOfferParser:
             return f"{num} кімнат"
 
     def _parse_price(self, text: str) -> tuple[int | None, str | None]:
-        """Розпарсити текст ціни на суму та валюту.
-
-        Args:
-            text: Текст ціни вигляду "182 000 $" або "50000 грн".
-
-        Returns:
-            Кортеж (сума, текст_валюти).
-        """
-        # Remove spaces and find number
-        text_clean = text.replace(" ", "").replace(",", "")
-
-        # Extract number
-        match = re.search(r"([\d.]+)", text_clean)
-        if not match:
-            return None, None
-
-        try:
-            amount = int(float(match.group(1)))
-        except ValueError:
-            return None, None
-
-        # Detect currency
-        currency = None
-        text_lower = text.lower()
-        if "$" in text or "dollar" in text_lower or "usd" in text_lower:
-            currency = "доларів"
-        elif "€" in text or "euro" in text_lower or "eur" in text_lower or "євро" in text_lower:
-            currency = "євро"
-        elif "грн" in text or "₴" in text or "uah" in text_lower or "гривень" in text_lower:
-            currency = "гривень"
-
-        return amount, currency
+        """Розпарсити текст ціни на суму та валюту (делегує до :func:`parse_price`)."""
+        return parse_price(text)
 
     def _look_up_field_by_html_label(self, html_label: str) -> dict | None:
         """Знайти інформацію поля за міткою HTML-таблиці (не міткою схеми).
