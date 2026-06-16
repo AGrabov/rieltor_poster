@@ -5,10 +5,14 @@
 Streamlit прихованим процесом і відкриває браузер на http://localhost:8501.
 Закриття вікна (× або «Зупинити та вийти») зупиняє дашборд — як звичайна програма.
 
-Зборка:
+Зборка (з кореня репозиторію, Windows):
     uv run --with pyinstaller pyinstaller --noconsole --onefile ^
-        --name RieltorDashboard --distpath dist --workpath build/pyinstaller ^
-        --specpath build launch_dashboard.py
+        --name RieltorDashboard --icon assets/icon.ico ^
+        --add-data "assets/icon.ico;assets" ^
+        --distpath dist --workpath build/pyinstaller launch_dashboard.py
+
+Шляхи — відносні від кореня репозиторію, тож зборка переносна між ПК. .exe теж
+шукає проєкт відносно власного розташування, тому абсолютні шляхи ніде не зашиті.
 """
 
 from __future__ import annotations
@@ -28,22 +32,24 @@ HOST = "127.0.0.1"
 PORT = 8501
 URL = f"http://localhost:{PORT}"
 
-# Запасний шлях до проєкту, якщо .exe винесли кудись із-поза репозиторію.
-FALLBACK_PROJECT_DIR = Path(r"D:\Coding\web_projects\Rieltor")
+def find_project_dir() -> Path | None:
+    """Знайти теку проєкту (де лежить dashboard.py) — без прив'язки до конкретного ПК.
 
-
-def find_project_dir() -> Path:
-    """Знайти теку проєкту (де лежить dashboard.py): від .exe/скрипта вгору, далі — запасний шлях."""
+    Шукаємо вгору від розташування .exe/скрипта, потім від поточної робочої теки.
+    Працює на будь-якому комп'ютері, якщо .exe лишається в теці проєкту (напр. dist/).
+    Абсолютні шляхи ніде не зашиті — повертаємо None, якщо проєкт не знайдено.
+    """
+    starts: list[Path] = []
     if getattr(sys, "frozen", False):
-        start = Path(sys.executable).resolve().parent
+        starts.append(Path(sys.executable).resolve().parent)
     else:
-        start = Path(__file__).resolve().parent
-    for d in (start, *start.parents):
-        if (d / "dashboard.py").exists():
-            return d
-    if (FALLBACK_PROJECT_DIR / "dashboard.py").exists():
-        return FALLBACK_PROJECT_DIR
-    return start
+        starts.append(Path(__file__).resolve().parent)
+    starts.append(Path.cwd())
+    for start in starts:
+        for d in (start, *start.parents):
+            if (d / "dashboard.py").exists():
+                return d
+    return None
 
 
 def port_open(host: str = HOST, port: int = PORT, timeout: float = 0.5) -> bool:
@@ -72,6 +78,18 @@ def streamlit_cmd(project: Path) -> list[str]:
     ]
 
 
+def icon_path() -> Path | None:
+    """Шлях до icon.ico (працює і в .exe через PyInstaller, і зі скрипта)."""
+    if getattr(sys, "frozen", False):
+        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    else:
+        base = Path(__file__).resolve().parent
+    for cand in (base / "assets" / "icon.ico", base / "icon.ico"):
+        if cand.exists():
+            return cand
+    return None
+
+
 def start_streamlit(project: Path) -> subprocess.Popen:
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if os.name == "nt" else 0
     return subprocess.Popen(
@@ -97,6 +115,13 @@ class DashboardApp:
         self.root.resizable(False, False)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
+        ico = icon_path()
+        if ico:
+            try:
+                self.root.iconbitmap(default=str(ico))
+            except Exception:  # noqa: BLE001
+                pass
+
         self.status = tk.StringVar(value="Запуск дашборду…")
         ttk.Label(self.root, textvariable=self.status, wraplength=348, justify="left").pack(
             padx=16, pady=(18, 10), anchor="w"
@@ -111,6 +136,12 @@ class DashboardApp:
         threading.Thread(target=self._boot, daemon=True).start()
 
     def _boot(self) -> None:
+        if self.project is None:
+            self._set_status(
+                "Не знайдено dashboard.py.\nТримайте програму в теці проєкту (напр. dist/) "
+                "і запускайте через ярлик, а не копію."
+            )
+            return
         started_here = False
         if not port_open():
             self._set_status("Запуск дашборду…")
