@@ -1093,8 +1093,13 @@ def build_parser() -> argparse.ArgumentParser:
         description="Rieltor offer automation: CRM → parse → post",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    # Headless is the default. Use --no-headless for a visible window; HEADLESS env
+    # var (true/false) overrides when neither flag is passed.
     parser.add_argument(
-        "--headless", action="store_true", help="Run browser in headless mode (also set via HEADLESS=true env var)"
+        "--headless",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Run browser headless (default). Use --no-headless to show the window. Env: HEADLESS=false.",
     )
 
     sub = parser.add_subparsers(dest="command")
@@ -1170,7 +1175,12 @@ def main() -> None:
     if args.debug:
         init_logging(level="DEBUG", filename="logs/rieltor.log")
 
-    headless = os.getenv("HEADLESS", "").lower() == "true" or args.headless
+    # Default: headless ON. Precedence: explicit --headless/--no-headless flag,
+    # then HEADLESS env var, then default True.
+    if args.headless is not None:
+        headless = args.headless
+    else:
+        headless = os.getenv("HEADLESS", "true").strip().lower() not in ("false", "0", "no", "off")
 
     logger.info("=== Автоматизацію Rieltor запущено ===")
 
