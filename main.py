@@ -446,7 +446,21 @@ def _crm_preflight(offers: list, db, headless: bool, debug: bool) -> list:
 
         # 1. Перевірка актуальності (статус закриття + ціна за один перехід)
         for offer in offers:
-            actuality = collector.check_actuality(offer.estate_id)
+            try:
+                actuality = collector.check_actuality(offer.estate_id)
+            except Exception:
+                # Збій перевірки одного об'єкта (таймаут, недоступна сторінка тощо)
+                # не повинен зривати весь прогон. Fail-open: лишаємо об'єкт
+                # «живим» — публікацію не блокуємо, як і за відсутності CRM-кредів.
+                logger.warning(
+                    "Не вдалось перевірити актуальність об'єкта %d (article=%s) — "
+                    "публікуємо як є",
+                    offer.estate_id,
+                    offer.article,
+                    exc_info=True,
+                )
+                live.append(offer)
+                continue
             _log_price_change(offer, actuality)
             if actuality.closed:
                 logger.warning(
