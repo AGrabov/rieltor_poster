@@ -289,6 +289,10 @@ class EstateListCollector:
         self.page.goto(url, wait_until="domcontentloaded")
         self.page.wait_for_selector(".page-content", timeout=15_000)
         html = self.page.content()
+        # Зберегти debug-HTML і тут: під час фази post сторінка об'єкта
+        # завантажується саме через check_actuality (не через get_estate_html),
+        # тому без цього виклику SAVE_CRM_HTML не давав би жодного файлу.
+        self._save_debug_html(estate_id, html)
         price, currency = parse_estate_price_from_html(html)
         return EstateActuality(
             closed=self._html_has_closure_alert(html),
