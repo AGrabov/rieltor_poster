@@ -101,9 +101,15 @@ class ValidationMixin:
         except Exception:
             pass
 
-        # 4) radio group: any checked radio inside
+        # 4) radio group: any checked radio inside, OR a pressed MUI toggle button
+        # (site replaced radio groups with MuiToggleButtonGroup).
         try:
             if ctrl.locator("css=input[type='radio']:checked").count():
+                return "checked"
+            if ctrl.locator(
+                "css=button.MuiToggleButton-root[aria-pressed='true'], "
+                "button.MuiToggleButton-root.Mui-selected"
+            ).count():
                 return "checked"
         except Exception:
             pass

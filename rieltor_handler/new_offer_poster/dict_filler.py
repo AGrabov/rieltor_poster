@@ -48,6 +48,16 @@ _ПРИЗНАЧЕННЯ_DEFAULT_BY_PROPERTY: dict[str, str] = {
     "Ділянка": "Під забудову",
 }
 
+# Currency synonyms. The site is migrating currency labels from words
+# ("доларів") to symbols ("$"), inconsistently across property types, while the
+# CRM always emits words. Each group lists interchangeable tokens; the filler
+# resolves the offer_data value to whatever the current schema actually offers.
+_CURRENCY_GROUPS: tuple[frozenset[str], ...] = (
+    frozenset({"грн", "гривень", "гривня", "грн.", "uah", "₴"}),
+    frozenset({"$", "доларів", "долар", "доллар", "usd"}),
+    frozenset({"€", "євро", "евро", "eur"}),
+)
+
 # CRM-specific values that don't match Rieltor options → map to closest equivalent
 _SELECT_VALUE_MAP: dict[str, str] = {
     "котедж": "Будинок",
@@ -548,6 +558,37 @@ class DictOfferFormFiller(
             return True
         return False
 
+    def _resolve_currency_option(self, desired: str) -> str:
+        """Зіставити валюту з offer_data ('доларів') з опцією поточної схеми ('$').
+
+        Сайт мігрує підписи валют зі слів на символи нерівномірно по типах, а CRM
+        завжди дає слова. Беремо опції 'Валюта' зі схеми й обираємо ту, що в одній
+        групі синонімів із бажаним значенням, віддаючи перевагу «цілій» ціні
+        (без '/м²', '/сот' тощо). Якщо опцій немає — повертаємо як є.
+        """
+        d = (desired or "").strip().lower()
+        if not d:
+            return desired
+        group = next((g for g in _CURRENCY_GROUPS if d in g), None)
+        if group is None:
+            return desired
+
+        fi = self._schema["label_to_field"].get("валюта")
+        options = (fi or {}).get("options") or []
+        if not options:
+            return desired
+
+        candidates = [o for o in options if any(tok in o.lower() for tok in group)]
+        if not candidates:
+            return desired
+
+        def _is_plain(opt: str) -> bool:
+            ol = opt.lower()
+            return not any(t in ol for t in ("/", "м²", "m²", "сот"))
+
+        plain = [o for o in candidates if _is_plain(o)]
+        return (plain or candidates)[0]
+
     def _fill_field_from_dict(
         self,
         root: Locator,
@@ -557,6 +598,9 @@ class DictOfferFormFiller(
         widget: str | None,
     ) -> None:
         """Заповнює одне поле за допомогою обробника, специфічного для типу віджету."""
+        # Currency: resolve CRM word ("доларів") to the schema's actual option ("$").
+        if key.lower().strip() == "валюта":
+            value = self._resolve_currency_option(self._to_text(value))
         # "Котеджне містечко" — autocomplete (dropdown shows "КМ <назва>" items),
         # but the schema records it as widget="text". Force autocomplete handling.
         if key.lower().strip() == "котеджне містечко":
@@ -600,6 +644,21 @@ class DictOfferFormFiller(
             return
 
         if widget == "radio":
+            # Multi-select amenity groups ("У будинку є", "На ділянці є") were
+            # widget="select" before the site switched them to multi-select
+            # ToggleButtonGroup; their offer_data is a list. Click each button.
+            if isinstance(value, (list, tuple, set)):
+                items = [_SELECT_VALUE_MAP.get(self._to_text(v).lower().strip(), self._to_text(v)) for v in value]
+                items = [v for v in items if v]
+                if not items:
+                    return
+                sec = self._section(root, section)
+                form = self._find_formcontrol_by_label(sec, key)
+                if form and self._try_fill_toggle_group(form, section, key, items):
+                    return
+                # Fallback: legacy multi-select listbox markup
+                self._open_checklist_and_check(root, section, key, items)
+                return
             if isinstance(value, bool):
                 desired = "Так" if value else "Ні"
             else:
@@ -667,6 +726,25 @@ class DictOfferFormFiller(
                 inp.press("Tab")  # confirm / move focus
         except Exception as e:
             logger.debug("_check_and_fix_house_field: %s", e)
+
+    def _refill_house_if_cleared(self, sec, house: str | None) -> None:
+        """Повторно заповнити 'Будинок', якщо каскад адреси його очистив.
+
+        Аналог відновлення вулиці: вибір району/гео-каскад на сайті іноді скидає
+        номер будинку. Без повторного заповнення валідний номер губиться і
+        збереження падає з 'Будинок * — Має починатись з цифри'.
+        """
+        house = (house or "").strip()
+        if not house:
+            return
+        try:
+            house_ctrl = self._find_control_by_label(sec, "Будинок")
+        except Exception:
+            house_ctrl = None
+        if house_ctrl and not self._control_has_value(house_ctrl):
+            logger.warning("Будинок '%s' зник після каскаду адреси — повторне заповнення", house)
+            self._fill_autocomplete(sec, "Будинок", house)
+            self._check_and_fix_house_field(sec)
 
     def _fill_address_from_dict(self, root: Locator, address_data: dict) -> None:
         """Заповнює секцію адреси зі словника з українськими ключами-підписами.
@@ -812,6 +890,12 @@ class DictOfferFormFiller(
                     except Exception:
                         time.sleep(1.1)
 
+            # The same geo cascade can clear the Будинок field too. Re-fill it
+            # (mirror of the street recovery above) — otherwise a valid house
+            # number silently disappears and save fails with
+            # "Будинок * — Має починатись з цифри".
+            self._refill_house_if_cleared(sec, house)
+
             # Fill district only if not auto-filled by geo-lookup
             district_ctrl = self._find_control_by_label(sec, "Район")
             if district_ctrl and not self._control_has_value(district_ctrl):
@@ -830,6 +914,9 @@ class DictOfferFormFiller(
                         )
                         self._fill_autocomplete(sec, "Вулиця", street)
 
+                # District cascade also clears Будинок — re-fill after street.
+                self._refill_house_if_cleared(sec, house)
+
             if house and self._map_error_visible():
                 self._force_reselect_house_number(sec, house, house_label="Будинок")
 
@@ -847,47 +934,11 @@ class DictOfferFormFiller(
         # Check for error page that may have appeared during multi-select fills
         self._raise_if_error_page()
 
-        # 7) Cadastral number — plain text input, name="cadastralNumber"
+        # 7) Cadastral number — plain text input, name="cadastralNumber".
+        # Заповнення з верифікацією+повтором винесено в _fill_cadastral (AddressMixin),
+        # щоб тим самим кодом користувалось і відновлення помилок валідації.
         if cadastral:
-            import re as _re
-
-            cadnum_str = str(cadastral).strip()
-            _CADNUM_RE = _re.compile(r"^\d{10}:\d{2}:\d{3}:\d{4}$")
-            if not _CADNUM_RE.match(cadnum_str):
-                logger.warning(
-                    "Кадастровий номер '%s' не відповідає формату XXXXXXXXXX:XX:XXX:XXXX — пропуск",
-                    cadnum_str,
-                )
-                cadnum_str = None
-        if cadastral and cadnum_str:
-            try:
-                _cad_selectors = [
-                    "css=input[name='cadastralNumber']",
-                    "css=input[id*='cadastral' i]",
-                    "css=input[placeholder*='кадастр' i]",
-                    "css=input[aria-label*='кадастр' i]",
-                ]
-                inp = None
-                for _sel in _cad_selectors:
-                    _candidate = sec.locator(_sel).first
-                    if _candidate.count():
-                        inp = _candidate
-                        break
-                if inp is None:
-                    for _sel in _cad_selectors:
-                        _candidate = root.locator(_sel).first
-                        if _candidate.count():
-                            inp = _candidate
-                            logger.debug("Кадастровий номер знайдено в root (не в sec): %s", _sel)
-                            break
-                if inp is not None:
-                    inp.click()
-                    inp.fill(cadnum_str)
-                    logger.info("Кадастровий номер заповнено: %s", cadnum_str)
-                else:
-                    logger.warning("Поле 'cadastralNumber' не знайдено в адресній секції")
-            except Exception:
-                logger.exception("Помилка заповнення кадастрового номера '%s'", cadnum_str)
+            self._fill_cadastral(sec, str(cadastral))
 
     def _handle_map_error(self, root: Locator, address_data: dict) -> None:
         """Обробляє помилку піна карти — спроба прив'язати пін повторним вибором номера будинку."""
@@ -980,7 +1031,24 @@ class DictOfferFormFiller(
                     └── MuiFormControl-root
                           └── radiogroup
         """
+        # Нова форма: комісія — це MuiFormLabel-root + MuiToggleButtonGroup (Є/Немає).
+        # Спершу пробуємо знайти за <label> і заповнити як toggle/radio.
+        for section_name in ("Основні параметри", "Цінові параметри"):
+            try:
+                sec = self._section(root, section_name)
+            except Exception:
+                continue
+            form = self._find_formcontrol_by_label(sec, label)
+            if form:
+                if self._try_fill_toggle_group(form, section_name, label, desired):
+                    logger.info("Встановлено '%s' у '%s' (toggle/radio)", label, desired)
+                    return
+                if self._try_fill_radio_group(form, section_name, label, desired):
+                    logger.info("Встановлено '%s' у '%s' (radio)", label, desired)
+                    return
+
         lit = self._xpath_literal(label)
+        # Fallback (стара розмітка): <p>-підпис + radiogroup усередині MuiBox.
         # Search "Основні параметри" (Комерційна) then "Цінові параметри" (Квартира)
         wrapper = None
         for section_name in ("Основні параметри", "Цінові параметри"):
@@ -1173,18 +1241,7 @@ class DictOfferFormFiller(
             # зберігаємо чернетку без нього (краще зберегти без кадастру, ніж не зберегти).
             elif "кадастровий" in field.lower() and "неправильний" in msg:
                 try:
-                    _cad_selectors = [
-                        "css=input[name='cadastralNumber']",
-                        "css=input[id*='cadastral' i]",
-                        "css=input[placeholder*='кадастр' i]",
-                        "css=input[aria-label*='кадастр' i]",
-                    ]
-                    inp_cad = None
-                    for _sel in _cad_selectors:
-                        _candidate = root.locator(_sel).first
-                        if _candidate.count():
-                            inp_cad = _candidate
-                            break
+                    inp_cad = self._find_cadastral_input()
                     if inp_cad is not None:
                         current_cad = (inp_cad.input_value() or "").strip()
                         inp_cad.click()
@@ -1198,6 +1255,29 @@ class DictOfferFormFiller(
                         logger.warning("Не вдалось знайти поле кадастрового номера для очищення")
                 except Exception:
                     logger.warning("Не вдалось очистити кадастровий номер", exc_info=True)
+
+            # --- Відновлення 4b: Кадастровий номер порожній (обов'язковий) ---
+            # Значення кадастру зберігається в offer_data["address"], а НЕ на
+            # верхньому рівні offer_data, тому загальне «Відновлення 5» його не
+            # знаходить. Повторно заповнюємо тим самим надійним методом, що й
+            # при першому проході (з верифікацією).
+            elif "кадастровий" in field.lower() and ("необхідно заповнити" in msg or "необхідно вибрати" in msg):
+                addr = offer_data.get("address") or {}
+                cad_raw = None
+                for _k, _v in addr.items():
+                    if _k.lower().strip() == "кадастровий номер":
+                        cad_raw = _v
+                        break
+                if cad_raw:
+                    try:
+                        sec_addr = self._section(root, "Адреса об'єкта")
+                    except Exception:
+                        sec_addr = None
+                    if self._fill_cadastral(sec_addr, str(cad_raw)):
+                        logger.warning("Відновлення: повторно заповнено кадастровий номер '%s'", cad_raw)
+                        fixed_any = True
+                else:
+                    logger.warning("Відновлення кадастру неможливе: значення відсутнє в даних об'єкта")
 
             # --- Відновлення 5: Обов'язкове поле порожнє ---
             elif "необхідно заповнити" in msg or "необхідно вибрати" in msg:

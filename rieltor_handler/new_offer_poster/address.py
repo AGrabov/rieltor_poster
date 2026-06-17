@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 
 from playwright.sync_api import Locator
@@ -8,10 +9,88 @@ from setup_logger import setup_logger
 
 logger = setup_logger(__name__)
 
+# Кадастровий номер України: XXXXXXXXXX:XX:XXX:XXXX
+_CADNUM_RE = re.compile(r"^\d{10}:\d{2}:\d{3}:\d{4}$")
+# Селектори поля кадастрового номера (порядок = пріоритет пошуку)
+_CADASTRAL_SELECTORS = (
+    "css=input[name='cadastralNumber']",
+    "css=input[id*='cadastral' i]",
+    "css=input[placeholder*='кадастр' i]",
+    "css=input[aria-label*='кадастр' i]",
+)
+
 
 class AddressMixin:
     MAP_ERR_SUBSTR = "Мітка не вказує"
     MAP_WRONG_CITY_SUBSTR = "іншому місті"
+
+    def _find_cadastral_input(self, sec: Locator | None = None) -> Locator | None:
+        """Знайти input кадастрового номера: спочатку у секції адреси, потім на сторінці."""
+        scopes = []
+        if sec is not None:
+            scopes.append(sec)
+        scopes.append(self.page)
+        for scope in scopes:
+            for sel in _CADASTRAL_SELECTORS:
+                candidate = scope.locator(sel).first
+                try:
+                    if candidate.count():
+                        return candidate
+                except Exception:
+                    continue
+        return None
+
+    def _fill_cadastral(self, sec: Locator | None, cadastral: str) -> bool:
+        """Заповнити поле кадастрового номера з верифікацією та одним повтором.
+
+        Повертає True, якщо після заповнення значення дійсно стоїть у полі.
+        Раніше заповнення робилось одним ``fill()`` без перевірки — якщо сайт
+        скидав поле під час каскаду адреси, значення тихо губилось і валідація
+        видавала «Необхідно заповнити поле», хоча кадастр був у даних.
+        """
+        cadnum_str = str(cadastral or "").strip()
+        if not cadnum_str:
+            return False
+        if not _CADNUM_RE.match(cadnum_str):
+            logger.warning(
+                "Кадастровий номер '%s' не відповідає формату XXXXXXXXXX:XX:XXX:XXXX — пропуск",
+                cadnum_str,
+            )
+            return False
+
+        for attempt in range(1, 3):
+            inp = self._find_cadastral_input(sec)
+            if inp is None:
+                logger.warning("Поле 'cadastralNumber' не знайдено (спроба %s/2)", attempt)
+                return False
+            try:
+                inp.click()
+                inp.fill(cadnum_str)
+            except Exception:
+                logger.exception("Помилка заповнення кадастрового номера '%s'", cadnum_str)
+                return False
+
+            try:
+                current = (inp.input_value() or "").strip()
+            except Exception:
+                current = cadnum_str  # не змогли прочитати — вважаємо, що поставилось
+
+            if current == cadnum_str:
+                logger.info("Кадастровий номер заповнено: %s", cadnum_str)
+                return True
+
+            logger.warning(
+                "Кадастровий номер не зафіксувався (поле='%s', очікувалось='%s') — повтор",
+                current,
+                cadnum_str,
+            )
+            try:
+                self.page.wait_for_timeout(400)
+            except Exception:
+                time.sleep(0.4)
+
+        logger.warning("Не вдалось зафіксувати кадастровий номер '%s' після повторів", cadnum_str)
+        return False
 
     def _map_error_locator(self) -> Locator:
         """

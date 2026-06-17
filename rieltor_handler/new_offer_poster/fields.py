@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Sequence
 
 from playwright.sync_api import Locator
@@ -286,10 +287,15 @@ class FieldsMixin:
         label = self._expected_label(key) or key
         desired = ("" if value is None else str(value)).strip()
 
-        # 0) radio-group?
+        # 0) radio-group? (класичні radio лишаємо підтримувати)
         form_rg = self._find_formcontrol_by_label(sec, label)
         if form_rg and self._try_fill_radio_group(form_rg, section, key, desired):
             logger.debug("Заповнення radio-group %s/%s = %s", section, key, desired)
+            return
+
+        # 0b) toggle-button-group? (сайт замінив частину radio на групи кнопок)
+        if form_rg and self._try_fill_toggle_group(form_rg, section, key, desired):
+            logger.debug("Заповнення toggle-group %s/%s = %s", section, key, desired)
             return
 
         # 1) locate control by label
@@ -568,6 +574,128 @@ class FieldsMixin:
         opt.click()
         self._mark_touched(form)
         return True
+
+    def _try_fill_toggle_group(self, container: Locator, section: str, key: str, value) -> bool:
+        """Заповнити MUI ToggleButtonGroup (нова заміна radio-груп на сайті).
+
+        Сайт замінив radio-групи (Є/Немає, Загальний стан тощо) на групи кнопок:
+        ``div.MuiToggleButtonGroup-root`` з ``button.MuiToggleButton-root`` всередині
+        (підпис у ``span.MuiToggleButton-label``, вибрана = aria-pressed='true'/Mui-selected).
+
+        ``value`` може бути скаляром (одновибір: Є/Немає, Загальний стан) або
+        списком (мультивибір: 'У будинку є', 'На ділянці є' тощо) — у такому разі
+        натискаємо кнопку для кожного значення.
+
+        Повертає True, якщо група існує (навіть коли опцію не знайдено) — щоб не
+        провалитись у текстове заповнення. Повертає False, якщо групи немає
+        (тоді викликач пробує інші типи віджетів).
+        """
+        if isinstance(value, (list, tuple, set)):
+            desired_values = [str(v).strip() for v in value if str(v).strip()]
+        else:
+            s = value if isinstance(value, str) else ("" if value is None else str(value))
+            s = s.strip()
+            desired_values = [s] if s else []
+        if not desired_values:
+            return False
+
+        tg = container.locator("css=div.MuiToggleButtonGroup-root").first
+        try:
+            if not tg.count():
+                return False
+        except Exception:
+            return False
+
+        for desired in desired_values:
+            self._click_toggle_option(tg, section, key, desired)
+        return True
+
+    @staticmethod
+    def _match_toggle_index(labels: list[str], desired: str) -> int | None:
+        """Підібрати індекс кнопки toggle за бажаним значенням.
+
+        Порядок: точний збіг → регістронезалежний → підрядок → числовий
+        ('5 кімнат' → '5', '8' → стеля '6+'). Числовий fallback потрібен, бо
+        сайт замінив select 'Число кімнат' на toggle з підписами '1'..'6+', а в
+        даних значення на кшталт '5 кімнат'.
+        """
+        norm = [FieldsMixin._norm_text(t) for t in labels]
+        d = FieldsMixin._norm_text(str(desired))
+        if not d:
+            return None
+        dl = d.lower()
+        for i, t in enumerate(norm):
+            if t.lower() == dl:
+                return i
+        if len(d) > 2:
+            for i, t in enumerate(norm):
+                if dl in t.lower():
+                    return i
+        m = re.match(r"^\s*(\d+)", d)
+        if m:
+            num = int(m.group(1))
+            for i, t in enumerate(norm):
+                if t.strip() == str(num):
+                    return i
+            # ceiling option like '6+' / '3+' whose base <= num — pick the highest
+            best_i, best_base = None, -1
+            for i, t in enumerate(norm):
+                mm = re.match(r"^\s*(\d+)\s*\+", t)
+                if mm and int(mm.group(1)) <= num and int(mm.group(1)) > best_base:
+                    best_i, best_base = i, int(mm.group(1))
+            if best_i is not None:
+                return best_i
+        return None
+
+    def _click_toggle_option(self, tg: Locator, section: str, key: str, desired: str) -> None:
+        """Натиснути одну кнопку в ToggleButtonGroup за її підписом (якщо ще не вибрана)."""
+        btns = tg.locator("css=button.MuiToggleButton-root")
+        count = btns.count()
+        labels: list[str] = []
+        for i in range(count):
+            t = ""
+            try:
+                lbl = btns.nth(i).locator("css=span.MuiToggleButton-label").first
+                t = (lbl.inner_text() if lbl.count() else btns.nth(i).inner_text()) or ""
+            except Exception:
+                t = ""
+            labels.append(t)
+
+        idx = self._match_toggle_index(labels, desired)
+        if idx is None:
+            logger.warning(
+                "Toggle: опцію '%s' не знайдено для %s/%s (опції=%s)",
+                desired,
+                section,
+                key,
+                [self._norm_text(t) for t in labels],
+            )
+            return
+
+        btn = btns.nth(idx)
+        # already selected?
+        try:
+            pressed = (btn.get_attribute("aria-pressed") == "true") or (
+                "Mui-selected" in (btn.get_attribute("class") or "")
+            )
+        except Exception:
+            pressed = False
+        if pressed:
+            logger.info("Toggle пропуск %s/%s: вже '%s'", section, key, self._norm_text(labels[idx]))
+            return
+
+        logger.info("Toggle %s/%s -> %s (бажане='%s')", section, key, self._norm_text(labels[idx]), desired)
+        try:
+            btn.scroll_into_view_if_needed()
+        except Exception:
+            pass
+        try:
+            btn.click()
+        except Exception:
+            try:
+                btn.click(force=True)
+            except Exception:
+                logger.warning("Toggle: не вдалось клікнути '%s' у %s/%s", desired, section, key)
 
     # -------- checkbox rows --------
     def _set_checkbox_by_label_if_present(self, root: Locator, section: str, key: str, value: bool) -> None:

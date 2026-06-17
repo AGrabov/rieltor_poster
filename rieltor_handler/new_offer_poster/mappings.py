@@ -111,6 +111,13 @@ class MappingMixin:
         group = form.locator("xpath=.//div[@role='radiogroup']").first
         if group.count():
             return group
+        # MUI ToggleButtonGroup — нова заміна radio-груп. Повертаємо всю форму,
+        # щоб _try_fill_toggle_group знайшов групу кнопок усередині.
+        try:
+            if form.locator("css=div.MuiToggleButtonGroup-root").count():
+                return form
+        except Exception:
+            pass
         # Fallback: MUI radio buttons without an explicit role='radiogroup' wrapper
         # (e.g. "Комісія з покупця/орендатора" with Є/Немає inline radios).
         # Return the whole form so _try_fill_radio_group can find the radio inputs.
