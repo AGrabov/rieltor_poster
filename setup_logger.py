@@ -174,8 +174,14 @@ def setup_logger(name=__name__) -> Logger:
     Використовуй скрізь: logger = setup_logger(__name__)
     Не конфігурує handlers, лише повертає потрібний логер.
     """
-    # Приводим к иерархии schema_collector.*
-    if not name.startswith(APP_NAME):
+    # Приводим к иерархии APP_NAME.* (напр. rieltor.*), щоб усі логери проєкту
+    # піднімали записи до базового логера, де висять file/console-хендлери.
+    #
+    # ВАЖЛИВО: перевіряємо межу по крапці, а не голий префікс. Інакше пакет
+    # на кшталт ``rieltor_handler`` (починається з рядка "rieltor", але це
+    # ОКРЕМА гілка логерів) лишився б поза ієрархією ``rieltor`` і його логи
+    # ніколи не потрапляли б у файл/консоль.
+    if APP_NAME and name != APP_NAME and not name.startswith(f"{APP_NAME}."):
         full_name = f"{APP_NAME}.{name}"
     else:
         full_name = name
