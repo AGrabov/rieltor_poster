@@ -86,6 +86,42 @@ class _WidgetMixin:
             uniq.append(t)
         return uniq
 
+    def _toggle_options(self, group: Locator) -> list[str]:
+        """Зчитати підписи кнопок у MUI ToggleButtonGroup.
+
+        Сайт замінив частину radio-груп на групи кнопок
+        (``div.MuiToggleButtonGroup-root`` з ``button.MuiToggleButton-root``).
+        Підпис кнопки — у ``span.MuiToggleButton-label`` (з fallback на весь текст).
+        """
+        out: list[str] = []
+        btns = group.locator("css=button.MuiToggleButton-root")
+        for i in range(btns.count()):
+            b = btns.nth(i)
+            t = ""
+            try:
+                lbl = b.locator("css=span.MuiToggleButton-label").first
+                if lbl.count():
+                    t = _norm(lbl.inner_text() or "")
+            except Exception:
+                t = ""
+            if not t:
+                try:
+                    t = _norm(b.inner_text() or "")
+                except Exception:
+                    t = ""
+            if t:
+                out.append(t)
+
+        seen: set[str] = set()
+        uniq: list[str] = []
+        for t in out:
+            k = t.casefold()
+            if k in seen:
+                continue
+            seen.add(k)
+            uniq.append(t)
+        return uniq
+
     def _collect_select_options(self, form: Locator) -> tuple[list[str], dict[str, Any]]:
         """Відкрити listbox для select у цій формі та повернути тексти варіантів і метадані."""
         select_btn = form.locator("css=div.MuiSelect-select[role='button']").first
@@ -275,9 +311,18 @@ class _WidgetMixin:
     def _detect_widget_and_options_formcontrol(self, form: Locator) -> tuple[str, list[str], dict[str, Any]]:
         meta: dict[str, Any] = {}
 
+        # Класичні radio-групи (лишаємо підтримку — частина форм ще може їх містити)
         rg = form.locator("css=[role='radiogroup']").first
         if rg.count():
             return "radio", self._radio_options(rg), meta
+
+        # MUI ToggleButtonGroup — нова заміна radio-груп на сайті.
+        # Зберігаємо як widget="radio" (зворотна сумісність зі схемами/offer_data
+        # та логікою заповнення), але опції беремо з підписів кнопок.
+        tg = form.locator("css=div.MuiToggleButtonGroup-root").first
+        if tg.count():
+            meta["control"] = "toggle_button_group"
+            return "radio", self._toggle_options(tg), meta
 
         if form.locator("css=input[type='checkbox']").count():
             return "checkbox", [], meta

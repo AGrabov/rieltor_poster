@@ -250,6 +250,12 @@ def run_collection(
                         cond = collector.probe_radios_dynamic()
                     except Exception as e:
                         logger.warning("Зондування радіокнопок не вдалось: %s", e)
+                    # The site migrated radio groups to MUI ToggleButtonGroup, so the
+                    # conditional fields they reveal must be probed separately too.
+                    try:
+                        cond += collector.probe_toggles_dynamic()
+                    except Exception as e:
+                        logger.warning("Зондування груп-кнопок не вдалось: %s", e)
 
                 # merge conditionals into meta (visible_when + add missing dynamic fields)
                 if cond:
@@ -282,25 +288,43 @@ def run_collection(
 
             for pt in property_types:
                 logger.info("=== ТИП НЕРУХОМОСТІ: %s (угода: %s) ===", pt, deal_type_ui)
-                collector.select_property_type(pt)
+                # A transient failure on one type (e.g. a 15s locator timeout) must
+                # not abort the whole multi-type run and lose already-collected
+                # schemas. Re-open the form and continue with the next type.
+                try:
+                    collector.select_property_type(pt)
 
-                # Special handling for "Паркомісце" - has subtypes "Гараж" and "Паркомісце"
-                if _slug(pt).casefold() == "паркомісце":
-                    parking_subtypes = [
-                        ("garage", "Гараж"),
-                        ("parking", "Паркомісце"),
-                    ]
-                    for subtype_key, subtype_ui in parking_subtypes:
-                        logger.info("--- ПІДТИП ПАРКУВАННЯ: %s ---", subtype_ui)
-                        collector.select_parking_type(subtype_ui)
+                    # Special handling for "Паркомісце" - has subtypes "Гараж" and "Паркомісце"
+                    if _slug(pt).casefold() == "паркомісце":
+                        parking_subtypes = [
+                            ("garage", "Гараж"),
+                            ("parking", "Паркомісце"),
+                        ]
+                        for subtype_key, subtype_ui in parking_subtypes:
+                            logger.info("--- ПІДТИП ПАРКУВАННЯ: %s ---", subtype_ui)
+                            collector.select_parking_type(subtype_ui)
 
-                        payload = collect_and_save_schema(pt, subtype_key, subtype_ui)
-                        dump[folder_name][f"{pt}_{subtype_ui}"] = payload
+                            payload = collect_and_save_schema(pt, subtype_key, subtype_ui)
+                            dump[folder_name][f"{pt}_{subtype_ui}"] = payload
+                            page.wait_for_timeout(ui_delay_ms)
+                    else:
+                        payload = collect_and_save_schema(pt)
+                        dump[folder_name][pt] = payload
                         page.wait_for_timeout(ui_delay_ms)
-                else:
-                    payload = collect_and_save_schema(pt)
-                    dump[folder_name][pt] = payload
-                    page.wait_for_timeout(ui_delay_ms)
+                except Exception:
+                    logger.warning(
+                        "Збір схеми для %s/%s не вдався — пропускаємо цей тип",
+                        folder_name,
+                        pt,
+                        exc_info=True,
+                    )
+                    # Re-open a clean form so the next type starts from a known state.
+                    try:
+                        collector.open()
+                        collector.open_all_blocks_sticky()
+                        collector.select_deal_type(deal_type_ui)
+                    except Exception:
+                        logger.warning("Не вдалось відновити форму після збою типу %s", pt, exc_info=True)
 
     combined_path.parent.mkdir(parents=True, exist_ok=True)
     combined_path.write_text(json.dumps(dump, ensure_ascii=False, indent=2), encoding="utf-8")
