@@ -48,6 +48,32 @@ _ПРИЗНАЧЕННЯ_DEFAULT_BY_PROPERTY: dict[str, str] = {
     "Ділянка": "Під забудову",
 }
 
+
+def conditional_controllers(field_info: dict) -> list[tuple[str, str]]:
+    """(підпис контролера, потрібне значення) пар, що роблять поле видимим.
+
+    Читає ``meta.visible_when`` зі схеми: поле (напр. "Тип опалення") з'являється
+    лише коли контролер ("Опалення") має певне значення ("Є"). Дедуплікує
+    однакові пари (схема інколи містить кілька проб одного контролера) і пропускає
+    записи з порожнім підписом або значенням.
+    """
+    out: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    meta = (field_info or {}).get("meta") or {}
+    for entry in meta.get("visible_when") or []:
+        controller = (entry or {}).get("controller") or {}
+        label = (controller.get("label") or "").strip()
+        raw_value = (entry or {}).get("value")
+        value = "" if raw_value is None else str(raw_value).strip()
+        if not label or not value:
+            continue
+        dedup_key = (label.lower(), value.lower())
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+        out.append((label, value))
+    return out
+
 # Currency synonyms. The site is migrating currency labels from words
 # ("доларів") to symbols ("$"), inconsistently across property types, while the
 # CRM always emits words. Each group lists interchangeable tokens; the filler
@@ -427,6 +453,9 @@ class DictOfferFormFiller(
             "additional_opened": False,
             "photos_filled": False,
         }
+        # Контролери видимості (visible_when), вже виставлені для цього оголошення —
+        # щоб не перевиставляти один контролер для кожного залежного поля.
+        self._conditional_controllers_set: set[str] = set()
 
         # ── Phase 1: offer_type → property_type → address (strict order) ──
         if not self._is_empty_value(offer_data.get("offer_type")):
@@ -490,6 +519,12 @@ class DictOfferFormFiller(
                 if self._is_additional_param(field_info) or section == "Додаткові параметри":
                     self._click_section_toggle(root, "Додаткові параметри")
                     state["additional_opened"] = True
+
+            # Умовні поля (напр. "Тип опалення") відображаються лише коли їх
+            # контролер ("Опалення"=Є) виставлено. Робимо це ПЕРЕД заповненням —
+            # інакше пошук за підписом сяде на сусідній контрол (звідки бралися
+            # чужі опції на кшталт "Зупинки/Супермаркет").
+            self._ensure_conditional_controllers(root, field_info, offer_data, state)
 
             self._fill_field_from_dict(root, section, key, value, widget)
 
@@ -588,6 +623,49 @@ class DictOfferFormFiller(
 
         plain = [o for o in candidates if _is_plain(o)]
         return (plain or candidates)[0]
+
+    def _ensure_conditional_controllers(
+        self,
+        root: Locator,
+        field_info: dict,
+        offer_data: dict,
+        state: dict,
+    ) -> None:
+        """Виставити контролери, від яких залежить видимість поля (``visible_when``).
+
+        Напр. перед "Тип опалення" виставляє "Опалення"='Є'. Контролер не чіпаємо,
+        якщо він є у даних (його виставить основний цикл) або вже виставлений
+        раніше для цього оголошення.
+        """
+        for ctrl_label, required_value in conditional_controllers(field_info):
+            ctrl_lower = ctrl_label.lower().strip()
+            if ctrl_lower in self._conditional_controllers_set:
+                continue
+            # Не перебиваємо явні дані: якщо контролер є в offer_data — його виставить
+            # (або вже виставив) основний цикл зі значенням з даних.
+            if any(k.lower().strip() == ctrl_lower for k in offer_data):
+                continue
+            ctrl_field = self._schema["label_to_field"].get(ctrl_lower)
+            if not ctrl_field:
+                continue
+            ctrl_section = self._schema["label_to_section"].get(ctrl_lower, "")
+            ctrl_widget = self._schema["label_to_widget"].get(ctrl_lower, ctrl_field.get("widget", "text"))
+            # Контролер може жити в "Додаткові параметри" — переконаймося, що секцію відкрито.
+            if (
+                not state.get("additional_opened")
+                and "Додаткові параметри" in self._schema["navigation"]
+                and (self._is_additional_param(ctrl_field) or ctrl_section == "Додаткові параметри")
+            ):
+                self._click_section_toggle(root, "Додаткові параметри")
+                state["additional_opened"] = True
+            logger.info(
+                "Умовне поле потребує контролера '%s'='%s' — виставляємо перед заповненням",
+                ctrl_label,
+                required_value,
+            )
+            # Позначаємо до заповнення, щоб не повторювати для наступних залежних полів.
+            self._conditional_controllers_set.add(ctrl_lower)
+            self._fill_field_from_dict(root, ctrl_section, ctrl_label, required_value, ctrl_widget)
 
     def _fill_field_from_dict(
         self,
