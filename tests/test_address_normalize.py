@@ -195,3 +195,49 @@ def test_looks_russian_skips_ukrainian():
     assert an.looks_russian("Львівська") is False
     assert an.looks_russian("Садова") is False
     assert an.looks_russian("Лук'янівська") is False
+
+
+# ── address_value_matches ─────────────────────────────────────────────────
+# Guard used by the autocomplete to decide whether the value the site committed
+# is actually the one we wanted — instead of accepting any value just because
+# the dropdown closed (which silently published "Поділ" as "Печерський").
+def test_address_value_matches_exact():
+    assert an.address_value_matches("Печерський", "Печерський") is True
+
+
+def test_address_value_matches_accepts_site_spelling_variants():
+    # Site shows a slightly different spelling / adds the street-type word.
+    assert an.address_value_matches("Болсунівська", "Болсуновська вул.") is True
+    assert an.address_value_matches("Воскресенська", "Воскресенська вул.") is True
+
+
+def test_address_value_matches_accepts_word_reorder():
+    # CRM "Шота Руставелі" vs registry/site "Руставелі Шота вул." — same street.
+    assert an.address_value_matches("Шота Руставелі", "Руставелі Шота вул.") is True
+
+
+def test_address_value_matches_rejects_different_street_same_first_word():
+    # The bug: "Велика Васильківська" was silently accepted as "Велика Кільцева".
+    assert an.address_value_matches("Велика Васильківська", "Велика Кільцева вул.") is False
+
+
+def test_address_value_matches_rejects_different_street():
+    assert an.address_value_matches("Шовковична", "Шовкуненка вул.") is False
+
+
+def test_address_value_matches_rejects_different_district():
+    assert an.address_value_matches("Поділ", "Печерський") is False
+    assert an.address_value_matches("Святошинський", "Печерський") is False
+
+
+def test_address_value_matches_rejects_city_instead_of_street():
+    assert an.address_value_matches("Петропавлівська Борщагівка", "м. Київ") is False
+
+
+def test_address_value_matches_rejects_empty_current():
+    assert an.address_value_matches("Печерський", "") is False
+    assert an.address_value_matches("Печерський", "   ") is False
+
+
+def test_address_value_matches_empty_desired_cannot_validate():
+    assert an.address_value_matches("", "Печерський") is False

@@ -4,7 +4,7 @@ from typing import Sequence
 
 from playwright.sync_api import Locator
 
-from crm_data_parser.address_normalize import strip_street_type
+from crm_data_parser.address_normalize import address_value_matches, normalize_house, strip_street_type
 from schemas import ADDRESS_LABELS
 from setup_logger import setup_logger
 
@@ -465,16 +465,34 @@ class AutocompleteMixin:
             )
             return True
 
-        # For address fields: if the dropdown closed after our mouse-click, accept the
-        # selection even when the input value differs from desired (e.g. "Болсунівська" →
-        # site shows "Болсуновська вул." — slightly different spelling but valid selection).
+        # For address fields the dropdown closed after our mouse-click, but the value
+        # the site committed may differ from desired. Accept ONLY when it is plausibly
+        # the SAME place — site spelling variants ("Болсунівська" → "Болсуновська вул.")
+        # or word reorder ("Шота Руставелі" → "Руставелі Шота") pass; a different
+        # street/district ("Велика Васильківська" → "Велика Кільцева", "Поділ" →
+        # "Печерський") is rejected. Fail-closed: a rejected field stays unconfirmed and
+        # the offer is marked failed rather than silently published with a wrong address.
         if is_address and closed:
-            logger.debug(
-                "Autocomplete прийнято через закриття списку (адресне поле). closed=True desired='%s' current='%s'",
+            if is_house:
+                accept = bool(cur) and (
+                    normalize_house(desired) == normalize_house(cur)
+                    or normalize_house(cur).startswith(normalize_house(desired))
+                )
+            else:
+                accept = address_value_matches(desired, cur)
+            if accept:
+                logger.debug(
+                    "Autocomplete прийнято через закриття списку (адресне поле). closed=True desired='%s' current='%s'",
+                    desired,
+                    cur,
+                )
+                return True
+            logger.warning(
+                "Autocomplete: значення поля не збігається з бажаним — відхилено (адресне поле). desired='%s' current='%s'",
                 desired,
                 cur,
             )
-            return True
+            return False
 
         logger.warning(
             "Autocomplete: не підтверджено. closed=%s desired='%s' current='%s'",
