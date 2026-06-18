@@ -505,13 +505,12 @@ class AutocompleteMixin:
     # -------- debug helpers --------
     _DEBUG_LOG_KEYS = frozenset({"вулиця", "район"})
 
-    def _debug_log_dropdown_options(self, key: str, stage: str) -> None:
-        """Log visible dropdown options for Вулиця and Район fields (debug only)."""
-        if key.lower().strip() not in self._DEBUG_LOG_KEYS:
-            return
+    def _visible_dropdown_option_texts(self) -> list[str]:
+        """Тексти видимих опцій випадаючого списку (для діагностики)."""
         try:
-            opts = self.page.evaluate(
-                """() => {
+            return (
+                self.page.evaluate(
+                    """() => {
                     const seen = new Set();
                     const result = [];
                     for (const sel of ['[role="option"]', '.MuiAutocomplete-option', '[role="listbox"] li']) {
@@ -528,13 +527,21 @@ class AutocompleteMixin:
                     }
                     return result;
                 }"""
+                )
+                or []
             )
-            if opts:
-                logger.debug("'%s' [%s] опції (%d): %s", key, stage, len(opts), opts)
-            else:
-                logger.debug("'%s' [%s] — список порожній або ще не відкрито", key, stage)
-        except Exception as exc:
-            logger.debug("'%s' [%s] — не вдалося зчитати опції: %s", key, stage, exc)
+        except Exception:
+            return []
+
+    def _debug_log_dropdown_options(self, key: str, stage: str) -> None:
+        """Log visible dropdown options for Вулиця and Район fields (debug only)."""
+        if key.lower().strip() not in self._DEBUG_LOG_KEYS:
+            return
+        opts = self._visible_dropdown_option_texts()
+        if opts:
+            logger.debug("'%s' [%s] опції (%d): %s", key, stage, len(opts), opts)
+        else:
+            logger.debug("'%s' [%s] — список порожній або ще не відкрито", key, stage)
 
     # -------- fill wrappers --------
     def _fill_autocomplete(
@@ -796,6 +803,18 @@ class AutocompleteMixin:
             next_key,
             cur,
         )
+        # Для "Район" фіксуємо РЕАЛЬНІ опції сайту на рівні WARNING (не лише DEBUG):
+        # CRM дає мікрорайони/масиви ("Центр", "Осокорки", "Поділ"), яких може не
+        # бути у списку. Цей слід — основа для майбутнього маппінгу CRM→сайт.
+        if key_lower == "район":
+            opts = self._visible_dropdown_option_texts()
+            if opts:
+                logger.warning(
+                    "Район '%s' відсутній серед опцій сайту (%d): %s",
+                    desired,
+                    len(opts),
+                    opts,
+                )
         # For address/house fields: commit whatever is typed as free text.
         # NOTE: do NOT press Escape for street fields — MUI Autocomplete clears the
         # input on Escape when no option was confirmed, losing the typed street name.
