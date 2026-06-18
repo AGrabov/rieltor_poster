@@ -37,22 +37,44 @@ def test_equal_floor_kept():
     assert out["Поверх"] == "1"
 
 
-# ── description must NOT overwrite a valid CRM floor (regression: 9 → 40) ──
-def test_crm_floor_authoritative_when_consistent():
-    # CRM 9/16 is physically possible → CRM wins, description guess ignored.
-    assert HTMLOfferParser._crm_floor_authoritative({"Поверх": "9", "Поверховість": "16"}) is True
+# ── description vs CRM floor precedence (_accept_description_floor) ────────
+# Signature: _accept_description_floor(crm_floor, crm_storeys, text_floor) -> bool
+# True  → take the description's floor (CRM cell is broken AND text is a downward fix)
+# False → keep the CRM floor (it's plausible, or the text "fix" is not smaller)
+_accept = HTMLOfferParser._accept_description_floor
 
 
-def test_crm_floor_not_authoritative_when_impossible():
-    # CRM 40/7 is impossible → description is allowed to correct it.
-    assert HTMLOfferParser._crm_floor_authoritative({"Поверх": "40", "Поверховість": "7"}) is False
+def test_valid_crm_floor_not_overwritten():
+    # Regression (log: 9 → 40). CRM 9/16 is plausible → ignore description guess.
+    assert _accept("9", "16", "40") is False
 
 
-def test_crm_floor_authoritative_when_storeys_missing():
-    # No storey count to contradict the floor → keep the CRM floor.
-    assert HTMLOfferParser._crm_floor_authoritative({"Поверх": "9"}) is True
+def test_impossible_crm_floor_corrected_downward():
+    # CRM 40/7 is impossible; description's 3 is smaller → accept the correction.
+    assert _accept("40", "7", "3") is True
 
 
-def test_crm_floor_authoritative_when_non_numeric():
-    # Garbage in the cell must not crash the precedence check.
-    assert HTMLOfferParser._crm_floor_authoritative({"Поверх": "цоколь", "Поверховість": "5"}) is True
+def test_impossible_crm_floor_not_corrected_upward():
+    # CRM 40/7 is impossible but description's 50 is even bigger → likely garbage, reject.
+    assert _accept("40", "7", "50") is False
+
+
+def test_high_floor_above_threshold_corrected_downward():
+    # CRM 35/50 is possible but implausibly high (>30) → accept the smaller text floor.
+    assert _accept("35", "50", "3") is True
+
+
+def test_high_floor_above_threshold_not_corrected_upward():
+    # >30 and possible, but the text proposes an even higher floor → reject.
+    assert _accept("35", "50", "38") is False
+
+
+def test_floor_at_threshold_is_trusted():
+    # Exactly 30 is the cutoff (> 30 is suspicious) and ≤ storeys → keep CRM.
+    assert _accept("30", "50", "5") is False
+
+
+def test_non_numeric_floor_keeps_crm():
+    # Garbage in either cell must not crash and must not trigger an overwrite.
+    assert _accept("цоколь", "5", "3") is False
+    assert _accept("40", "7", "поверх") is False

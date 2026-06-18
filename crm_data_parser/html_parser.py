@@ -23,6 +23,10 @@ from setup_logger import setup_logger
 
 logger = setup_logger(__name__)
 
+# Поверх вище за це значення майже завжди означає зіпсовану CRM-комірку
+# (помилковий парсинг чужого числа), а не реальний поверх.
+_IMPLAUSIBLE_FLOOR = 30
+
 # ── CRM → Schema mapping tables ──────────────────────────────────────
 
 # CRM "Тип угоди" → subfolder inside schemas/schema_dump/
@@ -346,21 +350,29 @@ class HTMLOfferParser:
         return target
 
     @staticmethod
-    def _crm_floor_authoritative(result: dict) -> bool:
-        """Чи довіряти CRM-поверху (а отже не давати опису його перезаписати).
+    def _accept_description_floor(crm_floor, crm_storeys, text_floor) -> bool:
+        """Чи замінити НАЯВНИЙ CRM-поверх на значення з опису.
 
-        Структуровані комірки CRM «Поверх»/«Поверховість» надійніші за здогад із
-        вільного тексту: аналіз опису часто чіпляє чуже число (бачили хибне
-        Поверх «9»→«40»). Тому опис не перезаписує наявний CRM-поверх. Виняток —
-        фізично неможлива комбінація (Поверх > Поверховість): тоді опис має право
-        виправити явно зіпсовану CRM-комірку.
+        Структурована CRM-комірка «Поверх» головна, доки поверх правдоподібний.
+        Підозрілим (зіпсованим) вважаємо CRM-поверх, що:
+          • більший за поверховість (фізично неможливо), або
+          • більший за ``_IMPLAUSIBLE_FLOOR`` (надто високий — типова помилка
+            CRM-комірки, бачили хибний Поверх «40»).
+        Навіть для зіпсованого приймаємо число з опису ЛИШЕ як зниження
+        (``text ≤ crm``): значення, більше за вже підозрілий CRM-поверх, — майже
+        напевно знову чуже число з вільного тексту, не справжнє виправлення.
         """
         try:
-            if int(str(result.get("Поверх"))) > int(str(result.get("Поверховість"))):
-                return False
+            cf = int(str(crm_floor))
+            tf = int(str(text_floor))
         except (TypeError, ValueError):
-            pass
-        return True
+            return False
+        try:
+            impossible = cf > int(str(crm_storeys))
+        except (TypeError, ValueError):
+            impossible = False
+        suspicious = impossible or cf > _IMPLAUSIBLE_FLOOR
+        return suspicious and tf <= cf
 
     # ==================== Schema helpers ====================
 
@@ -492,9 +504,6 @@ class HTMLOfferParser:
         # then overwrite CRM data — except price/currency/deal-type which come
         # from structured CRM extraction and are more reliable than free-form text.
         _STRUCTURED_FIELDS = frozenset({"Ціна", "Валюта", "offer_type", "property_type"})
-        # CRM-комірки поверху структуровані й надійніші за здогад із вільного тексту —
-        # опис лише дозаповнює відсутнє, але не перезаписує наявний коректний CRM-поверх.
-        _CRM_NUMERIC_FIELDS = frozenset({"Поверх", "Поверховість"})
         if description or note:
             full_text = "\n\n".join([note or "", description or ""]).strip()
 
@@ -508,7 +517,6 @@ class HTMLOfferParser:
                     addr["Вулиця"] = typed
 
             analyzed_data = self.analyzer.analyze(full_text, {})
-            floor_authoritative = self._crm_floor_authoritative(result)
             for key, value in analyzed_data.items():
                 if key in _STRUCTURED_FIELDS or value is None:
                     continue
@@ -517,16 +525,21 @@ class HTMLOfferParser:
                 if _is_multi_value(key):
                     result[key] = merge_multi_value(result.get(key), value)
                     continue
-                # Поверх/Поверховість: CRM головний, доки його значення можливе —
-                # опис лише дозаповнює відсутнє, а наявне коректне не перезаписує.
-                if key in _CRM_NUMERIC_FIELDS and str(result.get(key) or "").strip() and floor_authoritative:
+                # Поверховість: структурована CRM-комірка головна — опис не
+                # перезаписує наявну, лише дозаповнює відсутню.
+                if key == "Поверховість" and str(result.get(key) or "").strip():
                     if result[key] != value:
-                        logger.debug(
-                            "Опис НЕ перезаписує CRM-поверх %s='%s' (опис пропонував '%s')",
-                            key,
-                            result[key],
-                            value,
-                        )
+                        logger.debug("Опис НЕ перезаписує CRM-поверховість '%s' (опис пропонував '%s')", result[key], value)
+                    continue
+                # Поверх: CRM головний, доки поверх правдоподібний; зіпсований
+                # (> поверховості або > 30) дозволяємо виправити з опису, але
+                # лише як зниження (text ≤ CRM).
+                if key == "Поверх" and str(result.get(key) or "").strip():
+                    if self._accept_description_floor(result["Поверх"], result.get("Поверховість"), value):
+                        logger.debug("Опис виправляє зіпсований CRM-поверх '%s' → '%s'", result["Поверх"], value)
+                        result["Поверх"] = value
+                    elif result["Поверх"] != value:
+                        logger.debug("Опис НЕ перезаписує CRM-поверх '%s' (опис пропонував '%s')", result["Поверх"], value)
                     continue
                 if key in result and result[key] != value:
                     logger.debug("Опис перезаписує CRM: %s='%s' → '%s'", key, result[key], value)
