@@ -389,3 +389,43 @@ def test_search_kadastrova_karta_503_is_quiet(monkeypatch, caplog):
     assert got is None
     # An expected "site down" must not be logged at WARNING (no traceback spam).
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+# ── enrich_offer_data_with_cadastral: visibility when nothing found ────────
+def test_enrich_warns_when_cadastral_not_found(monkeypatch, caplog):
+    # When a cadastral-required type (Ділянка) ends up without a number, the run
+    # log must SAY the search ran and found nothing — otherwise "searched but empty"
+    # is indistinguishable from "never searched".
+    import logging
+
+    monkeypatch.setattr(cl, "lookup_cadastral_record", lambda **kw: None)
+    offer = {
+        "property_type": "Ділянка",
+        "article": "A777",
+        "address": {"Місто": "Київ", "Вулиця": "вул. Центральна", "Будинок": "186"},
+    }
+    with caplog.at_level(logging.WARNING):
+        cl.enrich_offer_data_with_cadastral(offer)
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "A777" in msgs
+    assert "не знайдено" in msgs.lower()
+
+
+def test_enrich_no_warning_when_cadastral_found(monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setattr(
+        cl,
+        "lookup_cadastral_record",
+        lambda **kw: ("8000000000:75:214:0010", "м.Київ, вулиця Центральна, 186"),
+    )
+    monkeypatch.setattr(cl, "lookup_address_by_cadnum", lambda c: None)
+    offer = {
+        "property_type": "Ділянка",
+        "article": "A778",
+        "address": {"Місто": "Київ", "Вулиця": "вул. Центральна", "Будинок": "186"},
+    }
+    with caplog.at_level(logging.WARNING):
+        cl.enrich_offer_data_with_cadastral(offer)
+    msgs = " ".join(r.getMessage() for r in caplog.records).lower()
+    assert "не знайдено" not in msgs
