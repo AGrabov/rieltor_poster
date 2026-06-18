@@ -53,8 +53,9 @@ def parse_estate_price_from_html(html: str) -> tuple[int | None, str | None]:
         return None, None
     return parse_price(el.get_text(strip=True))
 
-# Property schema types that have a "Кадастровий номер" field on rieltor.ua
-_CADASTRAL_SCHEMA_TYPES = frozenset({"будинок", "ділянка", "комерційна"})
+# Типи об'єктів, для яких шукаємо кадастровий номер. Комерційна та Паркомісце
+# виключені свідомо: поле «Кадастровий номер» там необов'язкове й лише заважає.
+_CADASTRAL_SCHEMA_TYPES = frozenset({"будинок", "ділянка"})
 
 # Default commission settings (value + unit)
 # Unit options from schema: "%", "гривнях", "долларах"
@@ -374,9 +375,9 @@ class EstateListCollector:
     def enrich_with_cadastral_number(self, offer_data: dict) -> None:
         """Додати кадастровий номер з kadastr.live, якщо CRM його не надав.
 
-        Працює лише для типів об'єктів, що мають поле «Кадастровий номер»
-        на rieltor.ua: Будинок, Ділянка, Комерційна.
-        Не перезаписує значення, яке вже прийшло з CRM.
+        Працює лише для Будинок та Ділянка (поле «Кадастровий номер» там
+        обов'язкове). Для Комерційної та Паркомісця номер не шукаємо: поле
+        необов'язкове й лише заважає. Не перезаписує значення з CRM.
 
         Args:
             offer_data: Словник, що будується для DictOfferFormFiller (змінюється на місці).
