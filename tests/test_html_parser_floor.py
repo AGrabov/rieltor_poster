@@ -35,3 +35,24 @@ def test_equal_floor_kept():
     data = {"Поверх": "1", "Поверховість": "1", "property_type": "Комерційна"}
     out = _parser()._fill_missing_with_defaults(data)
     assert out["Поверх"] == "1"
+
+
+# ── description must NOT overwrite a valid CRM floor (regression: 9 → 40) ──
+def test_crm_floor_authoritative_when_consistent():
+    # CRM 9/16 is physically possible → CRM wins, description guess ignored.
+    assert HTMLOfferParser._crm_floor_authoritative({"Поверх": "9", "Поверховість": "16"}) is True
+
+
+def test_crm_floor_not_authoritative_when_impossible():
+    # CRM 40/7 is impossible → description is allowed to correct it.
+    assert HTMLOfferParser._crm_floor_authoritative({"Поверх": "40", "Поверховість": "7"}) is False
+
+
+def test_crm_floor_authoritative_when_storeys_missing():
+    # No storey count to contradict the floor → keep the CRM floor.
+    assert HTMLOfferParser._crm_floor_authoritative({"Поверх": "9"}) is True
+
+
+def test_crm_floor_authoritative_when_non_numeric():
+    # Garbage in the cell must not crash the precedence check.
+    assert HTMLOfferParser._crm_floor_authoritative({"Поверх": "цоколь", "Поверховість": "5"}) is True

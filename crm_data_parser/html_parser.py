@@ -345,6 +345,23 @@ class HTMLOfferParser:
             return None
         return target
 
+    @staticmethod
+    def _crm_floor_authoritative(result: dict) -> bool:
+        """Чи довіряти CRM-поверху (а отже не давати опису його перезаписати).
+
+        Структуровані комірки CRM «Поверх»/«Поверховість» надійніші за здогад із
+        вільного тексту: аналіз опису часто чіпляє чуже число (бачили хибне
+        Поверх «9»→«40»). Тому опис не перезаписує наявний CRM-поверх. Виняток —
+        фізично неможлива комбінація (Поверх > Поверховість): тоді опис має право
+        виправити явно зіпсовану CRM-комірку.
+        """
+        try:
+            if int(str(result.get("Поверх"))) > int(str(result.get("Поверховість"))):
+                return False
+        except (TypeError, ValueError):
+            pass
+        return True
+
     # ==================== Schema helpers ====================
 
     def _get_required_fields(self) -> list[dict]:
@@ -475,6 +492,9 @@ class HTMLOfferParser:
         # then overwrite CRM data — except price/currency/deal-type which come
         # from structured CRM extraction and are more reliable than free-form text.
         _STRUCTURED_FIELDS = frozenset({"Ціна", "Валюта", "offer_type", "property_type"})
+        # CRM-комірки поверху структуровані й надійніші за здогад із вільного тексту —
+        # опис лише дозаповнює відсутнє, але не перезаписує наявний коректний CRM-поверх.
+        _CRM_NUMERIC_FIELDS = frozenset({"Поверх", "Поверховість"})
         if description or note:
             full_text = "\n\n".join([note or "", description or ""]).strip()
 
@@ -488,6 +508,7 @@ class HTMLOfferParser:
                     addr["Вулиця"] = typed
 
             analyzed_data = self.analyzer.analyze(full_text, {})
+            floor_authoritative = self._crm_floor_authoritative(result)
             for key, value in analyzed_data.items():
                 if key in _STRUCTURED_FIELDS or value is None:
                     continue
@@ -495,6 +516,17 @@ class HTMLOfferParser:
                 # та опису, щоб не загубити пункти, яких немає в описі.
                 if _is_multi_value(key):
                     result[key] = merge_multi_value(result.get(key), value)
+                    continue
+                # Поверх/Поверховість: CRM головний, доки його значення можливе —
+                # опис лише дозаповнює відсутнє, а наявне коректне не перезаписує.
+                if key in _CRM_NUMERIC_FIELDS and str(result.get(key) or "").strip() and floor_authoritative:
+                    if result[key] != value:
+                        logger.debug(
+                            "Опис НЕ перезаписує CRM-поверх %s='%s' (опис пропонував '%s')",
+                            key,
+                            result[key],
+                            value,
+                        )
                     continue
                 if key in result and result[key] != value:
                     logger.debug("Опис перезаписує CRM: %s='%s' → '%s'", key, result[key], value)
