@@ -93,7 +93,7 @@ class EstateListCollector:
     # CRM filter: "Закритий/відкритий продаж" = "Відкритий продаж можна рекламувати" (value=2)
     ADVERTISABLE_FILTER = "property_69[]=2"
     PER_PAGE = 50
-    # Where debug CRM HTML is dumped when SAVE_CRM_HTML is set (one file per estate).
+    # Where debug CRM HTML is dumped when LOG_LEVEL=debug (one file per estate).
     # Абсолютний шлях до теки logs проєкту (а не відносний підкаталог): інакше при
     # запуску з іншого CWD (програма на диску C) дамп ішов у неіснуюче місце.
     _DEBUG_HTML_DIR = Path(__file__).resolve().parent.parent / "logs"
@@ -260,10 +260,11 @@ class EstateListCollector:
     def _save_debug_html(self, estate_id: int, html: str) -> Path | None:
         """Зберегти сирий HTML об'єкта для дебагу (напр. розбір блоку «Контакти»).
 
-        Вимкнено за замовчуванням. Увімкнути: SAVE_CRM_HTML=1 у .env. Зберігає по
-        одному файлу на об'єкт у :pyattr:`_DEBUG_HTML_DIR` (перезаписує наявний).
+        Прив'язано до рівня логування: спрацьовує лише за LOG_LEVEL=debug у .env
+        (окремий ключ не потрібен). Зберігає по одному файлу на об'єкт у
+        :pyattr:`_DEBUG_HTML_DIR` (перезаписує наявний).
         """
-        if os.getenv("SAVE_CRM_HTML", "").strip().lower() not in ("1", "true", "yes", "on"):
+        if os.getenv("LOG_LEVEL", "").strip().lower() != "debug":
             return None
         try:
             self._DEBUG_HTML_DIR.mkdir(parents=True, exist_ok=True)
@@ -294,7 +295,7 @@ class EstateListCollector:
         html = self.page.content()
         # Зберегти debug-HTML і тут: під час фази post сторінка об'єкта
         # завантажується саме через check_actuality (не через get_estate_html),
-        # тому без цього виклику SAVE_CRM_HTML не давав би жодного файлу.
+        # тому без цього виклику LOG_LEVEL=debug не давав би жодного файлу.
         self._save_debug_html(estate_id, html)
         price, currency = parse_estate_price_from_html(html)
         return EstateActuality(

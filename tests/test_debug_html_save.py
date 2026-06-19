@@ -1,7 +1,8 @@
-"""Tests for the env-gated CRM HTML debug saver in EstateListCollector.
+"""Tests for the CRM HTML debug saver in EstateListCollector.
 
-Lets us capture a real CRM estate card (e.g. to inspect the Контакти/owner
-markup) without affecting normal runs, which stay disabled by default.
+Gated by LOG_LEVEL=debug: lets us capture a real CRM estate card (e.g. to
+inspect the Контакти/owner markup) whenever debug logging is on, without a
+separate env key. Normal (INFO) runs stay disabled.
 """
 
 from __future__ import annotations
@@ -27,15 +28,16 @@ def test_debug_html_dir_is_absolute_project_logs():
     assert d.name == "logs"
 
 
-def test_save_disabled_by_default(tmp_path, monkeypatch):
-    monkeypatch.delenv("SAVE_CRM_HTML", raising=False)
+def test_save_disabled_when_log_level_absent(tmp_path, monkeypatch):
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
     c = _collector(tmp_path)
     assert c._save_debug_html(123, "<html></html>") is None
     assert not (tmp_path / "debug_html").exists()
 
 
-def test_save_enabled_writes_file(tmp_path, monkeypatch):
-    monkeypatch.setenv("SAVE_CRM_HTML", "true")
+def test_save_enabled_when_log_level_debug(tmp_path, monkeypatch):
+    # Case-insensitive: .env may hold "debug", dashboard injects "DEBUG".
+    monkeypatch.setenv("LOG_LEVEL", "debug")
     c = _collector(tmp_path)
     path = c._save_debug_html(123, "<html>hi</html>")
     assert path is not None
@@ -43,8 +45,8 @@ def test_save_enabled_writes_file(tmp_path, monkeypatch):
     assert Path(path).read_text(encoding="utf-8") == "<html>hi</html>"
 
 
-def test_save_falsey_value_disabled(tmp_path, monkeypatch):
-    monkeypatch.setenv("SAVE_CRM_HTML", "0")
+def test_save_disabled_when_log_level_info(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOG_LEVEL", "INFO")
     c = _collector(tmp_path)
     assert c._save_debug_html(123, "<html></html>") is None
 
