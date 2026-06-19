@@ -93,10 +93,11 @@ class EstateListCollector:
     # CRM filter: "Закритий/відкритий продаж" = "Відкритий продаж можна рекламувати" (value=2)
     ADVERTISABLE_FILTER = "property_69[]=2"
     PER_PAGE = 50
-    # Where debug CRM HTML is dumped when LOG_LEVEL=debug (one file per estate).
+    # Where debug CRM HTML is dumped when LOG_LEVEL=debug (one shared sample file).
     # Абсолютний шлях до теки logs проєкту (а не відносний підкаталог): інакше при
     # запуску з іншого CWD (програма на диску C) дамп ішов у неіснуюче місце.
     _DEBUG_HTML_DIR = Path(__file__).resolve().parent.parent / "logs"
+    _DEBUG_HTML_FILE = "crm_estate.html"
 
     def __init__(
         self,
@@ -261,16 +262,19 @@ class EstateListCollector:
         """Зберегти сирий HTML об'єкта для дебагу (напр. розбір блоку «Контакти»).
 
         Прив'язано до рівня логування: спрацьовує лише за LOG_LEVEL=debug у .env
-        (окремий ключ не потрібен). Зберігає по одному файлу на об'єкт у
-        :pyattr:`_DEBUG_HTML_DIR` (перезаписує наявний).
+        (окремий ключ не потрібен). Зберігає ОДИН файл-зразок
+        :pyattr:`_DEBUG_HTML_FILE`: якщо він уже існує — пропуск (не перезаписуємо,
+        лишаємо першу збережену картку; щоб оновити — видалити файл вручну).
         """
         if os.getenv("LOG_LEVEL", "").strip().lower() != "debug":
             return None
         try:
+            path = self._DEBUG_HTML_DIR / self._DEBUG_HTML_FILE
+            if path.exists():
+                return None
             self._DEBUG_HTML_DIR.mkdir(parents=True, exist_ok=True)
-            path = self._DEBUG_HTML_DIR / f"estate_{estate_id}.html"
             path.write_text(html or "", encoding="utf-8")
-            logger.info("Збережено CRM HTML для дебагу: %s", path)
+            logger.info("Збережено CRM HTML об'єкта %s для дебагу: %s", estate_id, path)
             return path
         except Exception:
             logger.warning("Не вдалось зберегти debug HTML для об'єкта %s", estate_id, exc_info=True)

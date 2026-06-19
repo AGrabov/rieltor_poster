@@ -41,8 +41,20 @@ def test_save_enabled_when_log_level_debug(tmp_path, monkeypatch):
     c = _collector(tmp_path)
     path = c._save_debug_html(123, "<html>hi</html>")
     assert path is not None
-    assert Path(path).name == "estate_123.html"
+    # Один файл-зразок із фіксованою назвою (не по одному на об'єкт).
+    assert Path(path).name == "crm_estate.html"
     assert Path(path).read_text(encoding="utf-8") == "<html>hi</html>"
+
+
+def test_save_skips_when_file_already_exists(tmp_path, monkeypatch):
+    # Якщо зразок уже є — пропускаємо (не перезаписуємо першу збережену картку).
+    monkeypatch.setenv("LOG_LEVEL", "debug")
+    c = _collector(tmp_path)
+    first = c._save_debug_html(1, "<html>first</html>")
+    assert first is not None
+    second = c._save_debug_html(2, "<html>second</html>")
+    assert second is None
+    assert Path(first).read_text(encoding="utf-8") == "<html>first</html>"
 
 
 def test_save_disabled_when_log_level_info(tmp_path, monkeypatch):
