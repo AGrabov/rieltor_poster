@@ -1322,6 +1322,21 @@ class DictOfferFormFiller(
                 except Exception:
                     logger.warning("Не вдалось очистити поле 'Будинок'", exc_info=True)
 
+            # --- Відновлення 3b: Район (порожній або не збігається з картою) ---
+            # Дві помилки сайту по Району: «Необхідно вибрати елемент зі списку»
+            # (поле порожнє) і «Точка на карті в іншому районі ніж той, що вказано»
+            # (вибраний Район ≠ геопозиція піна). Обидві лікуються однаково:
+            # беремо адмінрайон з реєстру за кадастровим номером (пін стоїть на
+            # парцелі, тож кадастровий Район узгоджує і поле, і карту).
+            elif ("район" in field.lower() and ("необхідно вибрати" in msg or "необхідно заповнити" in msg)) or (
+                "іншому районі" in msg
+            ):
+                try:
+                    if self._recover_district(root):
+                        fixed_any = True
+                except Exception:
+                    logger.warning("Не вдалось відновити Район", exc_info=True)
+
             # --- Відновлення 4: Неправильний кадастровий номер ---
             # Якщо сайт відхилив кадастровий номер як невалідний — очищаємо поле і
             # зберігаємо чернетку без нього (краще зберегти без кадастру, ніж не зберегти).
@@ -1442,6 +1457,71 @@ class DictOfferFormFiller(
                     logger.warning("Не вдалось очистити необов'язкове поле '%s'", field, exc_info=True)
 
         return fixed_any
+
+    def _lookup_district_by_cadnum(self, cadnum: str) -> str | None:
+        """Адмінрайон з реєстру за кадастровим номером (відновлення на публікації).
+
+        Той самий реєстр, що й на зборі (zem.center): кадастровий номер однозначно
+        визначає парцелу, тож її адмінрайон — авторитетне джерело для поля Район.
+        """
+        cadnum = (cadnum or "").strip()
+        if not cadnum:
+            return None
+        try:
+            from crm_data_parser.cadastral_lookup import lookup_address_by_cadnum, parse_registry_address
+
+            registry_addr = lookup_address_by_cadnum(cadnum)
+            if registry_addr:
+                return parse_registry_address(registry_addr).get("Район") or None
+        except Exception:
+            logger.warning("Не вдалось отримати Район за кадастром '%s'", cadnum, exc_info=True)
+        return None
+
+    def _recover_district(self, root) -> bool:
+        """Повторно вибрати Район: авторитетно за кадастром, інакше — з даних об'єкта.
+
+        Повертає True, якщо Район вибрано наново (варто повторити збереження).
+        """
+        offer_data = self._last_offer_data or {}
+        addr = offer_data.get("address") or {}
+
+        def _addr_get(label: str) -> str:
+            for k, v in addr.items():
+                if k.lower().strip() == label.lower().strip():
+                    return str(v or "").strip()
+            return ""
+
+        district = self._lookup_district_by_cadnum(_addr_get("Кадастровий номер"))
+        source = "реєстр за кадастром"
+        if not district:
+            district = _addr_get("Район")
+            source = "дані об'єкта"
+        if not district:
+            logger.warning("Відновлення Району неможливе: немає Району ні за кадастром, ні в даних")
+            return False
+
+        try:
+            sec_addr = self._section(root, "Адреса об'єкта")
+        except Exception:
+            sec_addr = None
+
+        logger.warning("Відновлення: Район='%s' (%s) — повторний вибір зі списку", district, source)
+        self._fill_autocomplete(sec_addr, "Район", district, force=True)
+        addr["Район"] = district  # зберегти використане значення в даних об'єкта
+
+        # Вибір Району каскадно очищає Вулицю/Будинок — повертаємо їх, якщо зникли.
+        street = strip_street_type(_addr_get("Вулиця"))
+        if street:
+            street_ctrl = self._find_control_by_label(sec_addr, "Вулиця")
+            if street_ctrl and not self._control_has_value(street_ctrl):
+                logger.warning("Відновлення: Вулиця='%s' зникла після Району — повторне заповнення", street)
+                self._fill_autocomplete(sec_addr, "Вулиця", street)
+        house = _addr_get("Будинок")
+        if house:
+            if house.lower().startswith("будинок "):
+                house = house[len("будинок ") :].strip()
+            self._refill_house_if_cleared(sec_addr, house)
+        return True
 
     def _submit_and_get_report(
         self,
