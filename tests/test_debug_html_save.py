@@ -18,6 +18,15 @@ def _collector(tmp_path):
     return c
 
 
+def test_debug_html_dir_is_absolute_project_logs():
+    # Має бути АБСОЛЮТНИЙ шлях у теці logs проєкту, а не відносний підкаталог:
+    # на машині користувача (запуск з іншого CWD на диску C) відносний шлях
+    # вів у неіснуюче місце, тож дамп не зберігався.
+    d = EstateListCollector._DEBUG_HTML_DIR
+    assert d.is_absolute()
+    assert d.name == "logs"
+
+
 def test_save_disabled_by_default(tmp_path, monkeypatch):
     monkeypatch.delenv("SAVE_CRM_HTML", raising=False)
     c = _collector(tmp_path)

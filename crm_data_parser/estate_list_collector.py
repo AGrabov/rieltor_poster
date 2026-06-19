@@ -94,7 +94,9 @@ class EstateListCollector:
     ADVERTISABLE_FILTER = "property_69[]=2"
     PER_PAGE = 50
     # Where debug CRM HTML is dumped when SAVE_CRM_HTML is set (one file per estate).
-    _DEBUG_HTML_DIR = Path("logs/debug_html")
+    # Абсолютний шлях до теки logs проєкту (а не відносний підкаталог): інакше при
+    # запуску з іншого CWD (програма на диску C) дамп ішов у неіснуюче місце.
+    _DEBUG_HTML_DIR = Path(__file__).resolve().parent.parent / "logs"
 
     def __init__(
         self,
