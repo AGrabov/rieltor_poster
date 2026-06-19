@@ -37,6 +37,16 @@ def test_equal_floor_kept():
     assert out["Поверх"] == "1"
 
 
+def test_floor_types_coerced_to_string():
+    # Числовий поверх/поверховість зберігаємо як РЯДОК (єдиний тип у даних).
+    data = {"Поверх": 5, "Поверховість": 9, "property_type": "Квартира"}
+    out = _parser()._fill_missing_with_defaults(data)
+    assert out["Поверх"] == "5"
+    assert out["Поверховість"] == "9"
+    assert isinstance(out["Поверх"], str)
+    assert isinstance(out["Поверховість"], str)
+
+
 # ── description vs CRM floor precedence (_accept_description_floor) ────────
 # Signature: _accept_description_floor(crm_floor, crm_storeys, text_floor) -> bool
 # True  → take the description's floor (CRM cell is broken AND text is a downward fix)

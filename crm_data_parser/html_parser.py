@@ -1260,6 +1260,12 @@ class HTMLOfferParser:
         except (TypeError, ValueError):
             pass
 
+        # Поверх/Поверховість зберігаємо як РЯДКИ (єдиний тип у даних — історично
+        # траплялись і int, і str). Сайт усе одно вписує текст у поле.
+        for _floor_key in ("Поверх", "Поверховість"):
+            if data.get(_floor_key) is not None and not isinstance(data[_floor_key], str):
+                data[_floor_key] = str(data[_floor_key])
+
         # Default currency if price exists but currency doesn't
         if "Ціна" in data and not data.get("Валюта"):
             data["Валюта"] = "доларів"

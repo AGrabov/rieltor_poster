@@ -224,16 +224,16 @@ class DictOfferFormFiller(
         if fi:
             lbl = fi["label"]
             if lbl not in offer_data:
-                offer_data[lbl] = 2
+                offer_data[lbl] = "2"
                 applied.append(f"{lbl}=2 (default)")
             else:
                 try:
                     floors = int(offer_data[lbl])
                     if floors > 50:
-                        offer_data[lbl] = 2
+                        offer_data[lbl] = "2"
                         applied.append(f"{lbl}: {floors}→2 (перевищував ліміт 50)")
                     elif str(self.property_type).lower() in _HOUSE_FLOOR_TYPES and floors > _HOUSE_MAX_FLOORS:
-                        offer_data[lbl] = _HOUSE_MAX_FLOORS
+                        offer_data[lbl] = str(_HOUSE_MAX_FLOORS)
                         applied.append(f"{lbl}: {floors}→{_HOUSE_MAX_FLOORS} (ліміт для {self.property_type})")
                 except (TypeError, ValueError):
                     pass
@@ -805,6 +805,36 @@ class DictOfferFormFiller(
         except Exception as e:
             logger.debug("_check_and_fix_house_field: %s", e)
 
+    def _clear_house_field(self, sec) -> None:
+        """Очистити поле 'Будинок', коли номера будинку немає в даних об'єкта.
+
+        Під час геокаскаду сайт інколи сам вписує у поле нечислове значення
+        (фрагмент вулиці / мітку будівлі), і воно валиться помилкою «Має
+        починатись з цифри» — хоча номера будинку в нас немає взагалі. Без
+        номера коректніше лишити поле порожнім: тоді помилка буде чесною
+        «Необхідно заповнити», а об'єкт легко доправити в дашборді.
+        """
+        try:
+            ctrl = self._find_control_by_label(sec, "Будинок")
+            if not ctrl:
+                return
+            inp = ctrl.locator("css=input:not([aria-hidden='true'])").first
+            if not inp.count():
+                return
+            current = (inp.input_value() or "").strip()
+            if not current:
+                return
+            inp.click()
+            inp.fill("")
+            try:
+                inp.press("Escape")
+            except Exception:
+                pass
+            self._mark_touched(inp)
+            logger.warning("Будинок відсутній у даних — очищено автозаповнене сайтом значення '%s'", current)
+        except Exception:
+            logger.debug("Не вдалось очистити поле 'Будинок'", exc_info=True)
+
     def _refill_house_if_cleared(self, sec, house: str | None) -> None:
         """Повторно заповнити 'Будинок', якщо каскад адреси його очистив.
 
@@ -1005,6 +1035,12 @@ class DictOfferFormFiller(
 
             if house and self._map_error_visible():
                 self._force_reselect_house_number(sec, house, house_label="Будинок")
+
+        # Номера будинку немає → приберемо нечислове значення, яке сайт міг
+        # автозаповнити під час геокаскаду (інакше — помилка «Має починатись
+        # з цифри» замість чесної «Необхідно заповнити»).
+        if not house:
+            self._clear_house_field(sec)
 
         # Check for error page before spending time on slow multi-selects
         self._raise_if_error_page()
