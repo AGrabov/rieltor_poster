@@ -16,7 +16,7 @@
     uv run --with pyinstaller pyinstaller --noconsole --onefile ^
         --name RieltorDashboard --icon assets/icon.ico ^
         --add-data "assets/icon.ico;assets" ^
-        --distpath dist --workpath build/pyinstaller updater.py
+        --distpath dist --workpath build/pyinstaller --specpath build/pyinstaller updater.py
 
 Шляхи — відносні від кореня репозиторію, тож зборка переносна між ПК. .exe шукає
 проєкт відносно власного розташування, тому абсолютні шляхи ніде не зашиті.
