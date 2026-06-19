@@ -283,7 +283,7 @@ def render_offer_editor(records: list) -> None:
         return
     st.caption(
         "Виправте поля об'єкта, який бот не зміг опублікувати — збереження поверне його "
-        "в чергу (статус → new). Порада: вимкніть «Авто» вгорі, щоб форма не оновлювалась під час редагування."
+        "в чергу (статус → new). Авто-оновлення на час редагування призупиняється автоматично."
     )
 
     # Якщо раніше вибраний об'єкт зник із поточного фільтра — скидаємо вибір,
@@ -568,7 +568,11 @@ with tab_objects:
         )
 
         # ── Ручне виправлення помилкових об'єктів (failed / skipped) ──
-        render_offer_editor(records)
+        # Захист: помилка в редакторі не повинна «гасити» всю вкладку з таблицею.
+        try:
+            render_offer_editor(records)
+        except Exception as e:  # noqa: BLE001
+            st.error(f"Редактор недоступний: {e}")
 
 
 # ── Вкладка: Сервіс (рідкі/допоміжні дії) ─────────────────────────────
@@ -734,7 +738,12 @@ else:
 
 # ── Автооновлення ─────────────────────────────────────────────────────
 
-if auto_refresh or manual_refresh:
-    if auto_refresh and not manual_refresh:
-        time.sleep(AUTO_REFRESH_SEC)
+# Під час редагування об'єкта авто-оновлення вимикаємо: блокуючий sleep+rerun
+# інакше «морозить» форму (кожна взаємодія впирається в паузу). Ручне «Оновити»
+# працює завжди.
+editing = st.session_state.get("edit_select") is not None
+if manual_refresh:
+    st.rerun()
+elif auto_refresh and not editing:
+    time.sleep(AUTO_REFRESH_SEC)
     st.rerun()

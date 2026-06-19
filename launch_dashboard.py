@@ -56,13 +56,19 @@ def port_open(host: str = HOST, port: int = PORT, timeout: float = 0.5) -> bool:
 
 
 def streamlit_cmd(project: Path) -> list[str]:
-    """Команда запуску Streamlit. Віддаємо перевагу pythonw.exe з .venv (без консолі)."""
-    pyw = project / ".venv" / "Scripts" / "pythonw.exe"
+    """Команда запуску Streamlit.
+
+    Беремо python.exe з .venv: pythonw.exe зі streamlit поводиться ненадійно
+    (процес тихо падає), а консоль ми все одно ховаємо через CREATE_NO_WINDOW у
+    start_streamlit. ``uv run`` лишаємо лише як крайній запас (він відкриває
+    зайве вікно термінала).
+    """
     py = project / ".venv" / "Scripts" / "python.exe"
-    if pyw.exists():
-        base = [str(pyw), "-m", "streamlit"]
-    elif py.exists():
+    pyw = project / ".venv" / "Scripts" / "pythonw.exe"
+    if py.exists():
         base = [str(py), "-m", "streamlit"]
+    elif pyw.exists():
+        base = [str(pyw), "-m", "streamlit"]
     else:
         base = ["uv", "run", "streamlit"]
     return [
@@ -89,14 +95,26 @@ def icon_path() -> Path | None:
 
 def start_streamlit(project: Path) -> subprocess.Popen:
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if os.name == "nt" else 0
-    return subprocess.Popen(
+    # Логуємо вивід Streamlit у файл (а не у DEVNULL): інакше падіння запуску
+    # невидиме й діагностувати нічого. Лог-хендл тримаємо живим на процесі.
+    log_dir = project / "logs"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log = (log_dir / "streamlit_run.log").open("a", encoding="utf-8")
+        out = err = log
+    except Exception:  # noqa: BLE001 — не змогли відкрити лог: не блокуємо запуск
+        log = None
+        out = err = subprocess.DEVNULL
+    proc = subprocess.Popen(
         streamlit_cmd(project),
         cwd=str(project),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=out,
+        stderr=err,
         stdin=subprocess.DEVNULL,
         creationflags=creationflags,
     )
+    proc._log_file = log  # type: ignore[attr-defined]  # не давати GC закрити хендл
+    return proc
 
 
 class DashboardApp:
