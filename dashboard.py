@@ -20,6 +20,7 @@ from streamlit.components.v1 import html as components_html
 
 from main import read_drafts_count
 from offer_db import OfferDB
+from offer_edit import ADDRESS_FORM_FIELDS, merge_offer_edits
 
 # ── Конфіг ───────────────────────────────────────────────────────────
 
@@ -256,6 +257,95 @@ def _fmt_errors(errors) -> str:
     return str(errors)
 
 
+EDITABLE_STATUSES = ("failed", "skipped")
+
+
+def _editor_label(r) -> str:
+    art = r.article or f"ID {r.estate_id}"
+    title = (r.title or "").strip()
+    if len(title) > 50:
+        title = title[:50] + "…"
+    return f"#{art} — {title} ({STATUS_LABELS.get(r.status, r.status)})"
+
+
+def render_offer_editor(records: list) -> None:
+    """Форма ручного виправлення помилкових об'єктів (failed/skipped).
+
+    Поля адреси редагуються формою, решта — сирим JSON. Збереження повертає
+    об'єкт у чергу (статус → new), щоб наступний запуск Фази 2 спробував знову.
+    """
+    editable = {r.estate_id: r for r in records if r.status in EDITABLE_STATUSES}
+
+    st.divider()
+    st.markdown("**✏ Ручне виправлення** (failed / skipped)")
+    if not editable:
+        st.caption("Серед показаних об'єктів немає помилкових (failed/skipped) для редагування.")
+        return
+    st.caption(
+        "Виправте поля об'єкта, який бот не зміг опублікувати — збереження поверне його "
+        "в чергу (статус → new). Порада: вимкніть «Авто» вгорі, щоб форма не оновлювалась під час редагування."
+    )
+
+    # Якщо раніше вибраний об'єкт зник із поточного фільтра — скидаємо вибір,
+    # інакше selectbox отримає значення поза options.
+    if st.session_state.get("edit_select") not in editable:
+        st.session_state["edit_select"] = None
+
+    sel = st.selectbox(
+        "Об'єкт для редагування",
+        options=[None, *editable.keys()],
+        format_func=lambda eid: "— оберіть —" if eid is None else _editor_label(editable[eid]),
+        key="edit_select",
+    )
+    if sel is None:
+        return
+
+    rec = editable[sel]
+    with st.container(border=True):
+        if rec.errors:
+            st.error(f"Помилки бота: {_fmt_errors(rec.errors)}")
+
+        ed_title = st.text_input("Заголовок", value=rec.title or "", key=f"edit_title_{sel}")
+
+        addr = rec.offer_data.get("address") or {}
+        address_edits: dict[str, str] = {}
+        with st.expander("Адреса", expanded=True):
+            for label in ADDRESS_FORM_FIELDS:
+                address_edits[label] = st.text_input(
+                    label, value=str(addr.get(label) or ""), key=f"edit_addr_{label}_{sel}"
+                )
+
+        with st.expander("Сирий JSON (решта полів)", expanded=False):
+            raw_json = st.text_area(
+                "offer_data (JSON)",
+                value=json.dumps(rec.offer_data, ensure_ascii=False, indent=2),
+                height=320,
+                key=f"edit_json_{sel}",
+            )
+
+        if st.button(
+            "💾 Зберегти і повернути в чергу (→ new)",
+            use_container_width=True,
+            key=f"edit_save_{sel}",
+        ):
+            try:
+                merged = merge_offer_edits(raw_json, address_edits)
+            except ValueError as e:
+                st.error(f"❌ {e}")
+                return
+            try:
+                with OfferDB() as db:
+                    db.edit_offer(sel, offer_data=merged, title=ed_title.strip() or None, status="new")
+            except Exception as e:
+                st.error(f"Помилка збереження: {e}")
+                return
+            # Скидаємо стан віджетів редактора — об'єкт зник зі списку (став 'new').
+            for k in [key for key in st.session_state if key.endswith(f"_{sel}") or key == "edit_select"]:
+                del st.session_state[k]
+            st.toast("Збережено, повернуто в чергу", icon="💾")
+            st.rerun()
+
+
 def render_log_console(text: str, level_filter: str, search: str) -> None:
     """Кольорова прокручувана консоль логів з авто-прокруткою донизу."""
     threshold = LOG_FILTERS.get(level_filter, 0)
@@ -476,6 +566,9 @@ with tab_objects:
                 "Помилки": st.column_config.TextColumn(width="medium"),
             },
         )
+
+        # ── Ручне виправлення помилкових об'єктів (failed / skipped) ──
+        render_offer_editor(records)
 
 
 # ── Вкладка: Сервіс (рідкі/допоміжні дії) ─────────────────────────────

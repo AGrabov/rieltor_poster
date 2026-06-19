@@ -223,6 +223,45 @@ class OfferDB:
         self.conn.commit()
         logger.debug("offer_data оновлено для estate_id=%d", estate_id)
 
+    def get_offer(self, estate_id: int) -> OfferRecord | None:
+        """Повернути один запис за estate_id (для ручного редагування в дашборді)."""
+        row = self.conn.execute("SELECT * FROM offers WHERE estate_id = ?", (estate_id,)).fetchone()
+        return _row_to_record(row) if row else None
+
+    def edit_offer(
+        self,
+        estate_id: int,
+        *,
+        offer_data: dict,
+        title: str | None,
+        status: str = "new",
+    ) -> None:
+        """Зберегти ручні правки об'єкта і (типово) повернути його в чергу.
+
+        Колонки property_type/deal_type ПЕРЕВИВОДЯТЬСЯ з offer_data, бо саме
+        offer_data — джерело істини для публікації (Фаза 2 бере тип/угоду звідти).
+        Помилки очищаються, статус скидається (типово 'new'), щоб наступний запуск
+        Фази 2 спробував опублікувати об'єкт знову.
+        """
+        property_type = offer_data.get("property_type")
+        deal_type = offer_data.get("offer_type")
+        self.conn.execute(
+            """UPDATE offers
+               SET offer_data = ?, title = ?, property_type = ?, deal_type = ?,
+                   status = ?, errors = NULL, updated_at = datetime('now', 'localtime')
+               WHERE estate_id = ?""",
+            (
+                json.dumps(offer_data, ensure_ascii=False),
+                title,
+                property_type,
+                deal_type,
+                status,
+                estate_id,
+            ),
+        )
+        self.conn.commit()
+        logger.info("Об'єкт %d відредаговано вручну, статус → %s", estate_id, status)
+
     def get_without_cadastral(
         self,
         property_types: list[str] | None = None,
