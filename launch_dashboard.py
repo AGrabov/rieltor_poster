@@ -157,12 +157,10 @@ class DashboardApp:
                 "і запускайте через ярлик, а не копію."
             )
             return
-        started_here = False
         if not port_open():
             self._set_status("Запуск дашборду…")
             try:
                 self.proc = start_streamlit(self.project)
-                started_here = True
             except Exception as e:  # noqa: BLE001
                 self._set_status(f"Помилка запуску: {e}")
                 return
@@ -174,8 +172,10 @@ class DashboardApp:
         if port_open():
             self._set_status(f"Дашборд працює:\n{URL}")
             self.root.after(0, lambda: self.open_btn.config(state="normal"))
-            if started_here:
-                self.root.after(0, self.open_browser)
+            # Завжди відкриваємо браузер, коли дашборд піднятий — навіть якщо порт
+            # уже був зайнятий (напр. лишився старий процес): інакше виглядає, ніби
+            # запуск «нічого не зробив».
+            self.root.after(0, self.open_browser)
         else:
             self._set_status("Не вдалося запустити дашборд.\nПеревірте середовище (.venv / uv).")
 
