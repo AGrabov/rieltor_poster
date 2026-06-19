@@ -577,10 +577,14 @@ def enrich_offer_data_with_cadastral(offer_data: dict) -> bool:
         registry_addr = lookup_address_by_cadnum(cadnum)
     if registry_addr:
         parsed = parse_registry_address(registry_addr)
-        # Реєстр — джерело істини для Району/написання адреси ЛИШЕ за впевненого
-        # збігу (номер будинку з суфіксом + тип вулиці + назва). Інакше лишаємо
-        # дані CRM (кадастровий номер усе одно збережено вище).
-        if _registry_matches_crm(address, registry_addr):
+        # Реєстр — джерело істини для Району/написання адреси за впевненого збігу
+        # (номер будинку з суфіксом + тип вулиці + назва) АБО коли у CRM немає
+        # вулиці/будинку для звірки (типово земельна ділянка): кадастровий номер
+        # уже однозначно визначає парцелу, тож звіряти нічим — і конфлікту теж
+        # немає. Якщо ж адреса в CRM Є, але не збіглася — лишаємо дані CRM
+        # (можливо, в опис потрапив чужий кадастровий номер).
+        crm_has_address = bool((address.get("Вулиця") or "").strip() and (address.get("Будинок") or "").strip())
+        if _registry_matches_crm(address, registry_addr) or not crm_has_address:
             raion = parsed.get("Район")
             if raion and address.get("Район") != raion:
                 logger.info("Район з реєстру для %s: '%s' → '%s'", label, address.get("Район"), raion)

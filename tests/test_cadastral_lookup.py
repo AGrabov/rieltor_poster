@@ -429,3 +429,42 @@ def test_enrich_no_warning_when_cadastral_found(monkeypatch, caplog):
         cl.enrich_offer_data_with_cadastral(offer)
     msgs = " ".join(r.getMessage() for r in caplog.records).lower()
     assert "не знайдено" not in msgs
+
+
+# ── enrich: район from registry when cadnum is authoritative ──────────────
+def test_enrich_sets_raion_from_cadnum_when_crm_has_no_street(monkeypatch):
+    # Земельна ділянка: кадастровий номер у описі (авторитетний), CRM не має
+    # вулиці/будинку для звірки. Маючи точний номер, парцела (а отже й Район)
+    # однозначна — Район беремо з реєстру попри відсутність адреси в CRM.
+    monkeypatch.setattr(
+        cl,
+        "lookup_address_by_cadnum",
+        lambda c: "Київська обл., Обухівський р-н, с. Плюти",
+    )
+    offer = {
+        "property_type": "Ділянка",
+        "article": "A30754",
+        "apartment": {"description": "Кадастровий номер: 3223151000:04:016:0013"},
+        "address": {"Місто": "Плюти"},  # без Вулиці/Будинку
+    }
+    changed = cl.enrich_offer_data_with_cadastral(offer)
+    assert changed is True
+    assert offer["address"]["Район"] == "Обухівський"
+
+
+def test_enrich_keeps_crm_raion_when_address_conflicts(monkeypatch):
+    # CRM має вулицю+будинок, що НЕ збігаються з парцелою реєстру (можливо чужий
+    # номер з опису) → Район лишаємо з CRM, не перезаписуємо.
+    monkeypatch.setattr(
+        cl,
+        "lookup_address_by_cadnum",
+        lambda c: "м.Київ, Голосіївський р-н, вулиця Антоновича, 172",
+    )
+    offer = {
+        "property_type": "Будинок",
+        "article": "A1",
+        "apartment": {"description": "Кадастровий номер: 8000000000:75:214:0010"},
+        "address": {"Місто": "Київ", "Вулиця": "Хрещатик", "Будинок": "1", "Район": "Печерський"},
+    }
+    cl.enrich_offer_data_with_cadastral(offer)
+    assert offer["address"]["Район"] == "Печерський"
