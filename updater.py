@@ -156,14 +156,18 @@ def update_project(project: Path, status) -> None:
 
 
 def launcher_cmd(project: Path) -> list[str]:
-    """Команда запуску лаунчера з исходників. Віддаємо перевагу pythonw.exe (без консолі)."""
-    pyw = project / ".venv" / "Scripts" / "pythonw.exe"
+    """Команда запуску лаунчера з исходників.
+
+    Беремо python.exe (а не pythonw.exe): під pythonw лаунчер/streamlit падали
+    тихо. Консоль однаково прихована через CREATE_NO_WINDOW у :func:`launch`.
+    """
     py = project / ".venv" / "Scripts" / "python.exe"
+    pyw = project / ".venv" / "Scripts" / "pythonw.exe"
     script = str(project / "launch_dashboard.py")
-    if pyw.exists():
-        return [str(pyw), script]
     if py.exists():
         return [str(py), script]
+    if pyw.exists():
+        return [str(pyw), script]
     return ["uv", "run", "python", script]
 
 
