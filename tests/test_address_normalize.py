@@ -241,3 +241,113 @@ def test_address_value_matches_rejects_empty_current():
 
 def test_address_value_matches_empty_desired_cannot_validate():
     assert an.address_value_matches("", "Печерський") is False
+
+
+# ── recover_district ──────────────────────────────────────────────────────
+# Pull the administrative raion ("Xський район") out of the free-text description
+# when the structured CRM address has no Район. For suburban villages this raion
+# is exactly the value rieltor.ua expects (Кодаки → Васильківський).
+def test_recover_district_from_address_line():
+    txt = "Київська область, Васильківський район, с. Кодаки, вул. Набережна"
+    assert an.recover_district(txt) == "Васильківський"
+
+
+def test_recover_district_hyphenated_name():
+    assert an.recover_district("Києво-Святошинський район, с. Гатне") == "Києво-Святошинський"
+
+
+def test_recover_district_abbreviation_rn():
+    assert an.recover_district("розташований в Обухівському р-ні") == "Обухівський"
+
+
+def test_recover_district_genitive_normalized_to_nominative():
+    assert an.recover_district("у мальовничому Васильківському районі") == "Васильківський"
+
+
+def test_recover_district_none_when_no_adjective_before_word():
+    # A plain "район" (no "-ський" adjective) is a neighbourhood mention, not a raion.
+    assert an.recover_district("тихий спальний район поряд із парком") is None
+    assert an.recover_district("гарний район міста") is None
+
+
+def test_recover_district_none_when_absent():
+    assert an.recover_district("Продаж квартири з ремонтом, 3 кімнати") is None
+
+
+# ── recover_street ────────────────────────────────────────────────────────
+# Pull "вул./просп./… <Name>" out of the description when the structured Вулиця
+# is missing. The name must start uppercase and stop before a sentence continuation.
+def test_recover_street_single_word_stops_before_next_sentence():
+    # "вул. Набережна Пропонується …" → just "вул. Набережна" (not "Набережна Пропонується")
+    assert an.recover_street("с. Кодаки, вул. Набережна Пропонується до продажу") == "вул. Набережна"
+
+
+def test_recover_street_multiword_kept_before_comma():
+    assert an.recover_street("за адресою вул. Лесі Українки, 19") == "вул. Лесі Українки"
+
+
+def test_recover_street_multiword_compound_before_house():
+    assert an.recover_street("Київ, вул. Велика Васильківська, 64") == "вул. Велика Васильківська"
+
+
+def test_recover_street_none_when_type_word_used_as_sentence():
+    # "Вулиця повністю забудована" — common phrasing, no real street name follows.
+    assert an.recover_street("Вулиця повністю забудована, є всі комунікації") is None
+
+
+def test_recover_street_none_when_absent():
+    assert an.recover_street("Продаж земельної ділянки 8 соток біля лісу") is None
+
+
+def test_recover_street_ignores_road_as_common_noun():
+    # "Асфальтована дорога. Відстань до Києва" — both are prose, not a street.
+    assert an.recover_street("є каналізація. Асфальтована дорога. Відстань до Києва 35 км") is None
+
+
+def test_recover_street_ignores_highway_as_common_noun():
+    assert an.recover_street("ґрунтова дорога з Дніпровського шосе. Уздовж ділянки проходить лінія") is None
+
+
+def test_recover_street_rejects_lowercase_prose_continuation():
+    # "по вулиці Чудовий варіант для життя" — "Чудовий варіант", not a street name.
+    assert an.recover_street("підключена електрика, газ по вулиці Чудовий варіант для заміського життя") is None
+
+
+# ── recover_house_number ──────────────────────────────────────────────────
+# Pull the house number adjacent to the (already known) street name out of the
+# description, when the structured Будинок is missing.
+def test_recover_house_number_with_letter_suffix():
+    txt = "с. Старі Петрівці, вул. Юрківська, 14А. Ділянка має цільове призначення"
+    assert an.recover_house_number("вул. Юрківська", txt) == "14А"
+
+
+def test_recover_house_number_bare_with_comma():
+    txt = "Квартира в царському будинку | Лютеранська, 8 Пропонується до продажу"
+    assert an.recover_house_number("вул. Лютеранська", txt) == "8"
+
+
+def test_recover_house_number_does_not_swallow_next_word():
+    # "8 Пропонується" must yield "8", never "8П".
+    assert an.recover_house_number("Лютеранська", "Лютеранська, 8 Пропонується") == "8"
+
+
+def test_recover_house_number_slash_fraction_without_comma():
+    # "Велика Васильківська 62/64" — a slash fraction is a strong house signal,
+    # accepted even without a comma separator.
+    txt = "Придбання офісу в БЦ Велика Васильківська 62/64 — це можливість"
+    assert an.recover_house_number("вул. Велика Васильківська", txt) == "62/64"
+
+
+def test_recover_house_number_bare_lone_number_needs_separator():
+    # A lone digit with no comma/буд. and no strong signal must NOT be taken
+    # ("Вишнева 1 хвилина пішки" → not house 1).
+    assert an.recover_house_number("Вишнева", "вул. Вишнева 1 хвилина пішки до лісу") is None
+
+
+def test_recover_house_number_none_without_adjacent_number():
+    assert an.recover_house_number("вул. Юрківська", "будинок на вул. Юрківська у гарному місці") is None
+
+
+def test_recover_house_number_ignores_unrelated_number():
+    # The "8 соток" is not adjacent to the street name → must not be taken as a house.
+    assert an.recover_house_number("вул. Садова", "вул. Садова у центрі, поряд школа, 8 соток") is None

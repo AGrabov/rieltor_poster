@@ -12,7 +12,13 @@ from typing import Any
 
 from bs4 import BeautifulSoup
 
-from crm_data_parser.address_normalize import normalize_city, recover_street_type
+from crm_data_parser.address_normalize import (
+    normalize_city,
+    recover_district,
+    recover_house_number,
+    recover_street,
+    recover_street_type,
+)
 from crm_data_parser.description_analyzer import (
     DescriptionAnalyzer,
     _is_multi_value,
@@ -26,6 +32,11 @@ logger = setup_logger(__name__)
 # Поверх вище за це значення майже завжди означає зіпсовану CRM-комірку
 # (помилковий парсинг чужого числа), а не реальний поверх.
 _IMPLAUSIBLE_FLOOR = 30
+
+# Міста, де rieltor.ua «Район» — це житловий масив/місцевість (Печерськ, Поділ,
+# Осокорки), а НЕ адміністративний район. Для них НЕ беремо "Xський район" з опису
+# (це був би район області). Для сіл/смт навпаки — район = адмін. район області.
+_DISTRICT_IS_MASYV_CITIES = frozenset({"київ", "харків", "одеса", "дніпро", "львів", "запоріжжя"})
 
 # ── CRM → Schema mapping tables ──────────────────────────────────────
 
@@ -516,6 +527,14 @@ class HTMLOfferParser:
                     logger.debug("Тип вулиці з опису: '%s' → '%s'", addr["Вулиця"], typed)
                     addr["Вулиця"] = typed
 
+            # Доповнити відсутні Район/Вулиця/Будинок з опису (коли структурована
+            # адреса неповна, а опис містить повніший адрес).
+            if addr is None:
+                addr = {}
+            self._recover_address_from_description(addr, full_text)
+            if addr:
+                result["address"] = addr
+
             analyzed_data = self.analyzer.analyze(full_text, {})
             for key, value in analyzed_data.items():
                 if key in _STRUCTURED_FIELDS or value is None:
@@ -529,7 +548,9 @@ class HTMLOfferParser:
                 # перезаписує наявну, лише дозаповнює відсутню.
                 if key == "Поверховість" and str(result.get(key) or "").strip():
                     if result[key] != value:
-                        logger.debug("Опис НЕ перезаписує CRM-поверховість '%s' (опис пропонував '%s')", result[key], value)
+                        logger.debug(
+                            "Опис НЕ перезаписує CRM-поверховість '%s' (опис пропонував '%s')", result[key], value
+                        )
                     continue
                 # Поверх: CRM головний, доки поверх правдоподібний; зіпсований
                 # (> поверховості або > 30) дозволяємо виправити з опису, але
@@ -539,7 +560,9 @@ class HTMLOfferParser:
                         logger.debug("Опис виправляє зіпсований CRM-поверх '%s' → '%s'", result["Поверх"], value)
                         result["Поверх"] = value
                     elif result["Поверх"] != value:
-                        logger.debug("Опис НЕ перезаписує CRM-поверх '%s' (опис пропонував '%s')", result["Поверх"], value)
+                        logger.debug(
+                            "Опис НЕ перезаписує CRM-поверх '%s' (опис пропонував '%s')", result["Поверх"], value
+                        )
                     continue
                 if key in result and result[key] != value:
                     logger.debug("Опис перезаписує CRM: %s='%s' → '%s'", key, result[key], value)
@@ -728,6 +751,40 @@ class HTMLOfferParser:
                             break
 
         return address if address else {}
+
+    def _recover_address_from_description(self, address: dict, full_text: str) -> None:
+        """Доповнити відсутні частини адреси (Район/Вулиця/Будинок) з опису.
+
+        CRM часто лишає структуровану адресу неповною, тоді як опис містить повніший
+        адрес ("…Васильківський район, с. Кодаки, вул. Набережна, 14А"). Заповнюємо
+        ЛИШЕ відсутні поля — наявні значення не перезаписуємо.
+        """
+        if not full_text or not isinstance(address, dict):
+            return
+
+        # Район: для великих міст район = масив (Печерськ), а не адмін. район із
+        # тексту — тож там не чіпаємо. Для сіл/смт "Xський район" з опису і є тим,
+        # що очікує сайт (Кодаки → Васильківський).
+        city = (address.get("Місто") or "").strip().lower()
+        if not str(address.get("Район") or "").strip() and city not in _DISTRICT_IS_MASYV_CITIES:
+            district = recover_district(full_text)
+            if district:
+                address["Район"] = district
+                logger.debug("Район відновлено з опису: '%s'", district)
+
+        # Вулиця: коли структурованої вулиці немає зовсім.
+        if not str(address.get("Вулиця") or "").strip():
+            street = recover_street(full_text)
+            if street:
+                address["Вулиця"] = street
+                logger.debug("Вулицю відновлено з опису: '%s'", street)
+
+        # Будинок: лише поряд із (вже відомою) назвою вулиці.
+        if str(address.get("Вулиця") or "").strip() and not str(address.get("Будинок") or "").strip():
+            house = recover_house_number(address["Вулиця"], full_text)
+            if house:
+                address["Будинок"] = house
+                logger.debug("Будинок відновлено з опису: '%s'", house)
 
     def _extract_summary_stats(self) -> dict:
         """Вилучити дані зі зведених значень властивостей (запасний варіант).

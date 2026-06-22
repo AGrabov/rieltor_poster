@@ -264,6 +264,133 @@ def recover_street_type(street: str, *texts: str) -> str:
     return street
 
 
+# ── Recover missing address parts from the free-text description ───────────
+# CRM cards often leave the structured Район/Вулиця/Будинок empty while the
+# description carries the full address ("Київська область, Васильківський район,
+# с. Кодаки, вул. Набережна, 14А"). These helpers pull each part back out.
+
+# "Xський/Xцький район" / "р-н" → the administrative raion adjective. For suburban
+# villages this raion IS the value rieltor.ua expects (Кодаки → Васильківський).
+_DISTRICT_RE = re.compile(
+    r"\b([А-ЯІЇЄҐ][А-Яа-яІіЇїЄєҐґ'’\-]*?(?:ськ|цьк)\w*)\s+(?:район\w*|р[\-\s]?н\w*)",
+    re.IGNORECASE,
+)
+
+
+def _district_to_nominative(adj: str) -> str:
+    """Звести непрямий відмінок прикметника-району до називного (-ський/-цький)."""
+    nom = re.sub(r"(ськ|цьк)(ого|ому|им|ім|их|ої|ою)$", r"\1ий", adj, flags=re.IGNORECASE)
+    # Title-case each hyphen/space component (опис інколи в нижньому регістрі).
+    parts = re.split(r"([\s\-])", nom)
+    return "".join(p[:1].upper() + p[1:] if p[:1].isalpha() else p for p in parts)
+
+
+def recover_district(*texts: str) -> str | None:
+    """Знайти адміністративний район ("Xський район") у тексті опису.
+
+    Повертає прикметник у називному відмінку ("Васильківський") або None.
+    Звичайне слово «район» без прикметника-«-ський» (напр. "спальний район") —
+    не район у сенсі сайту, тож ігнорується.
+    """
+    for text in texts:
+        if not text:
+            continue
+        m = _DISTRICT_RE.search(text)
+        if m:
+            return _district_to_nominative(m.group(1))
+    return None
+
+
+# Тип вулиці (будь-який регістр) + НАЗВА (має починатися з великої літери, щоб не
+# схопити речення на кшталт "Вулиця повністю забудована"). Назва НЕ може
+# продовжуватися словом з малої літери — інакше проза "по вулиці Чудовий варіант"
+# чи "вул. Набережна Пропонується…" дала б хибну вулицю. Другий токен (складена
+# назва "Лесі Українки", "Велика Васильківська") беремо за тим самим правилом —
+# завдяки бектрекінгу зайвий «Пропонується» відсікається.
+# «дорога»/«шосе» НЕ беремо як тип у вільному тексті — це часті загальні слова
+# ("асфальтована дорога", "вздовж шосе"); тип-перший на кшталт "Харківське шосе"
+# відновлює recover_street_type для вже наявної вулиці.
+_STREET_RECOVER_RE = re.compile(
+    r"(?i:\b(вулиц[яі]|вул|проспект|просп|провулок|пров|бульвар|бул|площ[аі]|пл|"
+    r"набережн\w*|наб|алея|узвіз|проїзд)\.?)\s+"
+    r"([А-ЯІЇЄҐ][а-яіїєґ'’\-]+)"
+    r"(?:\s+([А-ЯІЇЄҐ][а-яіїєґ'’\-]+))?"
+    r"(?!\s*[а-яіїєґ])"
+)
+
+# Канонічний тип → префікс для відображення відновленої вулиці.
+_RECOVER_STREET_DISPLAY: dict[str, str] = {
+    "вул": "вул.",
+    "просп": "просп.",
+    "пров": "пров.",
+    "бул": "бул.",
+    "пл": "пл.",
+    "шосе": "шосе",
+    "наб": "наб.",
+    "алея": "алея",
+    "узвіз": "узвіз",
+    "проїзд": "проїзд",
+    "дорога": "дорога",
+}
+
+
+def recover_street(*texts: str) -> str | None:
+    """Знайти вулицю ("вул./просп./… Назва") у тексті опису.
+
+    Повертає "<тип>. <Назва>" (напр. "вул. Набережна", "вул. Лесі Українки") або
+    None, якщо явної вулиці немає.
+    """
+    for text in texts:
+        if not text:
+            continue
+        m = _STREET_RECOVER_RE.search(text)
+        if m:
+            type_token, w1, w2 = m.group(1), m.group(2), m.group(3)
+            name = f"{w1} {w2}" if w2 else w1
+            disp = _RECOVER_STREET_DISPLAY.get(street_type_canon(type_token), "вул.")
+            return f"{disp} {name}"
+    return None
+
+
+# Номер будинку: 1–3 цифри, опційно дріб /N або -N, опційно одна літера в кінці
+# (літера рахується лише якщо за нею НЕ ще літера — щоб "8 Пропонується" не дало "8П").
+_HOUSE_TOKEN = (
+    r"\d{1,3}(?:\s?[/\-]\s?\d{1,3})?"
+    r"(?:[А-ЯІЇЄҐа-яіїєґA-Za-z](?![А-Яа-яІіЇїЄєҐґA-Za-z]))?"
+)
+# Межа «назва — ціле слово»: не літера/цифра до й після назви.
+_NAME_BOUND_AFTER = r"(?![А-Яа-яІіЇїЄєҐґA-Za-z])"
+
+
+def recover_house_number(street: str, *texts: str) -> str | None:
+    """Знайти номер будинку поряд із (вже відомою) назвою вулиці в тексті опису.
+
+    Приймає номер, що йде за назвою через кому/«буд.»/«№» (будь-який номер), або
+    впритул через пробіл — але тоді лише «сильний» токен (дріб N/M або з літерою),
+    щоб самотня цифра ("Вишнева 1 хвилина") не стала будинком. Повертає номер
+    ("14А", "62/64", "8") або None.
+    """
+    name = strip_street_type(street or "").strip()
+    if len(name) < 3:
+        return None
+    n = re.escape(name)
+    sep_re = re.compile(n + _NAME_BOUND_AFTER + r"\s*(?:,|буд\.?|будинок|№)\s*(" + _HOUSE_TOKEN + r")", re.IGNORECASE)
+    bare_re = re.compile(n + _NAME_BOUND_AFTER + r"\s+(" + _HOUSE_TOKEN + r")", re.IGNORECASE)
+    for text in texts:
+        if not text:
+            continue
+        m = sep_re.search(text)
+        if m:
+            return re.sub(r"\s+", "", m.group(1))
+        m = bare_re.search(text)
+        if m:
+            val = re.sub(r"\s+", "", m.group(1))
+            # без явного роздільника приймаємо лише «сильний» сигнал (дріб або літера)
+            if re.search(r"[/\-]", val) or re.search(r"[А-ЯІЇЄҐа-яіїєґA-Za-z]$", val):
+                return val
+    return None
+
+
 # ── RU→UA транслітерація назви вулиці ─────────────────────────────────────
 # zem.center шукає лише за українським написанням (рос. → 0 результатів). CRM
 # часто зберігає вулицю російською ("Якубенковская", "Дегтяревская"). Нижче —
@@ -414,9 +541,7 @@ def address_value_matches(desired: str, current: str, *, threshold: float = _VAL
     c_tokens = _value_tokens(current)
     if not q_tokens or not c_tokens:
         return False
-    return all(
-        any(SequenceMatcher(None, q, c).ratio() >= threshold for c in c_tokens) for q in q_tokens
-    )
+    return all(any(SequenceMatcher(None, q, c).ratio() >= threshold for c in c_tokens) for q in q_tokens)
 
 
 # Публічна назва (для читабельності імпортів) + внутрішній індекс.
