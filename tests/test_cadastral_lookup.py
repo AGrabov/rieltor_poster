@@ -399,6 +399,7 @@ def test_enrich_warns_when_cadastral_not_found(monkeypatch, caplog):
     import logging
 
     monkeypatch.setattr(cl, "lookup_cadastral_record", lambda **kw: None)
+    monkeypatch.setattr(cl, "lookup_raion_by_address", lambda city, street, house="": None)
     offer = {
         "property_type": "Ділянка",
         "article": "A777",
@@ -468,3 +469,128 @@ def test_enrich_keeps_crm_raion_when_address_conflicts(monkeypatch):
     }
     cl.enrich_offer_data_with_cadastral(offer)
     assert offer["address"]["Район"] == "Печерський"
+
+
+# ── lookup_raion_by_address: район-level consensus (no cadnum needed) ──────
+def test_lookup_raion_consensus_single_district(monkeypatch):
+    # Усі парцели на вулиці в одному районі → район визначено без номера будинку.
+    cl.lookup_raion_by_address.cache_clear()
+    monkeypatch.setattr(
+        cl.requests,
+        "get",
+        lambda url, **kw: _FakeResp(
+            json_data={
+                "items": [
+                    {"cadnum": "8000000000:90:001:0001", "address": "м.Київ, Голосіївський р-н, вулиця Деміївська, 12"},
+                    {"cadnum": "8000000000:90:001:0002", "address": "м.Київ, Голосіївський р-н, вулиця Деміївська, 14"},
+                ]
+            }
+        ),
+    )
+    assert cl.lookup_raion_by_address("Київ", "Деміївська", "") == "Голосіївський"
+
+
+def test_lookup_raion_none_when_districts_disagree(monkeypatch):
+    # Вулиця на межі двох районів і номера будинку немає → не вгадуємо (None).
+    cl.lookup_raion_by_address.cache_clear()
+    monkeypatch.setattr(
+        cl.requests,
+        "get",
+        lambda url, **kw: _FakeResp(
+            json_data={
+                "items": [
+                    {"cadnum": "1", "address": "м.Київ, Голосіївський р-н, вулиця Межова, 1"},
+                    {"cadnum": "2", "address": "м.Київ, Печерський р-н, вулиця Межова, 99"},
+                ]
+            }
+        ),
+    )
+    assert cl.lookup_raion_by_address("Київ", "Межова", "") is None
+
+
+def test_lookup_raion_house_match_disambiguates(monkeypatch):
+    # Різнорайонні кандидати, але точний номер будинку обирає правильний район.
+    cl.lookup_raion_by_address.cache_clear()
+    monkeypatch.setattr(
+        cl.requests,
+        "get",
+        lambda url, **kw: _FakeResp(
+            json_data={
+                "items": [
+                    {"cadnum": "1", "address": "м.Київ, Голосіївський р-н, вулиця Спільна, 5"},
+                    {"cadnum": "2", "address": "м.Київ, Печерський р-н, вулиця Спільна, 99"},
+                ]
+            }
+        ),
+    )
+    assert cl.lookup_raion_by_address("Київ", "Спільна", "5") == "Голосіївський"
+
+
+def test_lookup_raion_oblast(monkeypatch):
+    # Не лише Київ: для області район — це адмінрайон (Вишгородський тощо).
+    cl.lookup_raion_by_address.cache_clear()
+    monkeypatch.setattr(
+        cl.requests,
+        "get",
+        lambda url, **kw: _FakeResp(
+            json_data={
+                "items": [
+                    {"cadnum": "3", "address": "Київська обл., Вишгородський р-н, смт Козин, вулиця Лісова, 3"},
+                ]
+            }
+        ),
+    )
+    assert cl.lookup_raion_by_address("Козин", "Лісова", "3") == "Вишгородський"
+
+
+# ── enrich: район for non-cadastral types (Комерційна/Квартира) ───────────
+def test_enrich_corrects_raion_for_commercial(monkeypatch):
+    # Комерційна не має кадастру, але «Район» обов'язковий на сайті, а CRM дав
+    # мікрорайон ("Корчувате") → нормалізуємо адмінрайон з реєстру за адресою.
+    monkeypatch.setattr(cl, "lookup_raion_by_address", lambda city, street, house="": "Голосіївський")
+    offer = {
+        "property_type": "Комерційна",
+        "article": "A30328",
+        "address": {"Місто": "Київ", "Вулиця": "вул. Деміївська", "Будинок": "12", "Район": "Корчувате"},
+    }
+    changed = cl.enrich_offer_data_with_cadastral(offer)
+    assert changed is True
+    assert offer["address"]["Район"] == "Голосіївський"
+
+
+def test_enrich_commercial_keeps_raion_when_lookup_none(monkeypatch):
+    # Реєстр не дав впевненого району → лишаємо CRM-значення, не вгадуємо.
+    monkeypatch.setattr(cl, "lookup_raion_by_address", lambda city, street, house="": None)
+    offer = {
+        "property_type": "Комерційна",
+        "article": "A1",
+        "address": {"Місто": "Київ", "Вулиця": "вул. Межова", "Будинок": "1", "Район": "Корчувате"},
+    }
+    cl.enrich_offer_data_with_cadastral(offer)
+    assert offer["address"]["Район"] == "Корчувате"
+
+
+def test_enrich_plot_corrects_raion_when_cadnum_not_found(monkeypatch):
+    # Ділянка без знайденого кадастру (бракує номера будинку) — «Район» усе одно
+    # обов'язковий, тож визначаємо адмінрайон за вулицею як запасний варіант.
+    monkeypatch.setattr(cl, "lookup_cadastral_record", lambda **kw: None)
+    monkeypatch.setattr(cl, "lookup_raion_by_address", lambda city, street, house="": "Бориспільський")
+    offer = {
+        "property_type": "Ділянка",
+        "article": "A555",
+        "address": {"Місто": "Гора", "Вулиця": "вул. Польова", "Район": "Стара"},
+    }
+    changed = cl.enrich_offer_data_with_cadastral(offer)
+    assert changed is True
+    assert offer["address"]["Район"] == "Бориспільський"
+
+
+def test_enrich_commercial_no_network_without_address(monkeypatch):
+    # Без вулиці/міста район-пошук не запускається (нема за чим шукати).
+    def boom(*a, **k):
+        raise AssertionError("район-пошук не має запускатись без адреси")
+
+    monkeypatch.setattr(cl, "lookup_raion_by_address", boom)
+    offer = {"property_type": "Комерційна", "article": "A2", "address": {"Район": "Центр"}}
+    assert cl.enrich_offer_data_with_cadastral(offer) is False
+    assert offer["address"]["Район"] == "Центр"

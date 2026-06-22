@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from difflib import SequenceMatcher
+from functools import lru_cache
 
 import requests
 from bs4 import BeautifulSoup
@@ -488,6 +489,92 @@ def _registry_matches_crm(crm_address: dict, registry_addr: str) -> bool:
     return _pick_verified([("", registry_addr)], street, house) is not None
 
 
+@lru_cache(maxsize=2048)
+def lookup_raion_by_address(city: str, street: str, house: str = "") -> str | None:
+    """Визначити адмінрайон за адресою через zem.center (рівень вулиці).
+
+    Для типів без кадастрового номера (Квартира/Кімната/Комерційна/Паркомісце)
+    поле «Район» усе одно обов'язкове на сайті, а CRM часто дає мікрорайон/масив
+    («Корчувате», «Осокорки», «Центр»), якого немає у списку районів. Район —
+    рівень адмінрайону: усі парцели на одній вулиці міста зазвичай в одному
+    районі, тож точний номер будинку не потрібен.
+
+    Стратегія: zem.center за «місто вулиця [будинок]» → лишаємо кандидатів, чия
+    вулиця фуззі-збігається із запитом; якщо є будинок і серед них є точний збіг
+    номера — беремо район цих парцел; інакше беремо район, СПІЛЬНИЙ для всіх
+    (консенсус). Якщо райони різні (вулиця на межі районів) — None (не вгадуємо).
+
+    Повертає назву району без слова «район»/«р-н» (як на сайті) або None.
+    Кешується в межах процесу (район — рівень вулиці, повтори дешеві).
+    """
+    street_clean = strip_street_type(street)
+    city_clean = normalize_city(city)
+    if not city_clean or not street_clean:
+        return None
+    house_q = normalize_house(house or "")
+
+    queries: list[str] = []
+    for parts in ((city_clean, street_clean, house_q), (city_clean, street_clean)):
+        q = " ".join(p for p in parts if p)
+        if q and q not in queries:
+            queries.append(q)
+
+    candidates: list[tuple[str, str]] = []
+    for q in queries:
+        try:
+            resp = requests.get(
+                _ZEM_SEARCH_URL,
+                params={"q": q, "size": "20"},
+                headers=_ZEM_HEADERS,
+                timeout=(5, 12),
+            )
+            if resp.status_code >= 400:
+                continue
+            for item in (resp.json() or {}).get("items") or []:
+                addr = (item.get("address") or "").strip()
+                if addr:
+                    candidates.append(((item.get("cadnum") or "").strip(), addr))
+        except requests.exceptions.RequestException as e:
+            logger.debug("zem.center (район) недоступна для '%s': %s", q, e)
+            continue
+        except Exception:
+            logger.warning("Помилка zem.center (район) для '%s'", q, exc_info=True)
+            continue
+        if candidates:
+            break  # перший запит, що дав результат
+
+    # лишаємо лише кандидатів на потрібній вулиці (відсіює фуззі-сусідів)
+    on_street = [(c, a) for c, a in candidates if _street_matches(street, a)]
+    if not on_street:
+        return None
+
+    # за наявності номера — спершу пробуємо точний збіг будинку (точніший район)
+    pool = on_street
+    if house_q:
+        house_hits = [(c, a) for c, a in on_street if _house_matches(a, house)]
+        if house_hits:
+            pool = house_hits
+
+    raions = {r for r in (parse_registry_address(a).get("Район") for _, a in pool) if r}
+    if len(raions) == 1:
+        return next(iter(raions))
+    return None
+
+
+def _normalize_raion_from_registry(address: dict, label: str) -> bool:
+    """Дозаповнити/виправити «Район» за адресою через реєстр. True, якщо змінено."""
+    street = (address.get("Вулиця") or "").strip()
+    city = (address.get("Місто") or "").strip()
+    if not street or not city:
+        return False
+    raion = lookup_raion_by_address(city, street, (address.get("Будинок") or "").strip())
+    if raion and address.get("Район") != raion:
+        logger.info("Район з реєстру (адреса) для %s: '%s' → '%s'", label, address.get("Район"), raion)
+        address["Район"] = raion
+        return True
+    return False
+
+
 def enrich_offer_data_with_cadastral(offer_data: dict) -> bool:
     """Дозаповнити кадастровий номер, Район і тип вулиці з реєстру.
 
@@ -507,8 +594,7 @@ def enrich_offer_data_with_cadastral(offer_data: dict) -> bool:
 
     raw_type = (offer_data.get("property_type") or "").lower()
     schema_type = CRM_TYPE_TO_SCHEMA.get(raw_type, raw_type).lower()
-    if schema_type not in _CADASTRAL_SCHEMA_TYPES:
-        return False
+    is_cadastral_type = schema_type in _CADASTRAL_SCHEMA_TYPES
 
     address = offer_data.setdefault("address", {})
     label = offer_data.get("article") or offer_data.get("property_type", "?")
@@ -528,6 +614,14 @@ def enrich_offer_data_with_cadastral(offer_data: dict) -> bool:
             address["Вулиця"] = _typed
             changed = True
             logger.info("Тип вулиці з опису для %s: '%s' → '%s'", label, _street, _typed)
+
+    if not is_cadastral_type:
+        # Типи без кадастру (Квартира/Кімната/Комерційна/Паркомісце): номер не
+        # потрібен, але «Район» обов'язковий. CRM часто дає мікрорайон/масив —
+        # нормалізуємо адмінрайон з реєстру за адресою (рівень вулиці).
+        if _normalize_raion_from_registry(address, label):
+            changed = True
+        return changed
 
     cadnum = (address.get("Кадастровий номер") or "").strip()
     registry_addr: str | None = None
@@ -570,6 +664,10 @@ def enrich_offer_data_with_cadastral(offer_data: dict) -> bool:
             address.get("Вулиця") or "?",
             address.get("Будинок") or "?",
         )
+        # Кадастру немає (часто бракує номера будинку), але «Район» обов'язковий і
+        # для Будинок/Ділянка теж — визначаємо адмінрайон за вулицею з реєстру.
+        if _normalize_raion_from_registry(address, label):
+            changed = True
         return changed
 
     # ── Район + тип вулиці з канонічної адреси реєстру ──
