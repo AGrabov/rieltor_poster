@@ -10,6 +10,12 @@ import colorlog
 
 APP_NAME = os.environ.get("APP_NAME", "")
 
+# Обмеження розміру КОЖНОГО лог-файлу (спільне для всіх хендлерів): ротація при
+# 5 МБ, 2 бекапи → максимум ~15 МБ на лог. Так жоден лог-файл не росте безмежно
+# (важливо тепер, коли логи не очищаються на старті).
+MAX_LOG_BYTES = 5 * 1024 * 1024
+LOG_BACKUP_COUNT = 2
+
 
 class FlushFileHandler(RotatingFileHandler):
     def emit(self, record):
@@ -72,8 +78,8 @@ def init_logging(
         fh = FlushFileHandler(
             str(path),
             mode="a",
-            maxBytes=5 * 1024 * 1024,
-            backupCount=2,
+            maxBytes=MAX_LOG_BYTES,
+            backupCount=LOG_BACKUP_COUNT,
             encoding="utf-8",
         )
         fh.setLevel(log_lvl)
@@ -150,8 +156,8 @@ def extra_file_handler(filename, level: str | None = None):
     fh = FlushFileHandler(
         str(path),
         mode="a",
-        maxBytes=5 * 1024 * 1024,
-        backupCount=2,
+        maxBytes=MAX_LOG_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
         encoding="utf-8",
     )
     fh.setLevel(log_lvl)

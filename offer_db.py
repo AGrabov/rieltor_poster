@@ -223,6 +223,22 @@ class OfferDB:
         self.conn.commit()
         logger.debug("offer_data оновлено для estate_id=%d", estate_id)
 
+    def requeue(self, estate_id: int, offer_data: dict) -> None:
+        """Повернути об'єкт у чергу: оновити offer_data, статус → 'new', очистити помилки.
+
+        Використовується БД-сервісом ремонту після успішного дозаповнення
+        Району/кадастру, щоб наступний запуск Фази 2 спробував опублікувати знову.
+        """
+        self.conn.execute(
+            """UPDATE offers
+               SET offer_data = ?, status = 'new', errors = NULL,
+                   updated_at = datetime('now', 'localtime')
+               WHERE estate_id = ?""",
+            (json.dumps(offer_data, ensure_ascii=False), estate_id),
+        )
+        self.conn.commit()
+        logger.info("Об'єкт %d повернено у чергу (status → new)", estate_id)
+
     def get_offer(self, estate_id: int) -> OfferRecord | None:
         """Повернути один запис за estate_id (для ручного редагування в дашборді)."""
         row = self.conn.execute("SELECT * FROM offers WHERE estate_id = ?", (estate_id,)).fetchone()

@@ -389,7 +389,7 @@ def render_log_console(text: str, level_filter: str, search: str) -> None:
 
 # ── Session state ─────────────────────────────────────────────────────
 
-for _k in ("collect_proc", "post_proc", "schema_proc", "cadastral_proc", "cleanup_proc", "publish_drafts_proc"):
+for _k in ("collect_proc", "post_proc", "schema_proc", "cadastral_proc", "cleanup_proc", "publish_drafts_proc", "repair_proc"):
     st.session_state.setdefault(_k, None)
 st.session_state.setdefault("drafts_count", None)
 
@@ -652,6 +652,27 @@ with tab_service:
 
 # ── Вкладка: База / Небезпечна зона ───────────────────────────────────
 with tab_db:
+    # БД-сервіс: конструктивний ремонт помилкових об'єктів (не належить до небезпечної зони)
+    with st.container(border=True):
+        st.markdown("**🔧 БД-сервіс — виправити помилкові**")
+        st.caption(
+            "Перебирає об'єкти зі статусом «Помилка», донаходить Район і кадастровий "
+            "номер за адресою та повертає виправлені у чергу (стають «Нові»). Помилки "
+            "номера будинку лагодяться через Район/кадастр; не-адресні лишаються без змін. "
+            "Фоновий процес."
+        )
+        if st.button(
+            "🔧 Виправити помилкові",
+            key="repair_btn",
+            width='stretch',
+            disabled=summary["failed"] == 0 or proc_is_running(st.session_state.repair_proc),
+        ):
+            st.session_state.repair_proc = launch(["uv", "run", "python", "main.py", "repair-failed"])
+            st.toast("БД-сервіс запущено!", icon="🔧")
+            st.rerun()
+        render_proc_status("repair_proc", "Виправлення помилкових...", "БД-сервіс завершено")
+
+    st.divider()
     st.warning("⚠ Дії в цьому розділі незворотні.")
 
     # Видалення з БД за статусом
@@ -707,16 +728,7 @@ with tab_db:
 # ── Логи ─────────────────────────────────────────────────────────────
 
 st.divider()
-lh_title, lh_btn, _lh_spacer = st.columns([1.3, 1, 10], vertical_alignment="center")
-with lh_title:
-    st.subheader("Логи")
-with lh_btn:
-    if st.button("🗑", key="clear_logs", help="Очистити лог-файл"):
-        try:
-            LOG_FILE.write_text("", encoding="utf-8")
-            st.toast("Логи очищено", icon="🗑")
-        except Exception as e:
-            st.error(f"Помилка очищення: {e}")
+st.subheader("Логи")
 
 lc1, lc2, lc3 = st.columns([2, 3, 1])
 with lc1:

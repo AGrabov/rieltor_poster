@@ -33,7 +33,15 @@ load_dotenv()
 # ── Drafts count file ────────────────────────────────────────────────
 
 DRAFTS_COUNT_FILE = Path(__file__).parent / "tmp" / "drafts_count.json"
-DRAFTS_LOG_FILE = Path(__file__).parent / "logs" / "drafts_publish.log"
+
+# ── Окремі лог-файли за напрямом роботи ──────────────────────────────
+# Кожна команда, окрім спільного logs/rieltor.log, дублює свої записи у
+# профільний файл: парсинг CRM, публікація та сервісні дії в БД — окремо.
+_LOGS_DIR = Path(__file__).parent / "logs"
+CRM_PARSE_LOG_FILE = _LOGS_DIR / "crm_parse.log"  # Фаза 1 — збір з CRM
+PUBLISH_LOG_FILE = _LOGS_DIR / "publish.log"  # Фаза 2 — публікація
+DB_SERVICE_LOG_FILE = _LOGS_DIR / "db_service.log"  # сервісні дії в БД (кадастр, ремонт)
+DRAFTS_LOG_FILE = _LOGS_DIR / "drafts_publish.log"  # масова публікація чернеток
 
 
 def write_drafts_count(count: int, path: Path = DRAFTS_COUNT_FILE) -> None:
@@ -51,7 +59,7 @@ def read_drafts_count(path: Path = DRAFTS_COUNT_FILE) -> int | None:
 init_logging(
     level=os.getenv("LOG_LEVEL", "INFO"),
     filename="logs/rieltor.log",
-    clear_on_start=True,
+    clear_on_start=False,  # логи більше не очищаються на старті (ротація обмежує розмір)
 )
 logger = setup_logger(__name__)
 
@@ -533,7 +541,9 @@ def phase2_post(
             return pt.lower().startswith("паркомісце")
         return pt.lower() == filt.lower()
 
-    posted = 0
+    published = 0  # успішно (без помилок валідації)
+    failed = 0  # збережено/опубліковано з помилками валідації або винятком
+    skipped = 0  # свідомо пропущено (напр. Будинок без номера)
 
     with OfferDB() as db:
         offers = db.get_unprocessed(
@@ -608,7 +618,7 @@ def phase2_post(
                             offer.article,
                         )
                         db.mark_skipped(offer.estate_id, "Будинок без номера будинку")
-                        posted += 1
+                        skipped += 1
                         continue
 
                     # Збагатити кадастровим номером якщо відсутній (phase 2 fallback)
@@ -639,13 +649,13 @@ def phase2_post(
                             json.dumps(offer_data, ensure_ascii=False, indent=2),
                         )
                         db.mark_failed(offer.estate_id, report)
+                        failed += 1
                     else:
                         db.mark_posted(offer.estate_id, rieltor_id)
+                        published += 1
 
                     if offer.article:
                         cleanup_photos(offer.article)
-
-                    posted += 1
 
                 except FormValidationError as e:
                     logger.error("Помилка валідації для об'єкта %d: %s", offer.estate_id, e)
@@ -656,6 +666,7 @@ def phase2_post(
                         json.dumps(offer_data, ensure_ascii=False, indent=2),
                     )
                     db.mark_failed(offer.estate_id, e.errors)
+                    failed += 1
 
                 except RieltorErrorPageException as e:
                     logger.warning("Сторінка помилки для об'єкта %d, повторна спроба...", offer.estate_id)
@@ -676,11 +687,12 @@ def phase2_post(
                                 report,
                             )
                             db.mark_failed(offer.estate_id, report)
+                            failed += 1
                         else:
                             db.mark_posted(offer.estate_id, rieltor_id)
                             if offer.article:
                                 cleanup_photos(offer.article)
-                            posted += 1
+                            published += 1
                     except Exception as retry_e:
                         logger.error("Повтор для об'єкта %d не вдався: %s", offer.estate_id, retry_e)
                         logger.error(
@@ -690,6 +702,7 @@ def phase2_post(
                             json.dumps(offer_data, ensure_ascii=False, indent=2),
                         )
                         db.mark_failed(offer.estate_id, [{"error": str(e)}])
+                        failed += 1
 
                 except Exception:
                     logger.exception("Непередбачена помилка при публікації об'єкта %d", offer.estate_id)
@@ -700,9 +713,19 @@ def phase2_post(
                         json.dumps(offer_data, ensure_ascii=False, indent=2),
                     )
                     db.mark_failed(offer.estate_id, [{"error": "unexpected error"}])
+                    failed += 1
 
-    logger.info("Фаза 2 завершена: %d оголошень опубліковано", posted)
-    return posted
+    processed = published + failed + skipped
+    action = "опубліковано" if publish else "збережено чернеток"
+    logger.info(
+        "Фаза 2 завершена: %s %d, з помилками валідації %d, пропущено %d (усього оброблено %d)",
+        action,
+        published,
+        failed,
+        skipped,
+        processed,
+    )
+    return published
 
 
 # ── cadastral: fill missing cadastral numbers in DB ─────────────────
@@ -1130,6 +1153,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_cad = sub.add_parser("cadastral", help="Fill missing cadastral numbers in DB")
     p_cad.add_argument("--max-count", type=int, help="Max offers to process")
 
+    # repair-failed (БД-сервіс)
+    p_repair = sub.add_parser(
+        "repair-failed",
+        help="Repair failed offers via район/cadastral lookup and requeue the fixed ones",
+    )
+    p_repair.add_argument("--max-count", type=int, help="Max failed offers to process")
+
     # clean-trash
     p_clean = sub.add_parser(
         "clean-trash",
@@ -1186,35 +1216,45 @@ def main() -> None:
 
     try:
         if args.command == "collect":
-            phase1_collect(
-                max_pages=args.max_pages,
-                max_count=args.max_count,
-                deal_type=args.deal_type,
-                property_type=args.property_type,
-                headless=headless,
-                debug=args.debug,
-            )
+            with extra_file_handler(CRM_PARSE_LOG_FILE):
+                phase1_collect(
+                    max_pages=args.max_pages,
+                    max_count=args.max_count,
+                    deal_type=args.deal_type,
+                    property_type=args.property_type,
+                    headless=headless,
+                    debug=args.debug,
+                )
 
         elif args.command == "post":
-            phase2_post(
-                publish=args.publish,
-                deal_type=args.deal_type,
-                property_type=args.property_type,
-                max_count=args.max_count,
-                headless=headless,
-                debug=args.debug,
-            )
+            with extra_file_handler(PUBLISH_LOG_FILE):
+                phase2_post(
+                    publish=args.publish,
+                    deal_type=args.deal_type,
+                    property_type=args.property_type,
+                    max_count=args.max_count,
+                    headless=headless,
+                    debug=args.debug,
+                )
 
         elif args.command == "post-one":
-            post_single_offer(
-                offer_source=args.source,
-                publish=args.publish,
-                headless=headless,
-                debug=args.debug,
-            )
+            with extra_file_handler(PUBLISH_LOG_FILE):
+                post_single_offer(
+                    offer_source=args.source,
+                    publish=args.publish,
+                    headless=headless,
+                    debug=args.debug,
+                )
 
         elif args.command == "cadastral":
-            phase_cadastral(max_count=args.max_count)
+            with extra_file_handler(DB_SERVICE_LOG_FILE):
+                phase_cadastral(max_count=args.max_count)
+
+        elif args.command == "repair-failed":
+            from repair import repair_failed_offers
+
+            with extra_file_handler(DB_SERVICE_LOG_FILE):
+                repair_failed_offers(max_count=args.max_count)
 
         elif args.command == "clean-trash":
             phase_clean_trash(
@@ -1251,9 +1291,11 @@ def main() -> None:
             )
 
         else:
-            # No subcommand = full pipeline (collect + post draft)
-            phase1_collect(headless=headless, debug=args.debug)
-            phase2_post(publish=False, headless=headless, debug=args.debug)
+            # No subcommand = full pipeline (collect + post draft) — кожна фаза у свій лог
+            with extra_file_handler(CRM_PARSE_LOG_FILE):
+                phase1_collect(headless=headless, debug=args.debug)
+            with extra_file_handler(PUBLISH_LOG_FILE):
+                phase2_post(publish=False, headless=headless, debug=args.debug)
 
         # Print summary
         from offer_db import OfferDB
