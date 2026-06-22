@@ -33,6 +33,18 @@ if (-not (Test-Path $py)) {
     exit 1
 }
 
+# Verify the writable, gitignored files made it across (these are the whole point:
+# git pull would NOT carry them, robocopy does). Warn loudly if missing/locked.
+foreach ($f in @('offers.db', '.env')) {
+    if (Test-Path (Join-Path $dst $f)) {
+        Write-Host "OK copied: $f"
+    } elseif (Test-Path (Join-Path $src $f)) {
+        Write-Host "WARNING: $f was NOT copied (likely locked). Close the dashboard and re-run."
+    } else {
+        Write-Host "NOTE: $f does not exist in the source - skipping."
+    }
+}
+
 # 2) Verify the copied venv actually runs at the new path; repair with uv sync if not.
 & $py -c 'import streamlit' 1>$null 2>$null
 if ($LASTEXITCODE -ne 0) {
