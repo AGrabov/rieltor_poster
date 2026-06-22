@@ -180,3 +180,4 @@ AGENTS.md
 !dist/
 dist/*
 !dist/RieltorDashboard.exe
+logs/crm_estate.html
