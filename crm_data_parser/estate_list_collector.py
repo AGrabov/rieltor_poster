@@ -43,6 +43,7 @@ class EstateActuality:
     closed: bool
     price: int | None = None
     currency: str | None = None
+    photos: list[str] = field(default_factory=list)
 
 
 def parse_estate_price_from_html(html: str) -> tuple[int | None, str | None]:
@@ -52,6 +53,22 @@ def parse_estate_price_from_html(html: str) -> tuple[int | None, str | None]:
     if not el:
         return None, None
     return parse_price(el.get_text(strip=True))
+
+
+def parse_estate_photos_from_html(html: str) -> list[str]:
+    """Витягти URL фото з галереї сторінки об'єкта CRM (.slider-item.fancybox).
+
+    Той самий селектор, що й у :class:`HTMLOfferParser._extract_photos`. Дозволяє
+    дістати оригінальні посилання на фото під час перевірки актуальності, не
+    вантажачи сторінку повторно.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    urls: list[str] = []
+    for link in soup.select(".slider-item.fancybox"):
+        href = link.get("href")
+        if href:
+            urls.append(href)
+    return urls
 
 # Типи об'єктів, для яких шукаємо кадастровий номер. Комерційна та Паркомісце
 # виключені свідомо: поле «Кадастровий номер» там необов'язкове й лише заважає.
@@ -306,6 +323,7 @@ class EstateListCollector:
             closed=self._html_has_closure_alert(html),
             price=price,
             currency=currency,
+            photos=parse_estate_photos_from_html(html),
         )
 
     def is_estate_closed(self, estate_id: int) -> bool:

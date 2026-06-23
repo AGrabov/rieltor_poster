@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import re
+
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PWTimeout
 
@@ -66,6 +68,34 @@ class PublishedOfferUnpublisher:
             self.page.wait_for_selector(self.TABLE, timeout=self.RENDER_TIMEOUT_MS)
         except PWTimeout:
             logger.warning("Таблиця «Опубліковані» не з'явилася за %d мс", self.RENDER_TIMEOUT_MS)
+
+    def collect_published_ids(self, limit: int = 500) -> list[str]:
+        """Зчитати ID усіх оголошень із вкладки «Опубліковані» (mode=10).
+
+        Повертає список rieltor_offer_id з посилань редагування рядків таблиці.
+        """
+        url = f"https://my.rieltor.ua/offers/management?page=1&limit={limit}&mode=10"
+        try:
+            self.page.goto(url, wait_until="networkidle")
+        except PWTimeout:
+            pass
+        try:
+            self.page.wait_for_selector(self.TABLE, timeout=self.RENDER_TIMEOUT_MS)
+        except PWTimeout:
+            logger.warning("Таблиця «Опубліковані» не з'явилася за %d мс", self.RENDER_TIMEOUT_MS)
+            return []
+        hrefs = self.page.locator("table tbody a[href*='/offers/edit/']").evaluate_all(
+            "els => els.map(e => e.getAttribute('href'))"
+        )
+        ids: list[str] = []
+        seen: set[str] = set()
+        for href in hrefs:
+            m = re.search(r"/offers/edit/(\d+)", href or "")
+            if m and m.group(1) not in seen:
+                seen.add(m.group(1))
+                ids.append(m.group(1))
+        logger.info("Опублікованих на сайті: %d", len(ids))
+        return ids
 
     def _row_locator(self, rieltor_offer_id: str):
         """Локатор рядка, що містить посилання редагування з цим ID."""

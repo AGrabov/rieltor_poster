@@ -179,6 +179,11 @@ class OfferDB:
         rows = self.conn.execute(query, params).fetchall()
         return [_row_to_record(r) for r in rows]
 
+    def get_all(self) -> list[OfferRecord]:
+        """Повернути всі оголошення (для звірки статусів із сайтом)."""
+        rows = self.conn.execute("SELECT * FROM offers ORDER BY id").fetchall()
+        return [_row_to_record(r) for r in rows]
+
     def mark_posted(self, estate_id: int, rieltor_offer_id: str) -> None:
         self.conn.execute(
             """UPDATE offers

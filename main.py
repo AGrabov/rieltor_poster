@@ -42,6 +42,7 @@ CRM_PARSE_LOG_FILE = _LOGS_DIR / "crm_parse.log"  # Фаза 1 — збір з C
 PUBLISH_LOG_FILE = _LOGS_DIR / "publish.log"  # Фаза 2 — публікація
 DB_SERVICE_LOG_FILE = _LOGS_DIR / "db_service.log"  # сервісні дії в БД (кадастр, ремонт)
 DRAFTS_LOG_FILE = _LOGS_DIR / "drafts_publish.log"  # масова публікація чернеток
+SYNC_LOG_FILE = _LOGS_DIR / "sync_status.log"  # звірка статусів БД ↔ сайт
 
 
 def write_drafts_count(count: int, path: Path = DRAFTS_COUNT_FILE) -> None:
@@ -292,9 +293,8 @@ def phase1_collect(
                 else:
                     local_paths = []
                 if local_paths:
-                    if "apartment" not in offer_data:
-                        offer_data["apartment"] = {}
-                    offer_data["apartment"]["photos"] = local_paths
+                    # Зберігаємо й оригінальні URL — джерело для перезавантаження у Фазі 2
+                    _store_downloaded_photos(offer_data, photo_urls, local_paths)
 
                 db.insert_offer(
                     estate_id=item.estate_id,
@@ -343,46 +343,174 @@ def _photos_missing(offer_data: dict) -> bool:
     return not any(Path(p).exists() for p in photos if isinstance(p, str))
 
 
+def _backfill_source_photos(offer, photos: list, db) -> bool:
+    """Зберегти оригінальні URL фото з CRM у БД, якщо їх там ще немає.
+
+    Викликається під час перевірки актуальності: HTML сторінки об'єкта вже
+    завантажено, тож ``apartment.source_photos`` можна поповнити «безкоштовно»
+    для об'єктів, зібраних до фіксу (без збереженого джерела). Це дає змогу
+    перезавантажити фото без повторного збору у Фазі 1.
+
+    Returns:
+        True, якщо джерело записано (раніше його не було).
+    """
+    if not photos:
+        return False
+    offer_data = offer.offer_data or {}
+    apartment = offer_data.get("apartment") or {}
+    existing = [u for u in (apartment.get("source_photos") or []) if isinstance(u, str) and u.strip()]
+    if existing:
+        return False
+    offer_data.setdefault("apartment", {})["source_photos"] = list(photos)
+    offer.offer_data = offer_data
+    db.update_offer_data(offer.estate_id, offer_data)
+    logger.info(
+        "Об'єкт %s: збережено %d URL фото з CRM (джерело для перезавантаження)",
+        offer.article or offer.estate_id,
+        len(photos),
+    )
+    return True
+
+
+def _store_downloaded_photos(offer_data: dict, source_urls: list, local_paths: list) -> None:
+    """Записати локальні шляхи у ``apartment.photos``, зберігши оригінальні CRM-URL.
+
+    Оригінальні URL зберігаються в ``apartment.source_photos`` — саме вони є
+    джерелом для перезавантаження у Фазі 2, якщо локальні файли зникнуть
+    (``apartment.photos`` на той момент уже міститиме локальні шляхи, а не URL).
+    """
+    apartment = offer_data.setdefault("apartment", {})
+    source = [u for u in source_urls if isinstance(u, str) and u.strip()]
+    if source:
+        apartment["source_photos"] = source
+    apartment["photos"] = local_paths
+
+
+def _photo_source_urls(offer_data: dict) -> list[str]:
+    """Оригінальні CRM-URL фото для перезавантаження.
+
+    Спершу беремо збережені в Фазі 1 ``apartment.source_photos``; як запасний
+    варіант — http-посилання, що могли лишитись у ``apartment.photos``
+    (об'єкти, зібрані без вотермарки / до фіксу збереження джерела).
+    """
+    apartment = offer_data.get("apartment") or {}
+    source = [u for u in (apartment.get("source_photos") or []) if isinstance(u, str) and u.strip()]
+    if source:
+        return source
+    return [p for p in apartment.get("photos", []) if isinstance(p, str) and p.startswith("http")]
+
+
+def _download_photos_with_retry(page, photo_urls: list, article: str, max_attempts: int = 3) -> list[str]:
+    """Завантажити фото з повторними спробами; повернути найповніший результат.
+
+    ``download_estate_photos`` сам ловить помилки окремих фото і повертає те, що
+    вдалося. Тут ми повторюємо спробу, поки не отримаємо повний набір або не
+    вичерпаємо ``max_attempts``, лишаючи найкращий (найповніший) результат.
+    """
+    from crm_data_parser import download_estate_photos
+
+    best: list[str] = []
+    for attempt in range(1, max_attempts + 1):
+        try:
+            local_paths = download_estate_photos(page, photo_urls, article)
+        except Exception:
+            logger.warning(
+                "Об'єкт %s: помилка завантаження фото (спроба %d/%d)",
+                article,
+                attempt,
+                max_attempts,
+                exc_info=True,
+            )
+            local_paths = []
+        if len(local_paths) > len(best):
+            best = local_paths
+        if len(best) >= len(photo_urls):
+            if attempt > 1:
+                logger.info(
+                    "Об'єкт %s: усі %d фото завантажено з %d-ї спроби",
+                    article,
+                    len(best),
+                    attempt,
+                )
+            return best
+        if attempt < max_attempts:
+            logger.warning(
+                "Об'єкт %s: завантажено %d/%d фото (спроба %d/%d), повтор...",
+                article,
+                len(local_paths),
+                len(photo_urls),
+                attempt,
+                max_attempts,
+            )
+    return best
+
+
 def _redownload_photos_in_session(page, offers: list, db) -> None:
     """Перезавантажити фото для об'єктів з відсутніми локально файлами.
 
     Використовує вже відкриту CRM-сторінку ``page`` (сесію відкриває викликач).
-    Оновлює offer_data та БД на місці.
+    Джерело — оригінальні CRM-URL (``apartment.source_photos``). Кожне
+    завантаження повторюється до ``PHOTO_REDOWNLOAD_RETRIES`` разів. Оновлює
+    offer_data та БД на місці. Веде детальний лог із підсумком.
     """
-    from crm_data_parser import download_estate_photos, download_watermark_zip
-
-    needing = [
-        o
-        for o in offers
-        if _photos_missing(o.offer_data) and o.offer_data.get("photo_download_link")
-    ]
-    if not needing:
+    missing = [o for o in offers if _photos_missing(o.offer_data)]
+    if not missing:
         return
 
-    logger.info("Перезавантаження фото для %d об'єктів через CRM...", len(needing))
-    add_watermark = os.getenv("ADD_WATERMARK", "true").lower() == "true"
-    for offer in needing:
+    max_attempts = max(1, int(os.getenv("PHOTO_REDOWNLOAD_RETRIES", "3")))
+    logger.info(
+        "Перезавантаження фото: %d об'єктів з відсутніми локальними фото (до %d спроб кожен)",
+        len(missing),
+        max_attempts,
+    )
+
+    recovered = 0
+    failed: list[str] = []  # є джерело, але завантажити не вдалось
+    no_source: list[str] = []  # немає збережених URL (зібрано до фіксу)
+
+    for offer in missing:
         article = offer.article or str(offer.estate_id)
         offer_data = offer.offer_data
-        photo_dl_link = offer_data.get("photo_download_link")
-        photo_urls = [
-            p
-            for p in (offer_data.get("apartment") or {}).get("photos", [])
-            if isinstance(p, str) and p.startswith("http")
-        ]
-        if add_watermark:
-            # Качаємо фото без вотермарки — наш логотип додасть photo_processing
-            local_paths = download_estate_photos(page, photo_urls, article) if photo_urls else []
-        else:
-            local_paths = download_watermark_zip(page, photo_dl_link, article) if photo_dl_link else []
-            if not local_paths and photo_urls:
-                local_paths = download_estate_photos(page, photo_urls, article)
+        source_urls = _photo_source_urls(offer_data)
+        if not source_urls:
+            no_source.append(article)
+            logger.warning(
+                "Об'єкт %s: немає збережених URL фото для перезавантаження "
+                "(зібрано до фіксу — потрібно перезібрати у Фазі 1)",
+                article,
+            )
+            continue
+
+        local_paths = _download_photos_with_retry(page, source_urls, article, max_attempts=max_attempts)
         if local_paths:
             offer_data.setdefault("apartment", {})["photos"] = local_paths
             db.update_offer_data(offer.estate_id, offer_data)
-            logger.info("Перезавантажено %d фото для %s", len(local_paths), article)
+            recovered += 1
+            logger.info(
+                "Об'єкт %s: перезавантажено %d/%d фото",
+                article,
+                len(local_paths),
+                len(source_urls),
+            )
         else:
-            logger.warning("Не вдалось перезавантажити фото для %s", article)
+            failed.append(article)
+            logger.warning(
+                "Об'єкт %s: не вдалось перезавантажити жодного фото з %d URL після %d спроб",
+                article,
+                len(source_urls),
+                max_attempts,
+            )
+
+    logger.info(
+        "Підсумок перезавантаження фото: відновлено %d, не вдалось %d, без джерела URL %d",
+        recovered,
+        len(failed),
+        len(no_source),
+    )
+    if failed:
+        logger.warning("Перезавантаження не вдалось (є джерело): %s", ", ".join(failed))
+    if no_source:
+        logger.warning("Без збережених URL (перезібрати у Фазі 1): %s", ", ".join(no_source))
 
 
 def _price_changed(stored_price, stored_currency, current_price, current_currency) -> bool:
@@ -478,6 +606,8 @@ def _crm_preflight(offers: list, db, headless: bool, debug: bool) -> list:
                 )
                 db.mark_skipped(offer.estate_id, "закрито в CRM")
             else:
+                # Поповнити джерело фото з уже завантаженого HTML (для перезакачки)
+                _backfill_source_photos(offer, actuality.photos, db)
                 live.append(offer)
 
         logger.info(
@@ -1053,6 +1183,93 @@ def phase_publish_drafts(
             )
 
 
+# ── sync-status: reconcile DB statuses with the live site ───────────
+
+
+def phase_sync_status(headless: bool = True, debug: bool = False) -> dict:
+    """Звірити статуси в БД з реальним станом на rieltor.ua (лише звіт, без змін).
+
+    Зчитує вкладки «Опубліковані» (mode=10) і «Чернетки», зіставляє за
+    ``rieltor_offer_id`` із записами БД і друкує розбіжності. БД НЕ змінюється
+    (dry-run); застосування змін — окремим кроком у майбутньому.
+    """
+    import status_sync
+    from offer_db import OfferDB
+    from rieltor_handler import PublishedOfferUnpublisher
+    from rieltor_handler.drafts_publisher import DraftsPublisher
+    from rieltor_handler.rieltor_session import RieltorCredentials, RieltorSession
+
+    phone = os.environ.get("PHONE", "").strip()
+    password = os.environ.get("PASSWORD", "").strip()
+    if not phone or not password:
+        logger.error("PHONE та PASSWORD повинні бути задані в .env")
+        return {}
+
+    with OfferDB() as db:
+        db_offers = [
+            {
+                "estate_id": o.estate_id,
+                "article": o.article,
+                "status": o.status,
+                "rieltor_offer_id": o.rieltor_offer_id,
+            }
+            for o in db.get_all()
+        ]
+    logger.info("У БД оголошень: %d", len(db_offers))
+
+    with RieltorSession(
+        RieltorCredentials(phone=phone, password=password),
+        headless=headless,
+        debug=debug,
+    ) as session:
+        session.login()
+        published_ids = PublishedOfferUnpublisher(session.page).collect_published_ids()
+        draft_ids = [r.key for r in DraftsPublisher(session.page)._collect_rows()]
+    logger.info("Зчитано з сайту: опублікованих=%d, чернеток=%d", len(published_ids), len(draft_ids))
+
+    report = status_sync.reconcile_statuses(db_offers, published_ids, draft_ids)
+    counts = status_sync.summary_counts(report)
+    logger.info(
+        "Звірка (сайт ↔ БД): на сайті опубл.=%d, чернетки=%d, "
+        "БД 'posted' без сайту=%d, на сайті без БД=%d, без rieltor_id=%d",
+        counts["published_on_site"],
+        counts["draft_on_site"],
+        counts["posted_missing_from_site"],
+        counts["site_unknown_to_db"],
+        counts["unmatchable"],
+    )
+
+    def _fmt(o: dict) -> str:
+        return f"estate {o['estate_id']} (article={o.get('article')}, rid={o.get('rieltor_offer_id')})"
+
+    if report.posted_missing_from_site:
+        logger.warning(
+            "БД 'posted', але на сайті НЕ знайдено (%d): %s",
+            len(report.posted_missing_from_site),
+            ", ".join(_fmt(o) for o in report.posted_missing_from_site),
+        )
+    if report.draft_on_site:
+        logger.info(
+            "Ще чернетки на сайті, не опубліковані (%d): %s",
+            len(report.draft_on_site),
+            ", ".join(_fmt(o) for o in report.draft_on_site),
+        )
+    if report.site_unknown_to_db:
+        logger.warning(
+            "На сайті є, а в БД немає rieltor_id (%d): %s",
+            len(report.site_unknown_to_db),
+            ", ".join(report.site_unknown_to_db),
+        )
+    if report.unmatchable:
+        logger.info(
+            "БД new/failed/skipped без rieltor_id — за id не звірити (%d): %s",
+            len(report.unmatchable),
+            ", ".join(_fmt(o) for o in report.unmatchable),
+        )
+    logger.info("Звірка завершена (dry-run, БД не змінено).")
+    return counts
+
+
 # ── post-one: single offer from JSON ────────────────────────────────
 
 
@@ -1195,6 +1412,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_prune.add_argument("--property-type", help="Фільтр: Квартира, Будинок тощо")
     p_prune.add_argument("--dry-run", action="store_true", help="Лише показати кандидатів, нічого не знімати")
 
+    # sync-status
+    sub.add_parser(
+        "sync-status",
+        help="Звірити статуси БД з реальним станом на rieltor.ua (опубліковані + чернетки), лише звіт",
+    )
+
     return parser
 
 
@@ -1289,6 +1512,10 @@ def main() -> None:
                 headless=headless,
                 debug=args.debug,
             )
+
+        elif args.command == "sync-status":
+            with extra_file_handler(SYNC_LOG_FILE):
+                phase_sync_status(headless=headless, debug=args.debug)
 
         else:
             # No subcommand = full pipeline (collect + post draft) — кожна фаза у свій лог
