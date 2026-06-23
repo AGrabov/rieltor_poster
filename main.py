@@ -162,9 +162,7 @@ def _build_collect_item_filter(deal_type: str | None, property_type: str | None)
         crm_type = (item.property_type or "").lower()
         schema = _schema_type(item)
         if property_type == "Безкоштовне":
-            return any(
-                schema == f.lower() or schema.startswith(f.lower() + "_") for f in _FREE_PROPERTY_TYPES
-            )
+            return any(schema == f.lower() or schema.startswith(f.lower() + "_") for f in _FREE_PROPERTY_TYPES)
         pt_lower = property_type.lower()
         # Direct CRM-type match (e.g. "будинок") or schema match (e.g. "таунхаус" → "Будинок").
         return crm_type == pt_lower or schema == pt_lower
@@ -596,8 +594,7 @@ def _crm_preflight(offers: list, db, headless: bool, debug: bool) -> list:
                 # не повинен зривати весь прогон. Fail-open: лишаємо об'єкт
                 # «живим» — публікацію не блокуємо, як і за відсутності CRM-кредів.
                 logger.warning(
-                    "Не вдалось перевірити актуальність об'єкта %d (article=%s) — "
-                    "публікуємо як є",
+                    "Не вдалось перевірити актуальність об'єкта %d (article=%s) — публікуємо як є",
                     offer.estate_id,
                     offer.article,
                     exc_info=True,
@@ -627,6 +624,67 @@ def _crm_preflight(offers: list, db, headless: bool, debug: bool) -> list:
         _redownload_photos_in_session(crm.page, live, db)
 
     return live
+
+
+def _crm_recover_draft_photos(estate_ids: list[int], db, *, headless: bool, debug: bool) -> set[int]:
+    """Фолбек на CRM: завантажити фото для чернеток без локальних файлів.
+
+    Для кожного об'єкта: якщо немає збережених URL джерела
+    (``apartment.source_photos``) — зчитати їх зі сторінки CRM через
+    ``check_actuality`` і поповнити; далі перезавантажити фото на диск та оновити
+    БД через :func:`_redownload_photos_in_session` (ті самі примітиви, що й у
+    пре-флайті Фази 2).
+
+    Якщо CRM_EMAIL/CRM_PASSWORD не задані (напр. поза мережею компанії) — фолбек
+    пропускається з попередженням і повертається порожня множина.
+
+    Returns:
+        Множину estate_id, для яких після прогону з'явились локальні фото.
+    """
+    if not estate_ids:
+        return set()
+
+    crm_email = os.environ.get("CRM_EMAIL", "").strip()
+    crm_password = os.environ.get("CRM_PASSWORD", "").strip()
+    if not crm_email or not crm_password:
+        logger.warning(
+            "CRM_EMAIL/CRM_PASSWORD не задані — фолбек на CRM пропущено (%d чернеток лишаються без фото)",
+            len(estate_ids),
+        )
+        return set()
+
+    from crm_data_parser import CrmCredentials, CrmSession, EstateListCollector
+
+    offers = [o for o in (db.get_offer(eid) for eid in estate_ids) if o]
+    if not offers:
+        logger.warning("Жодну з %d чернеток не зіставлено з БД — фолбек на CRM неможливий", len(estate_ids))
+        return set()
+
+    crm_creds = CrmCredentials(email=crm_email, password=crm_password)
+    logger.info("Фолбек на CRM: завантаження фото для %d чернеток", len(offers))
+    with CrmSession(crm_creds, headless=headless, debug=debug) as crm:
+        crm.login()
+        collector = EstateListCollector(crm.page, debug=debug)
+        # Поповнити джерело фото для тих, у кого його ще немає (зібрано до фіксу).
+        for offer in offers:
+            if _photo_source_urls(offer.offer_data):
+                continue
+            try:
+                actuality = collector.check_actuality(offer.estate_id)
+            except Exception:
+                logger.warning(
+                    "Об'єкт %s: не вдалось зчитати сторінку CRM для джерела фото",
+                    offer.article or offer.estate_id,
+                    exc_info=True,
+                )
+                continue
+            _backfill_source_photos(offer, actuality.photos, db)
+        # Завантажити відсутні фото (оновлює offer.offer_data та БД на місці).
+        _redownload_photos_in_session(crm.page, offers, db)
+
+    recovered = {o.estate_id for o in offers if not _photos_missing(o.offer_data)}
+    logger.info("Фолбек на CRM: відновлено локальні фото для %d з %d чернеток", len(recovered), len(offers))
+    return recovered
 
 
 # ── Phase 2: Rieltor posting ────────────────────────────────────────
@@ -1290,9 +1348,15 @@ def phase_fix_draft_photos(
 ) -> dict:
     """Дозалити фото у чернетки rieltor.ua, що збереглися без фото.
 
-    Джерело фото — локальні файли (перерахунок шляху на поточний PICS_DIR, стійко
-    до переносу встановлення). Якщо локальних файлів немає — об'єкт у звіт «без
-    джерела». dry-run за замовчуванням; реальні дії — за apply=True.
+    Перше джерело фото — локальні файли (перерахунок шляху на поточний PICS_DIR,
+    стійко до переносу встановлення). Якщо локальних файлів немає, з ``apply=True``
+    і заданими CRM-кредами — фолбек на CRM: фото завантажуються з CRM, після чого
+    чернетки дозаливаються другим заходом у rieltor.ua. Без CRM-кредів (напр. поза
+    мережею компанії) фолбек пропускається. dry-run за замовчуванням.
+
+    Браузери не відкриваються одночасно: rieltor-захід (дозаливання з диску) →
+    CRM-захід (завантаження фото) → повторний rieltor-захід (дозаливання
+    відновлених) — як у prune-stale.
     """
     import datetime as dt
 
@@ -1314,36 +1378,58 @@ def phase_fix_draft_photos(
         logger.error("Невірний формат дати: %s. Очікується YYYY-MM-DD", e)
         return {}
 
-    with (
-        OfferDB() as db,
-        RieltorSession(
-            RieltorCredentials(phone=phone, password=password),
-            headless=headless,
-            debug=debug,
-        ) as session,
-    ):
-        session.login()
-        fixer = DraftPhotoFixer(session.page, db, dry_run=not apply)
-        rows = fixer.list_draft_rows()
-        if d_from or d_to:
-            rows = [r for r in rows if DraftsPublisher._in_date_range(r[2], d_from, d_to)]
-            logger.info("Після фільтра дат лишилось чернеток: %d", len(rows))
-        summary = fixer.fix_drafts(rows=rows, max_count=max_count)
+    creds = RieltorCredentials(phone=phone, password=password)
+
+    with OfferDB() as db:
+        # Захід 1 — rieltor: дозалити з локальних файлів; зібрати CRM-цілі.
+        with RieltorSession(creds, headless=headless, debug=debug) as session:
+            session.login()
+            fixer = DraftPhotoFixer(session.page, db, dry_run=not apply)
+            rows = fixer.list_draft_rows()
+            if d_from or d_to:
+                rows = [r for r in rows if DraftsPublisher._in_date_range(r[2], d_from, d_to)]
+                logger.info("Після фільтра дат лишилось чернеток: %d", len(rows))
+            summary = fixer.fix_drafts(rows=rows, max_count=max_count)
+
+        # Фолбек на CRM + повторний захід — лише за реальних дій і наявних цілей.
+        if apply and summary.crm_targets:
+            recovered = _crm_recover_draft_photos(
+                [eid for eid, _, _ in summary.crm_targets], db, headless=headless, debug=debug
+            )
+            pass2_rows = [(rid, href, None) for eid, rid, href in summary.crm_targets if eid in recovered]
+            if pass2_rows:
+                # Захід 2 — rieltor: дозалити фото, завантажені з CRM.
+                with RieltorSession(creds, headless=headless, debug=debug) as session2:
+                    session2.login()
+                    fixer2 = DraftPhotoFixer(session2.page, db, dry_run=False)
+                    summary2 = fixer2.fix_drafts(rows=pass2_rows)
+                # Звести результати другого заходу в один підсумок.
+                summary.fixed.extend(summary2.fixed)
+                summary.errors.extend(summary2.errors)
+            # Відновлені вже не потребують CRM — прибрати їх із needs_crm.
+            summary.needs_crm = [eid for eid in summary.needs_crm if eid not in recovered]
 
     counts = summary.counts()
     logger.info(
-        "Дозаливання фото (%s): дозалито=%d, вже з фото=%d, без джерела=%d, помилок=%d",
+        "Дозаливання фото (%s): дозалито=%d, вже повні=%d, потрібен CRM=%d, не зіставлено з БД=%d, помилок=%d",
         "apply" if apply else "dry-run",
         counts["fixed"],
         counts["already"],
-        counts["no_source"],
+        counts["needs_crm"],
+        counts["no_db"],
         counts["errors"],
     )
-    if summary.no_source:
+    if summary.needs_crm:
         logger.warning(
-            "Без локального джерела фото (%d): %s",
-            len(summary.no_source),
-            ", ".join(map(str, summary.no_source)),
+            "Без локального джерела фото — потрібен CRM (%d): %s",
+            len(summary.needs_crm),
+            ", ".join(map(str, summary.needs_crm)),
+        )
+    if summary.no_db:
+        logger.warning(
+            "Не зіставлено з БД (%d): %s",
+            len(summary.no_db),
+            ", ".join(map(str, summary.no_db)),
         )
     if summary.errors:
         logger.warning("Помилки (%d): %s", len(summary.errors), ", ".join(map(str, summary.errors)))
@@ -1409,23 +1495,41 @@ def post_single_offer(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    # Global flags (--debug, --headless/--no-headless) are accepted both BEFORE
+    # and AFTER the subcommand. The subparsers share them via `common`, whose
+    # actions use SUPPRESS defaults so an absent flag on a subparser does NOT
+    # clobber a value parsed before the subcommand. The main parser gets its OWN
+    # distinct actions (real defaults None/False) — do NOT add `common` as a
+    # parent here and do NOT call set_defaults() for these dests: both would
+    # mutate the shared SUPPRESS actions back to a concrete default and
+    # re-introduce the clobber.
+    _headless_help = "Run browser headless (default). Use --no-headless to show the window. Env: HEADLESS=false."
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--debug", action="store_true", default=argparse.SUPPRESS, help="Enable debug logging")
+    common.add_argument(
+        "--headless",
+        action=argparse.BooleanOptionalAction,
+        default=argparse.SUPPRESS,
+        help=_headless_help,
+    )
+
     parser = argparse.ArgumentParser(
         description="Rieltor offer automation: CRM → parse → post",
     )
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--debug", action="store_true", default=False, help="Enable debug logging")
     # Headless is the default. Use --no-headless for a visible window; HEADLESS env
     # var (true/false) overrides when neither flag is passed.
     parser.add_argument(
         "--headless",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Run browser headless (default). Use --no-headless to show the window. Env: HEADLESS=false.",
+        help=_headless_help,
     )
 
     sub = parser.add_subparsers(dest="command")
 
     # collect
-    p_collect = sub.add_parser("collect", help="Phase 1: collect from CRM into DB")
+    p_collect = sub.add_parser("collect", parents=[common], help="Phase 1: collect from CRM into DB")
     p_collect.add_argument("--max-pages", type=int, help="Max CRM pagination pages")
     p_collect.add_argument("--max-count", type=int, help="Max offers to collect")
     p_collect.add_argument("--deal-type", help="Filter: sell or lease")
@@ -1435,24 +1539,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # post
-    p_post = sub.add_parser("post", help="Phase 2: post from DB to Rieltor")
+    p_post = sub.add_parser("post", parents=[common], help="Phase 2: post from DB to Rieltor")
     p_post.add_argument("--publish", action="store_true", help="Publish instead of draft")
     p_post.add_argument("--max-count", type=int, help="Max offers to post")
     p_post.add_argument("--deal-type", help="Filter: sell or lease")
     p_post.add_argument("--property-type", help="Filter: Квартира, Будинок, etc.")
 
     # post-one
-    p_one = sub.add_parser("post-one", help="Post a single offer from JSON")
+    p_one = sub.add_parser("post-one", parents=[common], help="Post a single offer from JSON")
     p_one.add_argument("source", help="JSON string or path to .json file")
     p_one.add_argument("--publish", action="store_true", help="Publish instead of draft")
 
     # cadastral
-    p_cad = sub.add_parser("cadastral", help="Fill missing cadastral numbers in DB")
+    p_cad = sub.add_parser("cadastral", parents=[common], help="Fill missing cadastral numbers in DB")
     p_cad.add_argument("--max-count", type=int, help="Max offers to process")
 
     # repair-failed (БД-сервіс)
     p_repair = sub.add_parser(
         "repair-failed",
+        parents=[common],
         help="Repair failed offers via район/cadastral lookup and requeue the fixed ones",
     )
     p_repair.add_argument("--max-count", type=int, help="Max failed offers to process")
@@ -1460,6 +1565,7 @@ def build_parser() -> argparse.ArgumentParser:
     # clean-trash
     p_clean = sub.add_parser(
         "clean-trash",
+        parents=[common],
         help="Bulk-clean rieltor.ua: «Закрита база» → «Видалені» → permanently",
     )
     p_clean.add_argument("--max-count", type=int, help="Max stage-1 deletions («Закрита база»)")
@@ -1469,7 +1575,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_clean.add_argument("--deleted-only", action="store_true", help="Stage 2 only (purge «Видалені» permanently)")
 
     # publish-drafts
-    p_pub = sub.add_parser("publish-drafts", help="Bulk-publish drafts on rieltor.ua")
+    p_pub = sub.add_parser("publish-drafts", parents=[common], help="Bulk-publish drafts on rieltor.ua")
     p_pub.add_argument("--count-only", action="store_true", help="Лише порахувати -> tmp/drafts_count.json")
     p_pub.add_argument("--max-count", type=int, help="Макс. кількість публікацій")
     p_pub.add_argument("--date-from", help="Дата з (YYYY-MM-DD)")
@@ -1485,6 +1591,7 @@ def build_parser() -> argparse.ArgumentParser:
     # prune-stale
     p_prune = sub.add_parser(
         "prune-stale",
+        parents=[common],
         help="Зняти з реклами опубліковані об'єкти, що закрилися в CRM (→ «Закрита база»)",
     )
     p_prune.add_argument("--max-count", type=int, help="Макс. кількість знятих")
@@ -1495,12 +1602,14 @@ def build_parser() -> argparse.ArgumentParser:
     # sync-status
     sub.add_parser(
         "sync-status",
+        parents=[common],
         help="Звірити статуси БД з реальним станом на rieltor.ua (опубліковані + чернетки), лише звіт",
     )
 
     # fix-draft-photos
     p_fix = sub.add_parser(
         "fix-draft-photos",
+        parents=[common],
         help="Дозалити фото у чернетки rieltor.ua, що збереглися без фото (dry-run за замовч.)",
     )
     p_fix.add_argument("--apply", action="store_true", help="Реально дозаливати фото (без --apply — лише звіт)")

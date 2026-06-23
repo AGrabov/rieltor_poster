@@ -50,6 +50,10 @@ class FixSummary:
     needs_crm: list = field(default_factory=list)  # фото немає на сайті й немає локально
     no_db: list = field(default_factory=list)  # чернетку не зіставлено з БД
     errors: list = field(default_factory=list)
+    # Цілі для фолбеку на CRM: (estate_id, rieltor_id, edit_href) для кожної
+    # needs_crm-чернетки — щоб після завантаження фото з CRM повторно відкрити
+    # саме ці сторінки редагування й дозалити (паралельно до needs_crm).
+    crm_targets: list = field(default_factory=list)
 
     def counts(self) -> dict:
         return {
@@ -117,6 +121,7 @@ class DraftPhotoFixer:
                         did.append(f"photos:{len(local_photos)}")
                     else:
                         summary.needs_crm.append(eid)
+                        summary.crm_targets.append((eid, rid, href))
                         logger.warning(
                             "estate %s (%s): фото немає на сайті й немає локально — потрібен CRM",
                             eid,

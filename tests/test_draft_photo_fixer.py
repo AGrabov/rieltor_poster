@@ -116,6 +116,26 @@ def test_cycle_no_action_when_only_photos_needed_but_no_local(monkeypatch):
     assert fx.applied == []
 
 
+def test_cycle_records_crm_targets_for_needs_crm(monkeypatch):
+    """needs_crm-чернетки записують (estate_id, rid, href) у crm_targets для фолбеку."""
+    monkeypatch.setattr("rieltor_handler.draft_photo_fixer.local_photos_for_offer", lambda od: [])
+    rows = [("100", "/offers/edit/100")]
+    state = {"/offers/edit/100": {"photos": 0, "desc": "опис є", "estate_id": 1}}
+    fx = _FakeFixer(rows, state, _FakeDB({1: _offer()}), dry_run=False)
+    s = fx.fix_drafts()
+    assert s.crm_targets == [(1, "100", "/offers/edit/100")]
+
+
+def test_cycle_no_crm_target_when_local_photos_exist(monkeypatch):
+    """Якщо локальні фото є — чернетка не потрапляє у crm_targets."""
+    monkeypatch.setattr("rieltor_handler.draft_photo_fixer.local_photos_for_offer", lambda od: ["pA"])
+    rows = [("100", "/offers/edit/100")]
+    state = {"/offers/edit/100": {"photos": 0, "desc": "опис є", "estate_id": 1}}
+    fx = _FakeFixer(rows, state, _FakeDB({1: _offer()}), dry_run=False)
+    s = fx.fix_drafts()
+    assert s.crm_targets == []
+
+
 def test_cycle_dry_run_does_not_apply(monkeypatch):
     monkeypatch.setattr("rieltor_handler.draft_photo_fixer.local_photos_for_offer", lambda od: ["pA"])
     rows = [("100", "/offers/edit/100")]
