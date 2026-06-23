@@ -1,4 +1,4 @@
-"""Тести дозаливання фото у чернетки без фото (чиста логіка, без браузера)."""
+"""Тести дозаливання фото/опису у неповні чернетки (чиста логіка, без браузера)."""
 
 from __future__ import annotations
 
@@ -35,22 +35,20 @@ class _Rec:
 
 
 class _FakeDB:
-    def __init__(self, by_article):
-        self._m = by_article
+    def __init__(self, by_id):
+        self._m = by_id
 
-    def get_by_article(self, article):
-        return self._m.get(article)
+    def get_offer(self, estate_id):
+        return self._m.get(estate_id)
 
 
 class _FakeFixer(DraftPhotoFixer):
-    """DraftPhotoFixer з підробленими браузерними примітивами."""
-
     def __init__(self, rows, edit_state, db, *, dry_run):
         super().__init__(page=None, db=db, dry_run=dry_run)
-        self._rows = rows  # [(key, href, date)]
-        self._state = edit_state  # href -> {"photos": int, "article": str}
+        self._rows = rows  # [(rid, href)]
+        self._state = edit_state  # href -> {photos:int, desc:str, estate_id:int}
         self._cur = {}
-        self.uploaded = []
+        self.applied = []  # (offer_data, pt, dt)
 
     def list_draft_rows(self):
         return self._rows
@@ -58,77 +56,91 @@ class _FakeFixer(DraftPhotoFixer):
     def open_edit(self, href):
         self._cur = self._state.get(href, {})
 
-    def photo_count(self):
+    def site_photo_count(self):
         return self._cur.get("photos", 0)
 
-    def read_article(self):
-        return self._cur.get("article")
+    def site_description(self):
+        return self._cur.get("desc", "")
 
-    def upload_photos(self, paths):
-        self.uploaded.append((self._cur.get("article"), list(paths)))
+    def read_estate_id(self):
+        return self._cur.get("estate_id")
+
+    def apply_fix(self, offer_data, pt, dt):
+        self.applied.append((offer_data, pt, dt))
         return True
 
 
-def _od(photos):
-    return {"apartment": {"photos": photos}}
+def _offer(desc="db desc", photos=("x",), pt="Квартира", dt="Продаж"):
+    return _Rec({"property_type": pt, "offer_type": dt, "apartment": {"description": desc, "photos": list(photos)}})
 
 
-def test_cycle_skips_drafts_with_photos(monkeypatch):
-    monkeypatch.setattr(
-        "rieltor_handler.draft_photo_fixer.local_photos_for_offer", lambda od: ["p"]
-    )
-    rows = [("100", "/offers/edit/100", None)]
-    state = {"/offers/edit/100": {"photos": 5, "article": "A1"}}
-    fx = _FakeFixer(rows, state, _FakeDB({"A1": _Rec(_od([]))}), dry_run=False)
+def test_cycle_skips_complete_drafts():
+    rows = [("100", "/offers/edit/100")]
+    state = {"/offers/edit/100": {"photos": 5, "desc": "є опис", "estate_id": 1}}
+    fx = _FakeFixer(rows, state, _FakeDB({1: _offer()}), dry_run=False)
     s = fx.fix_drafts()
-    assert s.already == ["100"]
-    assert fx.uploaded == []
+    assert s.already == [1]
+    assert fx.applied == []
 
 
-def test_cycle_uploads_when_missing_and_local_present(monkeypatch):
-    monkeypatch.setattr(
-        "rieltor_handler.draft_photo_fixer.local_photos_for_offer", lambda od: ["pA", "pB"]
-    )
-    rows = [("100", "/offers/edit/100", None)]
-    state = {"/offers/edit/100": {"photos": 0, "article": "A1"}}
-    fx = _FakeFixer(rows, state, _FakeDB({"A1": _Rec(_od(["x"]))}), dry_run=False)
+def test_cycle_fixes_photos_only_when_desc_present(monkeypatch):
+    monkeypatch.setattr("rieltor_handler.draft_photo_fixer.local_photos_for_offer", lambda od: ["pA", "pB"])
+    rows = [("100", "/offers/edit/100")]
+    state = {"/offers/edit/100": {"photos": 0, "desc": "вже є опис", "estate_id": 1}}
+    fx = _FakeFixer(rows, state, _FakeDB({1: _offer()}), dry_run=False)
     s = fx.fix_drafts()
-    assert s.fixed == ["A1"]
-    assert fx.uploaded == [("A1", ["pA", "pB"])]
+    assert s.fixed == [(1, ["photos:2"])]
+    assert fx.applied == [({"apartment": {"photos": ["pA", "pB"]}}, "Квартира", "Продаж")]
+    assert s.needs_crm == []
 
 
-def test_cycle_dry_run_does_not_upload(monkeypatch):
-    monkeypatch.setattr(
-        "rieltor_handler.draft_photo_fixer.local_photos_for_offer", lambda od: ["pA"]
-    )
-    rows = [("100", "/offers/edit/100", None)]
-    state = {"/offers/edit/100": {"photos": 0, "article": "A1"}}
-    fx = _FakeFixer(rows, state, _FakeDB({"A1": _Rec(_od(["x"]))}), dry_run=True)
+def test_cycle_fixes_desc_and_flags_crm_when_no_local_photos(monkeypatch):
+    monkeypatch.setattr("rieltor_handler.draft_photo_fixer.local_photos_for_offer", lambda od: [])
+    rows = [("100", "/offers/edit/100")]
+    state = {"/offers/edit/100": {"photos": 0, "desc": "", "estate_id": 1}}
+    fx = _FakeFixer(rows, state, _FakeDB({1: _offer(desc="реальний опис")}), dry_run=False)
     s = fx.fix_drafts()
-    assert s.fixed == ["A1"]
-    assert fx.uploaded == []  # dry-run: нічого не заливаємо
+    assert s.needs_crm == [1]
+    assert s.fixed == [(1, ["desc"])]
+    assert fx.applied == [({"apartment": {"description": "реальний опис"}}, "Квартира", "Продаж")]
 
 
-def test_cycle_no_source_when_no_local_photos(monkeypatch):
-    monkeypatch.setattr(
-        "rieltor_handler.draft_photo_fixer.local_photos_for_offer", lambda od: []
-    )
-    rows = [("100", "/offers/edit/100", None)]
-    state = {"/offers/edit/100": {"photos": 0, "article": "A1"}}
-    fx = _FakeFixer(rows, state, _FakeDB({"A1": _Rec(_od([]))}), dry_run=False)
+def test_cycle_no_action_when_only_photos_needed_but_no_local(monkeypatch):
+    monkeypatch.setattr("rieltor_handler.draft_photo_fixer.local_photos_for_offer", lambda od: [])
+    rows = [("100", "/offers/edit/100")]
+    state = {"/offers/edit/100": {"photos": 0, "desc": "опис є", "estate_id": 1}}
+    fx = _FakeFixer(rows, state, _FakeDB({1: _offer()}), dry_run=False)
     s = fx.fix_drafts()
-    assert s.no_source == ["A1"]
-    assert fx.uploaded == []
+    assert s.needs_crm == [1]
+    assert s.fixed == []
+    assert fx.applied == []
 
 
-def test_cycle_max_count_limits_acted(monkeypatch):
-    monkeypatch.setattr(
-        "rieltor_handler.draft_photo_fixer.local_photos_for_offer", lambda od: ["p"]
-    )
-    rows = [(str(i), f"/offers/edit/{i}", None) for i in range(5)]
-    state = {f"/offers/edit/{i}": {"photos": 0, "article": f"A{i}"} for i in range(5)}
-    db = _FakeDB({f"A{i}": _Rec(_od(["x"])) for i in range(5)})
+def test_cycle_dry_run_does_not_apply(monkeypatch):
+    monkeypatch.setattr("rieltor_handler.draft_photo_fixer.local_photos_for_offer", lambda od: ["pA"])
+    rows = [("100", "/offers/edit/100")]
+    state = {"/offers/edit/100": {"photos": 0, "desc": "опис", "estate_id": 1}}
+    fx = _FakeFixer(rows, state, _FakeDB({1: _offer()}), dry_run=True)
+    s = fx.fix_drafts()
+    assert s.fixed == [(1, ["photos:1"])]
+    assert fx.applied == []
+
+
+def test_cycle_no_db_when_estate_id_unmatched():
+    rows = [("100", "/offers/edit/100")]
+    state = {"/offers/edit/100": {"photos": 0, "desc": "", "estate_id": None}}
+    fx = _FakeFixer(rows, state, _FakeDB({}), dry_run=False)
+    s = fx.fix_drafts()
+    assert s.no_db == ["100"]
+    assert fx.applied == []
+
+
+def test_cycle_max_count_limits_applies(monkeypatch):
+    monkeypatch.setattr("rieltor_handler.draft_photo_fixer.local_photos_for_offer", lambda od: ["p"])
+    rows = [(str(i), f"/offers/edit/{i}") for i in range(5)]
+    state = {f"/offers/edit/{i}": {"photos": 0, "desc": "опис", "estate_id": i} for i in range(5)}
+    db = _FakeDB({i: _offer() for i in range(5)})
     fx = _FakeFixer(rows, state, db, dry_run=False)
     s = fx.fix_drafts(max_count=2)
-    assert len(fx.uploaded) == 2
+    assert len(fx.applied) == 2
     assert len(s.fixed) == 2
