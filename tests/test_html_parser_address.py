@@ -76,3 +76,37 @@ def test_recover_address_does_not_overwrite_existing_fields():
     _bare_parser()._recover_address_from_description(address, text)
     assert address["Район"] == "Васильківський"
     assert address["Вулиця"] == "вул. Набережна"
+
+
+# ── explicit "Адреса:" line overrides structured address (B) ────────────────
+# An explicit "Адреса: …" line in the description is the marketing-authoritative
+# address and overrides a conflicting structured CRM value.
+def test_explicit_address_overrides_conflicting_house():
+    # Real case A31251: CRM house "16" is wrong; description states 14Б.
+    address = {"Місто": "Київ", "Вулиця": "Воскресенська", "Будинок": "16"}
+    text = "КОМЕРЦІЙНЕ ПРИМІЩЕННЯ Адреса: м. Київ, вул. Воскресенська, 14Б Площа: 61 м²"
+    _bare_parser()._recover_address_from_description(address, text)
+    assert address["Будинок"] == "14Б"
+
+
+def test_explicit_address_keeps_house_when_same():
+    address = {"Місто": "Київ", "Вулиця": "Воскресенська", "Будинок": "14Б"}
+    text = "Адреса: м. Київ, вул. Воскресенська, 14Б"
+    _bare_parser()._recover_address_from_description(address, text)
+    assert address["Будинок"] == "14Б"
+
+
+def test_explicit_address_overrides_different_street():
+    address = {"Місто": "Київ", "Вулиця": "Стара", "Будинок": "1"}
+    text = "Адреса: м. Київ, вул. Воскресенська, 14Б"
+    _bare_parser()._recover_address_from_description(address, text)
+    assert address["Вулиця"] == "вул. Воскресенська"
+    assert address["Будинок"] == "14Б"
+
+
+def test_no_explicit_label_does_not_overwrite_existing_house():
+    # Without an "Адреса:" label, a different house in prose must NOT override.
+    address = {"Місто": "Київ", "Вулиця": "вул. Набережна", "Будинок": "5"}
+    text = "поруч вул. Набережна, 99 інша будівля"
+    _bare_parser()._recover_address_from_description(address, text)
+    assert address["Будинок"] == "5"

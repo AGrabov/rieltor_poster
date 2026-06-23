@@ -391,6 +391,60 @@ def recover_house_number(street: str, *texts: str) -> str | None:
     return None
 
 
+# ── Явний рядок «Адреса: …» в описі ───────────────────────────────────────
+# Опис інколи містить пряму поштову адресу ("Адреса: м. Київ, вул. Воскресенська,
+# 14Б"), яка є маркетингово-достовірною й має пріоритет над структурою CRM (поле
+# «Будинок» у CRM буває помилковим). Парсимо такий рядок окремо — він точніший за
+# евристики recover_street/recover_house_number над усім текстом.
+_ADDRESS_LABEL_RE = re.compile(r"адрес[аи]?\s*[:\-]\s*", re.IGNORECASE)
+# Межа сегмента: перенос рядка або наступна «мітка» виду "Слово:" (Площа:, Призначення:).
+_NEXT_LABEL_RE = re.compile(r"[\n\r]|\b[А-ЯІЇЄҐ][А-Яа-яІіЇїЄєҐґ'’\-]{2,}\s*:")
+_EXPLICIT_CITY_RE = re.compile(r"\bм\.?\s*([А-ЯІЇЄҐ][а-яіїєґ'’\-]+)")
+_EXPLICIT_STREET_HOUSE_RE = re.compile(
+    r"(?i:\b(вулиц[яі]|вул|проспект|просп|провулок|пров|бульвар|бул|площ[аі]|пл|"
+    r"набережн\w*|наб|алея|узвіз|проїзд|шосе)\.?)\s+"
+    r"([А-ЯІЇЄҐ][а-яіїєґ'’\-]+(?:\s+[А-ЯІЇЄҐ][а-яіїєґ'’\-]+)?)"
+    r"(?:\s*,?\s*(?:буд\.?|будинок|№)?\s*(" + _HOUSE_TOKEN + r"))?"
+)
+
+
+def recover_explicit_address(*texts: str) -> dict:
+    """Розпарсити явний рядок «Адреса: …» з опису.
+
+    Returns:
+        {"Місто"?, "Вулиця"?, "Будинок"?} для знайдених частин. Вулиця — у формі
+        "<тип>. Назва" (як :func:`recover_street`). Порожній dict, якщо явного
+        рядка адреси немає.
+    """
+    for text in texts:
+        if not text:
+            continue
+        m = _ADDRESS_LABEL_RE.search(text)
+        if not m:
+            continue
+        segment = text[m.end() :]
+        nxt = _NEXT_LABEL_RE.search(segment)
+        if nxt:
+            segment = segment[: nxt.start()]
+        segment = segment.strip(" ,.;\n\r\t")
+        if not segment:
+            continue
+        result: dict = {}
+        city_m = _EXPLICIT_CITY_RE.search(segment)
+        if city_m:
+            result["Місто"] = city_m.group(1)
+        sh = _EXPLICIT_STREET_HOUSE_RE.search(segment)
+        if sh:
+            type_token, name, house = sh.group(1), sh.group(2), sh.group(3)
+            disp = _RECOVER_STREET_DISPLAY.get(street_type_canon(type_token), "вул.")
+            result["Вулиця"] = f"{disp} {name}"
+            if house:
+                result["Будинок"] = re.sub(r"\s+", "", house)
+        if result:
+            return result
+    return {}
+
+
 # ── RU→UA транслітерація назви вулиці ─────────────────────────────────────
 # zem.center шукає лише за українським написанням (рос. → 0 результатів). CRM
 # часто зберігає вулицю російською ("Якубенковская", "Дегтяревская"). Нижче —

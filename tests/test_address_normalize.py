@@ -5,6 +5,26 @@ from __future__ import annotations
 from crm_data_parser import address_normalize as an
 
 
+# ── recover_explicit_address ────────────────────────────────────────────────
+def test_recover_explicit_address_parses_city_street_house():
+    text = "КОМЕРЦІЙНЕ ПРИМІЩЕННЯ Адреса: м. Київ, вул. Воскресенська, 14Б Площа: 61 м²"
+    assert an.recover_explicit_address(text) == {
+        "Місто": "Київ",
+        "Вулиця": "вул. Воскресенська",
+        "Будинок": "14Б",
+    }
+
+
+def test_recover_explicit_address_none_without_label():
+    assert an.recover_explicit_address("вул. Воскресенська, 14Б без мітки адреси") == {}
+
+
+def test_recover_explicit_address_two_word_street():
+    got = an.recover_explicit_address("Адреса: вул. Лесі Українки, 5")
+    assert got.get("Вулиця") == "вул. Лесі Українки"
+    assert got.get("Будинок") == "5"
+
+
 # ── normalize_city ────────────────────────────────────────────────────────
 def test_normalize_city_russian_to_ukrainian():
     assert an.normalize_city("Киев") == "Київ"

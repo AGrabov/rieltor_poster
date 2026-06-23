@@ -14,10 +14,13 @@ from bs4 import BeautifulSoup
 
 from crm_data_parser.address_normalize import (
     normalize_city,
+    normalize_house,
     recover_district,
+    recover_explicit_address,
     recover_house_number,
     recover_street,
     recover_street_type,
+    strip_street_type,
 )
 from crm_data_parser.description_analyzer import (
     DescriptionAnalyzer,
@@ -752,6 +755,55 @@ class HTMLOfferParser:
 
         return address if address else {}
 
+    def _apply_explicit_address(self, address: dict, explicit: dict) -> None:
+        """Застосувати явну адресу з опису, перезаписуючи структуру CRM при розбіжності.
+
+        Явний рядок «Адреса: …» вважаємо достовірнішим за структуроване поле CRM:
+        - інша вулиця → повна заміна вулиці+будинку (з попередженням);
+        - та сама вулиця, інший будинок → заміна будинку (з попередженням);
+        - порожня структурна вулиця/місто → заповнення.
+        """
+        exp_street = explicit.get("Вулиця")
+        exp_house = explicit.get("Будинок")
+        exp_city = explicit.get("Місто")
+        cur_street = str(address.get("Вулиця") or "").strip()
+        cur_house = str(address.get("Будинок") or "").strip()
+
+        same_street = bool(exp_street and cur_street) and (
+            strip_street_type(exp_street).casefold() == strip_street_type(cur_street).casefold()
+        )
+
+        if exp_street and cur_street and not same_street:
+            # Явна адреса вказує ІНШУ вулицю — довіряємо опису (повна заміна).
+            logger.warning(
+                "Адреса з опису ≠ CRM: вулиця '%s' → '%s', будинок '%s' → '%s'",
+                cur_street,
+                exp_street,
+                cur_house,
+                exp_house or cur_house,
+            )
+            address["Вулиця"] = exp_street
+            if exp_house:
+                address["Будинок"] = exp_house
+        else:
+            if exp_street and not cur_street:
+                address["Вулиця"] = exp_street
+                logger.debug("Вулицю взято з явної адреси опису: '%s'", exp_street)
+            if exp_house and normalize_house(exp_house) != normalize_house(cur_house):
+                if cur_house:
+                    logger.warning(
+                        "Будинок з опису ≠ CRM: '%s' → '%s' (вулиця '%s')",
+                        cur_house,
+                        exp_house,
+                        cur_street or exp_street,
+                    )
+                else:
+                    logger.debug("Будинок взято з явної адреси опису: '%s'", exp_house)
+                address["Будинок"] = exp_house
+
+        if exp_city and not str(address.get("Місто") or "").strip():
+            address["Місто"] = exp_city
+
     def _recover_address_from_description(self, address: dict, full_text: str) -> None:
         """Доповнити відсутні частини адреси (Район/Вулиця/Будинок) з опису.
 
@@ -761,6 +813,12 @@ class HTMLOfferParser:
         """
         if not full_text or not isinstance(address, dict):
             return
+
+        # Явний рядок «Адреса: …» в описі — маркетингово-достовірна адреса; має
+        # пріоритет над структурою CRM (поле «Будинок» у CRM буває помилковим).
+        explicit = recover_explicit_address(full_text)
+        if explicit:
+            self._apply_explicit_address(address, explicit)
 
         # Район: для великих міст район = масив (Печерськ), а не адмін. район із
         # тексту — тож там не чіпаємо. Для сіл/смт "Xський район" з опису і є тим,
