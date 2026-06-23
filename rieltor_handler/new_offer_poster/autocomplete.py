@@ -125,7 +125,8 @@ class AutocompleteMixin:
                 const isStreet = params.isStreet;
 
                 const start = Date.now();
-                const norm = (s) => (s || '').replace(/\\s+/g,' ').trim().toLowerCase();
+                // Normalize apostrophe variants (’ ʼ ‘ → ') so "Рів’єра" == "Рів'єра".
+                const norm = (s) => (s || '').replace(/[\\u2019\\u02bc\\u2018]/g, "'").replace(/\\s+/g,' ').trim().toLowerCase();
                 const onlyDigits = (s) => (s || '').replace(/\\D+/g,'');
                 // Strip hyphens + spaces + lowercase for house number comparison
                 // "20-а" / "20 а" / "20А" → "20а"
@@ -185,7 +186,10 @@ class AutocompleteMixin:
                       if (!txt) continue;
 
                       const role = (el.getAttribute('role') || '').toLowerCase();
-                      out.push({ txt, n: norm(txt), digits: onlyDigits(txt), h: normHouse(txt), r, isOption: role === 'option' });
+                      // first line = the entity name; options often carry a geo
+                      // subtitle on the next line (name, then "Київська, м. Київ, ...").
+                      const firstLine = (txt.split('\\n')[0] || '');
+                      out.push({ txt, n: norm(txt), first: norm(firstLine), digits: onlyDigits(txt), h: normHouse(txt), r, isOption: role === 'option' });
                     }
                   }
                   out.sort((a,b) => a.r.top - b.r.top);
@@ -213,6 +217,14 @@ class AutocompleteMixin:
                   //    selects the "16" option and not the first-listed "16-Г".
                   const exact = findIn(o => o.n === d);
                   if (exact) return mkResult(exact, 'exact', opts.length);
+
+                  // 1a) EXACT match on the option NAME (first line). ЖК options carry a
+                  //     geo subtitle, so o.n never equals the bare name and the search
+                  //     would slide to prefix/substring — letting a longer sibling win
+                  //     (desired "Рів'єра" wrongly matching "Сонячна Рів'єра"). Matching
+                  //     the first line exactly makes "Рів'єра" beat the longer names.
+                  const firstExact = findIn(o => o.first && o.first === d);
+                  if (firstExact) return mkResult(firstExact, 'first_exact', opts.length);
 
                   // 1b) House exact after hyphen/space normalization ("20а" == "20-а")
                   if (isHouse && dHouse) {

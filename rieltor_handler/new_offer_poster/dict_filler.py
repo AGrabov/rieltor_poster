@@ -567,6 +567,15 @@ class DictOfferFormFiller(
         except Exception:
             time.sleep(2)
 
+        # Фінальна звірка «Будинок» перед save. Сайт автозаповнює це поле
+        # асинхронно (гео-каскад після вибору ЖК/вулиці), і значення прилітає
+        # вже ПІСЛЯ того, як _fill_address_from_dict пройшов поле. Тому нечисловий
+        # site-guess доживає до save і валить валідацію («Має починатись з цифри»),
+        # а наш номер каскад може перетерти. Звіряємо поле востаннє — коли каскад
+        # уже осів — безпосередньо перед натисканням save.
+        if state["address_filled"]:
+            self._reconcile_house_before_save(root, offer_data.get("address"))
+
         logger.info("Чернетку оголошення заповнено (на основі словника та схеми)")
 
     def _is_additional_param(self, field_info: dict) -> bool:
@@ -854,6 +863,112 @@ class DictOfferFormFiller(
             self._fill_autocomplete(sec, "Будинок", house)
             self._check_and_fix_house_field(sec)
 
+    def _desired_house_from_address(self, address_data: dict | None) -> str:
+        """Витягти нормалізований номер будинку зі словника адреси.
+
+        Та сама нормалізація, що і в _fill_address_from_dict: знімаємо префікс
+        «Будинок » ("Будинок 6" → "6"). Повертає "" якщо номера немає.
+        """
+        if not isinstance(address_data, dict):
+            return ""
+        house = None
+        for k, v in address_data.items():
+            if str(k).lower().strip() == "будинок":
+                house = v
+                break
+        house = ("" if house is None else str(house)).strip()
+        if house.lower().startswith("будинок "):
+            house = house[len("будинок ") :].strip()
+        return house
+
+    def _reconcile_house_before_save(self, root: Locator, address_data: dict | None) -> None:
+        """Остання звірка поля «Будинок» перед натисканням save.
+
+        Сайт автозаповнює «Будинок» асинхронно (гео-каскад після вибору ЖК/вулиці),
+        і це значення прилітає вже ПІСЛЯ того, як _fill_address_from_dict пройшов
+        поле, тож рання перевірка/очистка його не бачить. Тут каскад уже осів:
+          • номера немає → прибираємо пізнє нечислове site-значення;
+          • номер є      → відновлюємо його, якщо каскад очистив, і знімаємо
+                           можливий префікс «Будинок ».
+        """
+        if not isinstance(address_data, dict) or not address_data:
+            return
+        try:
+            sec = self._section(root, "Адреса об'єкта")
+        except Exception:
+            logger.debug("_reconcile_house_before_save: секцію адреси не знайдено", exc_info=True)
+            return
+
+        house = self._desired_house_from_address(address_data)
+        if house:
+            self._refill_house_if_cleared(sec, house)
+            self._check_and_fix_house_field(sec)
+        else:
+            self._clear_house_field(sec)
+
+    # JS-знімок поточних значень адресних полів за текстом <label> (інпути не мають
+    # name/role/aria — лише label). null = поля ще немає в DOM, "" = є, але порожнє.
+    _ADDR_SNAPSHOT_JS = r"""
+    () => {
+      const want = ['район', 'вулиця', 'будинок'];
+      const norm = (s) => (s || '').replace(/[\s* ]/g, '').toLowerCase();
+      const out = {};
+      const labels = [...document.querySelectorAll('label')];
+      for (const w of want) {
+        const lab = labels.find((l) => norm(l.textContent).startsWith(w));
+        if (!lab) { out[w] = null; continue; }
+        const fc = lab.closest('.MuiFormControl-root');
+        const inp = fc ? fc.querySelector('input') : null;
+        out[w] = inp ? (inp.value || '') : '';
+      }
+      return out;
+    }
+    """
+
+    def _address_autofill_snapshot(self) -> dict:
+        try:
+            return self.page.evaluate(self._ADDR_SNAPSHOT_JS)
+        except Exception:
+            return {}
+
+    def _wait_address_autofill_settled(
+        self,
+        *,
+        deadline_ms: int = 8000,
+        stable_ms: int = 1200,
+        min_ms: int = 1500,
+    ) -> dict:
+        """Дочекатись, поки гео-каскад сайту після вибору ЖК перестане змінювати поля.
+
+        Сайт автозаповнює Район/Вулицю/Будинок асинхронно і в різні моменти: Район
+        прилітає швидко, а Вулиця/Будинок — пізніше (поле «Будинок» взагалі зʼявляється
+        в DOM лише після того, як визначилась вулиця). Фіксований sleep ловив тільки
+        Район, тож Вулицю/Будинок ми бачили ще порожніми і заповнювали ПОВЕРХ
+        автозаповнення сайту. Тут опитуємо значення, поки вони не стабілізуються
+        (stable_ms без змін), але не менше min_ms і не довше deadline_ms.
+
+        Повертає фінальний знімок значень {'район','вулиця','будинок'}.
+        """
+        start = time.time()
+        last = self._address_autofill_snapshot()
+        stable_since = start
+        while True:
+            elapsed_ms = (time.time() - start) * 1000
+            if elapsed_ms >= deadline_ms:
+                return last
+            try:
+                self.page.wait_for_timeout(300)
+            except Exception:
+                time.sleep(0.3)
+            cur = self._address_autofill_snapshot()
+            if cur != last:
+                last = cur
+                stable_since = time.time()
+                continue
+            stable_for_ms = (time.time() - stable_since) * 1000
+            if elapsed_ms >= min_ms and stable_for_ms >= stable_ms:
+                return last
+
     def _fill_address_from_dict(self, root: Locator, address_data: dict) -> None:
         """Заповнює секцію адреси зі словника з українськими ключами-підписами.
 
@@ -937,10 +1052,14 @@ class DictOfferFormFiller(
         if condo:
             # 2a) CONDO COMPLEX → triggers autofill of district/street/house
             self._fill_autocomplete(sec, "Новобудова", condo)
-            try:
-                self.page.wait_for_timeout(2650)
-            except Exception:
-                time.sleep(2.65)
+
+            # Сайт автозаповнює Район/Вулицю/Будинок асинхронно і в різні моменти
+            # (Будинок — останнім, бо саме поле зʼявляється лише після того, як
+            # визначилась вулиця). Фіксований sleep ловив тільки Район, тож Вулицю/
+            # Будинок ми бачили порожніми й заповнювали ПОВЕРХ автозаповнення сайту.
+            # Чекаємо, поки каскад осяде, і лише потім перевіряємо-та-пропускаємо.
+            settled = self._wait_address_autofill_settled()
+            logger.info("Автозаповнення адреси після ЖК осіло: %s", settled)
 
             # Check and fix house field if ЖК autofill put "Будинок X" instead of just "X"
             if house:
