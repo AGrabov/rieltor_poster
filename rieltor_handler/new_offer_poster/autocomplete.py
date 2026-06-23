@@ -199,25 +199,34 @@ class AutocompleteMixin:
                 });
 
                 function pick(opts) {
-                  // 1) Standard text match — prefer role=option elements to avoid matching
-                  //    container divs that include all options in their innerText
+                  // prefer role=option elements to avoid matching container divs that
+                  // include all options in their innerText
                   const roleOpts = opts.filter(o => o.isOption);
                   const preferred = roleOpts.length ? roleOpts : opts;
-                  for (const o of preferred) {
-                    if (o.n === d || o.n.startsWith(d) || o.n.includes(d)) {
-                      return mkResult(o, 'match', opts.length);
-                    }
-                  }
-                  // Fallback: try all elements (covers non-standard MUI)
-                  if (roleOpts.length) {
-                    for (const o of opts) {
-                      if (o.n === d || o.n.startsWith(d) || o.n.includes(d)) {
-                        return mkResult(o, 'match_any', opts.length);
-                      }
-                    }
+                  const findIn = (pred) => {
+                    for (const o of preferred) if (pred(o)) return o;
+                    if (roleOpts.length) for (const o of opts) if (pred(o)) return o;
+                    return null;
+                  };
+
+                  // 1) EXACT text match wins over prefix/substring — so desired "16"
+                  //    selects the "16" option and not the first-listed "16-Г".
+                  const exact = findIn(o => o.n === d);
+                  if (exact) return mkResult(exact, 'exact', opts.length);
+
+                  // 1b) House exact after hyphen/space normalization ("20а" == "20-а")
+                  if (isHouse && dHouse) {
+                    const he = findIn(o => o.h === dHouse);
+                    if (he) return mkResult(he, 'house_exact', opts.length);
                   }
 
-                  // 2) Word-stem match: any word in desired shares ≥5-char prefix with
+                  // 2) Prefix, then substring — less specific, only if no exact hit
+                  const pre = findIn(o => o.n.startsWith(d));
+                  if (pre) return mkResult(pre, 'prefix', opts.length);
+                  const sub = findIn(o => o.n.includes(d));
+                  if (sub) return mkResult(sub, 'contains', opts.length);
+
+                  // 3) Word-stem match: any word in desired shares ≥5-char prefix with
                   //    any word in the option (handles e.g. "Нова Дарниця" → "Дарницький")
                   const dWords = d.split(/\\s+/).filter(w => w.length >= 5);
                   if (dWords.length) {
@@ -236,13 +245,9 @@ class AutocompleteMixin:
                     }
                   }
 
-                  // 4) House-normalized match: "20а" = "20-а" = "20 а" = "20А"
+                  // 4) House prefix fallback ("16" → "16-Г") only when no exact "16"
+                  //    option exists (exact is already handled at step 1b above).
                   if (isHouse && dHouse) {
-                    for (const o of opts) {
-                      if (o.h === dHouse) {
-                        return mkResult(o, 'house_exact', opts.length);
-                      }
-                    }
                     for (const o of opts) {
                       if (o.h.startsWith(dHouse)) {
                         return mkResult(o, 'house_prefix', opts.length);
