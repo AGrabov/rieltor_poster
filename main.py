@@ -1436,6 +1436,118 @@ def phase_fix_draft_photos(
     return counts
 
 
+# ── clean-pics: local photo folder maintenance ──────────────────────
+
+
+def _classify_pic_folder(name: str, keep_articles: set[str], known_articles: set[str], all_pics: bool) -> str | None:
+    """Причина видалити папку артикула (рядок) або None, якщо зберегти.
+
+    keep_articles / known_articles — артикули в нижньому регістрі.
+    - all_pics=True  → завжди "all" (знести все);
+    - артикул у keep (статус 'new')   → None (фото ще потрібні для постингу);
+    - артикула немає в БД             → "orphan";
+    - інакше (posted/failed/skipped)  → "not-new".
+    """
+    if all_pics:
+        return "all"
+    art = name.strip().lower()
+    if art in keep_articles:
+        return None
+    return "orphan" if art not in known_articles else "not-new"
+
+
+def _dir_size_bytes(path: Path) -> int:
+    """Сумарний розмір файлів у каталозі (стійко до зниклих/заблокованих файлів)."""
+    total = 0
+    for f in path.rglob("*"):
+        try:
+            if f.is_file():
+                total += f.stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+def phase_clean_pics(*, all_pics: bool = False, dry_run: bool = False) -> dict:
+    """Очистити локальну папку фото (pics), звільнивши місце.
+
+    За замовчуванням видаляє папки артикулів, фото яких більше не потрібні
+    локально: усі НЕ у статусі 'new' (posted/failed/skipped) та осиротілі
+    (артикула немає в БД). Папки об'єктів у статусі 'new' зберігаються — їхні
+    фото ще потрібні для постингу. Якщо їх усе ж видалити (--all), preflight
+    Фази 2 перезавантажить фото з CRM, але лише в мережі компанії з CRM-кредами.
+
+    Args:
+        all_pics: знести всі папки (сценарій «зняти все й зібрати наново»).
+        dry_run: лише показати план і скільки звільниться, нічого не видаляти.
+
+    Returns:
+        Підсумок {'deleted', 'kept', 'orphans', 'freed_bytes', 'kept_bytes'}.
+    """
+    import shutil
+
+    from crm_data_parser.photo_downloader import PICS_DIR
+    from offer_db import OfferDB
+
+    empty = {"deleted": 0, "kept": 0, "orphans": 0, "freed_bytes": 0, "kept_bytes": 0}
+    if not PICS_DIR.exists():
+        logger.info("Папки фото немає (%s) — нічого очищати", PICS_DIR)
+        return empty
+
+    folders = [d for d in PICS_DIR.iterdir() if d.is_dir()]
+    if not folders:
+        logger.info("У папці фото %s немає підпапок артикулів", PICS_DIR)
+        return empty
+
+    # Артикули об'єктів у черзі на постинг (status='new') — їхні фото зберігаємо.
+    with OfferDB() as db:
+        keep_articles = {o.article.strip().lower() for o in db.get_unprocessed() if o.article}
+        known_articles = {o.article.strip().lower() for o in db.get_all() if o.article}
+
+    deleted = kept = orphans = 0
+    freed = kept_bytes = 0
+    for folder in folders:
+        reason = _classify_pic_folder(folder.name, keep_articles, known_articles, all_pics)
+        size = _dir_size_bytes(folder)
+        if reason is None:
+            kept += 1
+            kept_bytes += size
+            continue
+        if reason == "orphan":
+            orphans += 1
+        if dry_run:
+            logger.info("[dry-run] видалив би %s (%s, %.1f МБ)", folder.name, reason, size / 1e6)
+            deleted += 1
+            freed += size
+            continue
+        try:
+            shutil.rmtree(folder)
+        except Exception:
+            logger.warning("Не вдалось видалити %s", folder, exc_info=True)
+            continue
+        deleted += 1
+        freed += size
+        logger.info("Видалено %s (%s, %.1f МБ)", folder.name, reason, size / 1e6)
+
+    logger.info(
+        "Очищення pics (%s%s): видалено=%d (осиротілих=%d), збережено(new)=%d, звільнено=%.2f ГБ, лишилось=%.2f ГБ",
+        "ALL" if all_pics else "non-new+orphan",
+        ", dry-run" if dry_run else "",
+        deleted,
+        orphans,
+        kept,
+        freed / 1e9,
+        kept_bytes / 1e9,
+    )
+    return {
+        "deleted": deleted,
+        "kept": kept,
+        "orphans": orphans,
+        "freed_bytes": freed,
+        "kept_bytes": kept_bytes,
+    }
+
+
 # ── post-one: single offer from JSON ────────────────────────────────
 
 
@@ -1617,6 +1729,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_fix.add_argument("--date-from", help="Дата з (YYYY-MM-DD)")
     p_fix.add_argument("--date-to", help="Дата по (YYYY-MM-DD)")
 
+    # clean-pics
+    p_clean_pics = sub.add_parser(
+        "clean-pics",
+        parents=[common],
+        help="Очистити локальну папку фото (pics): прибрати непотрібні (не 'new') та осиротілі папки",
+    )
+    p_clean_pics.add_argument(
+        "--all",
+        dest="all_pics",
+        action="store_true",
+        help="Знести ВСІ папки фото (для «зняти все й зібрати наново»)",
+    )
+    p_clean_pics.add_argument("--dry-run", action="store_true", help="Лише показати план і звільнене місце")
+
     return parser
 
 
@@ -1726,6 +1852,10 @@ def main() -> None:
                     headless=headless,
                     debug=args.debug,
                 )
+
+        elif args.command == "clean-pics":
+            with extra_file_handler(DB_SERVICE_LOG_FILE):
+                phase_clean_pics(all_pics=args.all_pics, dry_run=args.dry_run)
 
         else:
             # No subcommand = full pipeline (collect + post draft) — кожна фаза у свій лог
