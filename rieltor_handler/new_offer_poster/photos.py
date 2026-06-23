@@ -280,7 +280,11 @@ class PhotosMixin:
         )
 
     def _upload_photos_in_photo_section(self, sec: Locator, photo_paths: list[str]) -> None:
-        paths = [str(p).strip() for p in (photo_paths or []) if str(p).strip()]
+        from crm_data_parser.photo_downloader import resolve_photo_paths
+
+        # Перерахунок шляхів на поточне місце встановлення (БД могла зберегти
+        # абсолютні шляхи зі старого base після переносу програми).
+        paths = [str(p).strip() for p in resolve_photo_paths(photo_paths or []) if str(p).strip()]
         if not paths:
             return
 

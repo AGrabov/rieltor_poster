@@ -130,6 +130,34 @@ def download_watermark_zip(
         return []
 
 
+def resolve_local_photo(stored_path: str) -> Path | None:
+    """Знайти локальний файл фото, стійко до переносу місця встановлення.
+
+    Повертає шлях за збереженим значенням, якщо файл існує; інакше перераховує
+    (re-root) хвіст ``<article>/<filename>`` відносно поточного ``PICS_DIR``
+    (БД могла зберегти абсолютний шлях зі старого місця, напр. Program Files,
+    а програму перенесли в AppData\\Local). None, якщо файл не знайдено ніде.
+    """
+    if not stored_path or not isinstance(stored_path, str):
+        return None
+    p = Path(stored_path)
+    if p.exists():
+        return p
+    cand = PICS_DIR / p.parent.name / p.name  # <article>/photo_NNN.ext
+    return cand if cand.exists() else None
+
+
+def resolve_photo_paths(paths: list[str]) -> list[str]:
+    """Перерахувати список шляхів фото; нерозв'язані лишаємо як є (для діагностики)."""
+    out: list[str] = []
+    for p in paths or []:
+        if not isinstance(p, str) or not p.strip():
+            continue
+        resolved = resolve_local_photo(p)
+        out.append(str(resolved) if resolved else p)
+    return out
+
+
 def cleanup_photos(article: str) -> None:
     """Видалити папку з фотографіями для вказаного артикула після успішного завантаження."""
     dest_dir = PICS_DIR / str(article)

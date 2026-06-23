@@ -19,6 +19,16 @@ def test_get_posted_returns_only_posted_with_rieltor_id(tmp_path):
         assert result == [(2, "555")]
 
 
+def test_get_by_article_case_insensitive(tmp_path):
+    db_path = tmp_path / "offers.db"
+    with OfferDB(db_path) as db:
+        db.insert_offer(estate_id=1, offer_data={}, article="A31251", status="posted")
+        assert db.get_by_article("a31251").estate_id == 1
+        assert db.get_by_article("A31251").estate_id == 1
+        assert db.get_by_article("A99999") is None
+        assert db.get_by_article("") is None
+
+
 def test_get_posted_respects_max_count(tmp_path):
     db_path = tmp_path / "offers.db"
     with OfferDB(db_path) as db:

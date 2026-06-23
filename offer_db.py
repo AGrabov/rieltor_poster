@@ -249,6 +249,16 @@ class OfferDB:
         row = self.conn.execute("SELECT * FROM offers WHERE estate_id = ?", (estate_id,)).fetchone()
         return _row_to_record(row) if row else None
 
+    def get_by_article(self, article: str) -> OfferRecord | None:
+        """Повернути один запис за артикулом CRM (напр. 'A31251'). Регістронезалежно."""
+        if not article:
+            return None
+        row = self.conn.execute(
+            "SELECT * FROM offers WHERE LOWER(article) = LOWER(?) ORDER BY id LIMIT 1",
+            (str(article).strip(),),
+        ).fetchone()
+        return _row_to_record(row) if row else None
+
     def edit_offer(
         self,
         estate_id: int,
