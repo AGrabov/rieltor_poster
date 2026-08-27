@@ -1037,18 +1037,18 @@ def phase_prune_stale(
     headless: bool = True,
     debug: bool = False,
 ) -> int:
-    """Зняти з реклами опубліковані об'єкти, що закрилися в CRM (→ «Закрита база»).
+    """Зняти з реклами опубліковані об'єкти, що закрилися в CRM (→ «Мої угоди»).
 
     Два проходи (щоб не тримати два браузери одночасно):
       1. CRM — серед опублікованих (status='posted') знайти закриті.
-      2. Rieltor — перенести знайдені у «Закриту базу», у БД → skipped.
+      2. Rieltor — записати знайдені у «Мої угоди», у БД → skipped.
 
     Returns:
-        Кількість знятих об'єктів (або кандидатів при dry_run).
+        Кількість перенесених об'єктів (або кандидатів при dry_run).
     """
     from crm_data_parser import CrmCredentials, CrmSession, EstateListCollector
     from offer_db import OfferDB
-    from rieltor_handler import PublishedOfferUnpublisher
+    from rieltor_handler import DealsMover
     from rieltor_handler.rieltor_session import RieltorCredentials, RieltorSession
 
     crm_email = os.environ.get("CRM_EMAIL", "").strip()
@@ -1087,7 +1087,7 @@ def phase_prune_stale(
                 _log_price_change(offer, actuality)
                 if actuality.closed:
                     logger.info(
-                        "Об'єкт %d (rieltor_id=%s) закрито в CRM — кандидат на зняття",
+                        "Об'єкт %d (rieltor_id=%s) закрито в CRM — кандидат у «Мої угоди»",
                         offer.estate_id,
                         offer.rieltor_offer_id,
                     )
@@ -1103,14 +1103,14 @@ def phase_prune_stale(
         if dry_run:
             for offer in stale:
                 logger.info(
-                    "[dry-run] Зняв би rieltor_id=%s (estate %d, article=%s)",
+                    "[dry-run] Записав би в «Мої угоди» rieltor_id=%s (estate %d, article=%s)",
                     offer.rieltor_offer_id,
                     offer.estate_id,
                     offer.article,
                 )
             return len(stale)
 
-        # Прохід 2 (Rieltor): зняти з реклами
+        # Прохід 2 (Rieltor): записати у «Мої угоди»
         rid_to_estate = {o.rieltor_offer_id: o.estate_id for o in stale}
         with RieltorSession(
             RieltorCredentials(phone=phone, password=password),
@@ -1118,15 +1118,15 @@ def phase_prune_stale(
             debug=debug,
         ) as session:
             session.login()
-            unpublisher = PublishedOfferUnpublisher(session.page)
-            done = unpublisher.unpublish_offers([o.rieltor_offer_id for o in stale])
+            mover = DealsMover(session.page)
+            done = mover.move_offers_to_deals([o.rieltor_offer_id for o in stale])
 
         for rid in done:
             estate_id = rid_to_estate.get(rid)
             if estate_id is not None:
-                db.mark_skipped(estate_id, "закрито в CRM, знято з реклами")
+                db.mark_skipped(estate_id, "закрито в CRM, записано в Мої угоди")
 
-        logger.info("prune-stale завершено: знято %d об'єктів", len(done))
+        logger.info("prune-stale завершено: записано у «Мої угоди» %d об'єктів", len(done))
         return len(done)
 
 
@@ -1134,12 +1134,13 @@ def phase_prune_stale(
 
 
 def _build_crm_actuality_skip_fn(stack, dry_run: bool, headless: bool, debug: bool):
-    """Скласти предикат key -> bool для перевірки актуальності чернеток у CRM.
+    """Скласти (предикат key -> bool, список закритих ключів) для перевірки в CRM.
 
     Зв'язок rieltor_id ↔ estate_id береться з БД. Предикат повертає True, якщо
     чернетку треба пропустити (об'єкт закрито в CRM); закриті позначаються в БД
-    як skipped (окрім dry_run). Чернетки, яких немає в БД, не перевіряються
-    (предикат повертає False — публікуються як є).
+    як skipped (окрім dry_run) і потрапляють у список ключів — його викликач
+    після публікації переносить у «Мої угоди». Чернетки, яких немає в БД, не
+    перевіряються (предикат повертає False — публікуються як є).
 
     Відкриває CRM-сесію та БД у переданому ``ExitStack``. Повертає None, якщо
     креди CRM не задані — тоді перевірка вимикається, а публікація не блокується.
@@ -1163,6 +1164,7 @@ def _build_crm_actuality_skip_fn(stack, dry_run: bool, headless: bool, debug: bo
     crm.login()
     collector = EstateListCollector(crm.page, debug=debug)
     cache: dict[int, bool] = {}
+    closed_keys: list[str] = []
 
     def _skip(key: str) -> bool:
         estate_id = rid_to_estate.get(key)
@@ -1176,11 +1178,14 @@ def _build_crm_actuality_skip_fn(stack, dry_run: bool, headless: bool, debug: bo
                 _log_price_change(offer, actuality)
             closed = actuality.closed
             cache[estate_id] = closed
-        if closed and not dry_run:
-            db.mark_skipped(estate_id, "закрито в CRM")
+        if closed:
+            if key not in closed_keys:
+                closed_keys.append(key)
+            if not dry_run:
+                db.mark_skipped(estate_id, "закрито в CRM")
         return closed
 
-    return _skip
+    return _skip, closed_keys
 
 
 def phase_publish_drafts(
@@ -1197,12 +1202,14 @@ def phase_publish_drafts(
     """Підрахувати або масово опублікувати чернетки на rieltor.ua.
 
     check_actuality — якщо True, перед публікацією кожної чернетки перевіряє в
-    CRM, чи об'єкт не закрито (закриті не публікуються, позначаються skipped).
+    CRM, чи об'єкт не закрито (закриті не публікуються, позначаються skipped і
+    після публікації переносяться на сайті у «Мої угоди»).
     Без CRM-кред перевірка пропускається, публікація не блокується.
     """
     import contextlib
     import datetime as dt
 
+    from rieltor_handler import DealsMover
     from rieltor_handler.drafts_publisher import DraftsPublisher
     from rieltor_handler.rieltor_session import RieltorCredentials, RieltorSession
 
@@ -1237,8 +1244,9 @@ def phase_publish_drafts(
             return n
 
         with contextlib.ExitStack() as stack:
-            skip_fn = _build_crm_actuality_skip_fn(stack, dry_run, headless, debug) if check_actuality else None
-            return publisher.publish_drafts(
+            actuality = _build_crm_actuality_skip_fn(stack, dry_run, headless, debug) if check_actuality else None
+            skip_fn, closed_keys = actuality if actuality else (None, [])
+            published = publisher.publish_drafts(
                 max_count=max_count,
                 date_from=d_from,
                 date_to=d_to,
@@ -1246,6 +1254,12 @@ def phase_publish_drafts(
                 dry_run=dry_run,
                 skip_fn=skip_fn,
             )
+
+        # CRM-сесію вже закрито (вийшли зі стека) — далі працює лише rieltor-браузер.
+        if closed_keys:
+            logger.info("Закритих у CRM чернеток: %d — записуємо у «Мої угоди»", len(closed_keys))
+            DealsMover(session.page).move_offers_to_deals(closed_keys, dry_run=dry_run)
+        return published
 
 
 # ── sync-status: reconcile DB statuses with the live site ───────────

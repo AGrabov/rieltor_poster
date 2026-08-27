@@ -1,3 +1,4 @@
+from .deals_mover import DealsMover
 from .published_offer_unpublisher import PublishedOfferUnpublisher
 from .rieltor_offer_poster import RieltorOfferPoster
 from .rieltor_session import RieltorCredentials, RieltorErrorPageException, RieltorSession
@@ -9,5 +10,6 @@ __all__ = [
     "RieltorErrorPageException",
     "RieltorOfferPoster",
     "PublishedOfferUnpublisher",
+    "DealsMover",
     "run_collection",
 ]
