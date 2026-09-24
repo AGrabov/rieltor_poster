@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import os
 import re
@@ -34,6 +35,17 @@ load_dotenv()
 
 DRAFTS_COUNT_FILE = Path(__file__).parent / "tmp" / "drafts_count.json"
 
+# ── Стан оновлення дати актуальності ─────────────────────────────────
+# Один файл на всю фічу: день останнього успішного підняття ("date"), час
+# останньої спроби автозапуску ("attempt") і перемикач автозапуску ("auto").
+# Дашборд читає це, щоб показати «коли востаннє піднімали» й раз на добу
+# запустити оновлення самостійно, не плодячи браузери при перезавантаженні.
+
+ACTUALITY_STATE_FILE = Path(__file__).parent / "tmp" / "actuality.json"
+AUTOSTART_RETRY_MIN = 60  # якщо спроба впала — пробуємо знову не раніше ніж через годину
+HEARTBEAT_TTL_MIN = 10  # поки прогін подає ознаки життя частіше — другий не запускаємо
+HEARTBEAT_EVERY = 25  # як часто прогін відмічається (у перевірених/оновлених об'єктах)
+
 # ── Окремі лог-файли за напрямом роботи ──────────────────────────────
 # Кожна команда, окрім спільного logs/rieltor.log, дублює свої записи у
 # профільний файл: парсинг CRM, публікація та сервісні дії в БД — окремо.
@@ -44,6 +56,7 @@ DB_SERVICE_LOG_FILE = _LOGS_DIR / "db_service.log"  # сервісні дії в
 DRAFTS_LOG_FILE = _LOGS_DIR / "drafts_publish.log"  # масова публікація чернеток
 SYNC_LOG_FILE = _LOGS_DIR / "sync_status.log"  # звірка статусів БД ↔ сайт
 FIX_PHOTOS_LOG_FILE = _LOGS_DIR / "fix_draft_photos.log"  # дозаливання фото у чернетки
+ACTUALITY_LOG_FILE = _LOGS_DIR / "actuality.log"  # звірка з CRM + підняття дати актуальності
 
 
 def write_drafts_count(count: int, path: Path = DRAFTS_COUNT_FILE) -> None:
@@ -56,6 +69,109 @@ def read_drafts_count(path: Path = DRAFTS_COUNT_FILE) -> int | None:
         return int(json.loads(path.read_text(encoding="utf-8"))["count"])
     except (FileNotFoundError, ValueError, KeyError, TypeError):
         return None
+
+
+def _read_actuality_state(path: Path = ACTUALITY_STATE_FILE) -> dict:
+    """Стан оновлення актуальності. Порожній dict, якщо файлу немає або він битий."""
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError, TypeError):
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def _write_actuality_state(path: Path = ACTUALITY_STATE_FILE, **fields) -> None:
+    """Дописати поля у стан, не затираючи решту.
+
+    Пишемо у тимчасовий файл і підміняємо через `os.replace`: файл ділять два
+    процеси (дашборд пише `attempt`/`auto`, прогін — `date`/`heartbeat`), тож
+    читач не має натрапити на обірваний запис.
+    """
+    state = _read_actuality_state(path)
+    state.update(fields)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f".{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(state), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def write_last_actuality_refresh(day: dt.date | None = None, path: Path = ACTUALITY_STATE_FILE) -> None:
+    """Запам'ятати день, коли востаннє піднімали дату актуальності."""
+    _write_actuality_state(path, date=(day or dt.date.today()).isoformat())
+
+
+def read_last_actuality_refresh(path: Path = ACTUALITY_STATE_FILE) -> dt.date | None:
+    """День останнього оновлення дати актуальності (None, якщо мітки немає)."""
+    try:
+        return dt.date.fromisoformat(_read_actuality_state(path)["date"])
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
+def write_last_actuality_attempt(when: dt.datetime | None = None, path: Path = ACTUALITY_STATE_FILE) -> None:
+    """Запам'ятати час спроби автозапуску (навіть якщо вона згодом впаде)."""
+    _write_actuality_state(path, attempt=(when or dt.datetime.now()).isoformat())
+
+
+def read_last_actuality_attempt(path: Path = ACTUALITY_STATE_FILE) -> dt.datetime | None:
+    """Час останньої спроби автозапуску (None, якщо спроб не було)."""
+    try:
+        return dt.datetime.fromisoformat(_read_actuality_state(path)["attempt"])
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
+def write_actuality_autostart(enabled: bool, path: Path = ACTUALITY_STATE_FILE) -> None:
+    """Увімкнути/вимкнути автозапуск оновлення при старті дашборда."""
+    _write_actuality_state(path, auto=bool(enabled))
+
+
+def read_actuality_autostart(path: Path = ACTUALITY_STATE_FILE) -> bool:
+    """Чи дозволено автозапуск (за замовчуванням — так)."""
+    return bool(_read_actuality_state(path).get("auto", True))
+
+
+def write_actuality_heartbeat(when: dt.datetime | None = None, path: Path = ACTUALITY_STATE_FILE) -> None:
+    """Позначити, що прогін живий (пишеться під час роботи, а не лише на старті)."""
+    _write_actuality_state(path, heartbeat=(when or dt.datetime.now()).isoformat())
+
+
+def read_actuality_heartbeat(path: Path = ACTUALITY_STATE_FILE) -> dt.datetime | None:
+    """Коли прогін востаннє подавав ознаки життя (None, якщо не подавав)."""
+    try:
+        return dt.datetime.fromisoformat(_read_actuality_state(path)["heartbeat"])
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
+def actuality_refresh_due(last: dt.date | None, today: dt.date | None = None) -> bool:
+    """Чи треба сьогодні піднімати дату актуальності (раз на добу)."""
+    return last is None or last < (today or dt.date.today())
+
+
+def actuality_autostart_due(
+    last_run: dt.date | None,
+    last_attempt: dt.datetime | None,
+    heartbeat: dt.datetime | None = None,
+    now: dt.datetime | None = None,
+    retry_after_min: int = AUTOSTART_RETRY_MIN,
+    heartbeat_ttl_min: int = HEARTBEAT_TTL_MIN,
+) -> bool:
+    """Чи запускати оновлення автоматично просто зараз.
+
+    Так, якщо сьогодні ще не піднімали, живого прогону немає і остання спроба
+    була давно. Heartbeat важливіший за таймер спроби: повний прогін триває
+    годинами (звірка з CRM + підняття дати), тож самого лише вікна в годину
+    замало — після нього перезавантажена сторінка підняла б другий браузер.
+    """
+    now = now or dt.datetime.now()
+    if not actuality_refresh_due(last_run, now.date()):
+        return False
+    if heartbeat is not None and now - heartbeat < dt.timedelta(minutes=heartbeat_ttl_min):
+        return False  # прогін живий
+    if last_attempt is None:
+        return True
+    return now - last_attempt >= dt.timedelta(minutes=retry_after_min)
 
 
 init_logging(
@@ -1034,100 +1150,173 @@ def phase_prune_stale(
     deal_type: str | None = None,
     property_type: str | None = None,
     dry_run: bool = False,
+    refresh: bool = False,
+    max_refresh: int | None = None,
+    skip_crm: bool = False,
     headless: bool = True,
     debug: bool = False,
-) -> int:
-    """Зняти з реклами опубліковані об'єкти, що закрилися в CRM (→ «Мої угоди»).
+) -> dict[str, int]:
+    """Зняти з реклами об'єкти, закриті в CRM, і (опційно) підняти дату актуальності решті.
 
     Два проходи (щоб не тримати два браузери одночасно):
       1. CRM — серед опублікованих (status='posted') знайти закриті.
-      2. Rieltor — записати знайдені у «Мої угоди», у БД → skipped.
+      2. Rieltor — записати знайдені у «Мої угоди» (у БД → skipped), а з
+         `refresh=True` слідом підняти дату актуальності всім, хто лишився
+         опублікованим на сайті.
+
+    Порядок важливий: спершу прибираємо закриті, потім піднімаємо — інакше
+    підняли б і неактуальні.
+
+    Args:
+        max_count: обмежує кількість перенесених у «Мої угоди».
+        refresh: підняти дату актуальності опублікованим (кнопка на сайті).
+        max_refresh: окремий ліміт на підняття дати (щоб `--max-count` для
+            угод не різав заразом і оновлення). Прогін із лімітом не вважаємо
+            повним, тож добу він не закриває.
+        skip_crm: не звірятися з CRM (для ПК поза мережею компанії) —
+            має сенс лише разом із `refresh`.
 
     Returns:
-        Кількість перенесених об'єктів (або кандидатів при dry_run).
+        {"moved": скільки записано в «Мої угоди», "refreshed": скільки піднято}.
     """
     from crm_data_parser import CrmCredentials, CrmSession, EstateListCollector
     from offer_db import OfferDB
-    from rieltor_handler import DealsMover
+    from rieltor_handler import ActualityRefresher, DealsMover
     from rieltor_handler.rieltor_session import RieltorCredentials, RieltorSession
 
     crm_email = os.environ.get("CRM_EMAIL", "").strip()
     crm_password = os.environ.get("CRM_PASSWORD", "").strip()
     phone = os.environ.get("PHONE", "").strip()
     password = os.environ.get("PASSWORD", "").strip()
-    if not crm_email or not crm_password:
+    empty = {"moved": 0, "refreshed": 0}
+    if not skip_crm and (not crm_email or not crm_password):
         logger.error("CRM_EMAIL та CRM_PASSWORD повинні бути задані в .env")
-        return 0
+        return empty
     if not phone or not password:
         logger.error("PHONE та PASSWORD повинні бути задані в .env")
-        return 0
+        return empty
+    if skip_crm and not refresh:
+        logger.error("--skip-crm без оновлення дати актуальності не має сенсу")
+        return empty
 
     db_deal_type = _normalize_deal_type(deal_type) if deal_type else None
 
     with OfferDB() as db:
-        posted = db.get_posted()
-        if db_deal_type:
-            posted = [o for o in posted if (o.deal_type or "").lower() == db_deal_type.lower()]
-        if property_type:
-            posted = [o for o in posted if (o.property_type or "").lower() == property_type.lower()]
-        if not posted:
-            logger.info("Немає опублікованих об'єктів для перевірки")
-            return 0
-
-        logger.info("Перевірка актуальності %d опублікованих об'єктів...", len(posted))
+        stale: list = []
+        crm_failed = False
 
         # Прохід 1 (CRM): зібрати закриті
-        stale: list = []
-        crm_creds = CrmCredentials(email=crm_email, password=crm_password)
-        with CrmSession(crm_creds, headless=headless, debug=debug) as crm:
-            crm.login()
-            collector = EstateListCollector(crm.page, debug=debug)
-            for offer in posted:
-                actuality = collector.check_actuality(offer.estate_id)
-                _log_price_change(offer, actuality)
-                if actuality.closed:
-                    logger.info(
-                        "Об'єкт %d (rieltor_id=%s) закрито в CRM — кандидат у «Мої угоди»",
-                        offer.estate_id,
-                        offer.rieltor_offer_id,
-                    )
-                    stale.append(offer)
+        if skip_crm:
+            logger.info("Звірку з CRM пропущено (--skip-crm)")
+        else:
+            posted = db.get_posted()
+            if db_deal_type:
+                posted = [o for o in posted if (o.deal_type or "").lower() == db_deal_type.lower()]
+            if property_type:
+                posted = [o for o in posted if (o.property_type or "").lower() == property_type.lower()]
+            if not posted:
+                logger.info("Немає опублікованих об'єктів для перевірки")
+            else:
+                logger.info("Перевірка актуальності %d опублікованих об'єктів...", len(posted))
+                crm_creds = CrmCredentials(email=crm_email, password=crm_password)
+                try:
+                    with CrmSession(crm_creds, headless=headless, debug=debug) as crm:
+                        crm.login()
+                        collector = EstateListCollector(crm.page, debug=debug)
+                        for i, offer in enumerate(posted, 1):
+                            actuality = collector.check_actuality(offer.estate_id)
+                            _log_price_change(offer, actuality)
+                            if actuality.closed:
+                                logger.info(
+                                    "Об'єкт %d (rieltor_id=%s) закрито в CRM — кандидат у «Мої угоди»",
+                                    offer.estate_id,
+                                    offer.rieltor_offer_id,
+                                )
+                                stale.append(offer)
+                            if i % HEARTBEAT_EVERY == 0:
+                                write_actuality_heartbeat()  # звірка триває годинами
+                except Exception as e:
+                    # CRM доступна лише з мережі компанії — її падіння не має
+                    # з'їдати підняття дати, заради якого команду й запускають.
+                    logger.error("Звірка з CRM обірвалася: %s", e, exc_info=debug)
+                    crm_failed = True
 
-        if max_count is not None:
-            stale = stale[:max_count]
+                if max_count is not None:
+                    stale = stale[:max_count]
+                logger.info("Закрилося в CRM: %d об'єктів", len(stale))
 
-        logger.info("Закрилося в CRM: %d об'єктів", len(stale))
-        if not stale:
-            return 0
+        # Об'єкти без rieltor_offer_id перенести нікуди — сайт їх не знайде
+        without_id = [o for o in stale if not o.rieltor_offer_id]
+        if without_id:
+            logger.warning(
+                "Пропущено %d закритих об'єктів без rieltor_offer_id (estate: %s)",
+                len(without_id),
+                ", ".join(str(o.estate_id) for o in without_id),
+            )
+        stale = [o for o in stale if o.rieltor_offer_id]
 
         if dry_run:
             for offer in stale:
                 logger.info(
-                    "[dry-run] Записав би в «Мої угоди» rieltor_id=%s (estate %d, article=%s)",
+                    "[dry-run] Кандидат у «Мої угоди»: rieltor_id=%s (estate %d, article=%s)",
                     offer.rieltor_offer_id,
                     offer.estate_id,
                     offer.article,
                 )
-            return len(stale)
+            if not refresh:
+                return {"moved": len(stale), "refreshed": 0}  # браузер тут не потрібен
 
-        # Прохід 2 (Rieltor): записати у «Мої угоди»
+        if not stale and not refresh:
+            return empty
+
+        # Прохід 2 (Rieltor): «Мої угоди» для закритих, далі — дата актуальності
         rid_to_estate = {o.rieltor_offer_id: o.estate_id for o in stale}
+        done: list[str] = []
+        refreshed = 0
+        completed = True
         with RieltorSession(
             RieltorCredentials(phone=phone, password=password),
             headless=headless,
             debug=debug,
         ) as session:
             session.login()
-            mover = DealsMover(session.page)
-            done = mover.move_offers_to_deals([o.rieltor_offer_id for o in stale])
+            if stale:
+                mover = DealsMover(session.page)
+                done = mover.move_offers_to_deals([o.rieltor_offer_id for o in stale], dry_run=dry_run)
+                # Позначаємо в БД одразу: підняття дати триває годинами, і якщо
+                # його обірвуть, робота по CRM не має пропасти.
+                if not dry_run:
+                    for rid in done:
+                        estate_id = rid_to_estate.get(rid)
+                        if estate_id is not None:
+                            db.mark_skipped(estate_id, "закрито в CRM, записано в Мої угоди")
+            if refresh:
+                try:
+                    outcome = ActualityRefresher(session.page).refresh_all(
+                        max_count=max_refresh,
+                        dry_run=dry_run,
+                        progress_cb=lambda n: (n % HEARTBEAT_EVERY == 0) and write_actuality_heartbeat(),
+                    )
+                    refreshed, completed = outcome.done, outcome.completed
+                except Exception as e:
+                    logger.error("Оновлення дати актуальності обірвалося: %s", e, exc_info=debug)
+                    completed = False
 
-        for rid in done:
-            estate_id = rid_to_estate.get(rid)
-            if estate_id is not None:
-                db.mark_skipped(estate_id, "закрито в CRM, записано в Мої угоди")
+        # Добу закриваємо лише за повним проходом: інакше частковий прогін
+        # (ліміт, обрив) мовчки лишив би решту оголошень до завтра, а прогін,
+        # де все вже свіже, навпаки ніколи не закривав би день.
+        if refresh and not dry_run and completed and not crm_failed:
+            write_last_actuality_refresh()
+        elif refresh and not dry_run:
+            logger.warning("Прохід неповний — добу не закриваємо, дашборд запропонує повторити")
 
-        logger.info("prune-stale завершено: записано у «Мої угоди» %d об'єктів", len(done))
-        return len(done)
+        logger.info(
+            "Завершено: у «Мої угоди» — %d, дату актуальності піднято — %d%s",
+            len(done),
+            refreshed,
+            " (dry-run)" if dry_run else "",
+        )
+        return {"moved": len(done), "refreshed": refreshed}
 
 
 # ── publish-drafts: bulk-publish rieltor.ua drafts ──────────────────
@@ -1724,6 +1913,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_prune.add_argument("--deal-type", help="Фільтр: sell або lease")
     p_prune.add_argument("--property-type", help="Фільтр: Квартира, Будинок тощо")
     p_prune.add_argument("--dry-run", action="store_true", help="Лише показати кандидатів, нічого не знімати")
+    p_prune.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Після зняття закритих підняти дату актуальності решті опублікованих",
+    )
+
+    # refresh-actuality
+    p_refresh = sub.add_parser(
+        "refresh-actuality",
+        parents=[common],
+        help="Звірити опубліковані з CRM і підняти дату актуальності на rieltor.ua",
+    )
+    p_refresh.add_argument("--max-count", type=int, help="Макс. кількість оновлених оголошень")
+    p_refresh.add_argument("--dry-run", action="store_true", help="Лише показати, нічого не натискати")
+    p_refresh.add_argument(
+        "--skip-crm",
+        action="store_true",
+        help="Не звірятися з CRM (коли вона недоступна) — лише підняти дату актуальності",
+    )
 
     # sync-status
     sub.add_parser(
@@ -1843,14 +2051,27 @@ def main() -> None:
             )
 
         elif args.command == "prune-stale":
-            phase_prune_stale(
-                max_count=args.max_count,
-                deal_type=args.deal_type,
-                property_type=args.property_type,
-                dry_run=args.dry_run,
-                headless=headless,
-                debug=args.debug,
-            )
+            with extra_file_handler(ACTUALITY_LOG_FILE):
+                phase_prune_stale(
+                    max_count=args.max_count,
+                    deal_type=args.deal_type,
+                    property_type=args.property_type,
+                    dry_run=args.dry_run,
+                    refresh=args.refresh,
+                    headless=headless,
+                    debug=args.debug,
+                )
+
+        elif args.command == "refresh-actuality":
+            with extra_file_handler(ACTUALITY_LOG_FILE):
+                phase_prune_stale(
+                    dry_run=args.dry_run,
+                    refresh=True,
+                    max_refresh=args.max_count,
+                    skip_crm=args.skip_crm,
+                    headless=headless,
+                    debug=args.debug,
+                )
 
         elif args.command == "sync-status":
             with extra_file_handler(SYNC_LOG_FILE):

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import re
@@ -18,7 +19,17 @@ from pathlib import Path
 import streamlit as st
 from streamlit.components.v1 import html as components_html
 
-from main import read_drafts_count
+from main import (
+    actuality_autostart_due,
+    actuality_refresh_due,
+    read_actuality_autostart,
+    read_actuality_heartbeat,
+    read_drafts_count,
+    read_last_actuality_attempt,
+    read_last_actuality_refresh,
+    write_actuality_autostart,
+    write_last_actuality_attempt,
+)
 from offer_db import OfferDB
 from offer_edit import ADDRESS_FORM_FIELDS, merge_offer_edits
 
@@ -389,9 +400,49 @@ def render_log_console(text: str, level_filter: str, search: str) -> None:
 
 # ── Session state ─────────────────────────────────────────────────────
 
-for _k in ("collect_proc", "post_proc", "schema_proc", "cadastral_proc", "cleanup_proc", "publish_drafts_proc", "repair_proc"):
+for _k in (
+    "collect_proc",
+    "post_proc",
+    "schema_proc",
+    "cadastral_proc",
+    "cleanup_proc",
+    "publish_drafts_proc",
+    "repair_proc",
+    "actuality_proc",
+):
     st.session_state.setdefault(_k, None)
 st.session_state.setdefault("drafts_count", None)
+st.session_state.setdefault("actuality_autostarted", False)
+
+
+# ── Автозапуск оновлення дати актуальності (раз на добу) ──────────────
+# Якщо сьогодні дату ще не піднімали — запускаємо самі, щоб рієлтор не мусив
+# пам'ятати. Другий браузер стримують три речі: heartbeat живого прогону (він
+# триває годинами, тож самої лише мітки спроби замало), мітка спроби на випадок
+# швидкого падіння і перевірка інших фонових задач — паралельні дії на сайті
+# під одним акаунтом ні до чого. Перемикач автозапуску — у вкладці «Сервіс».
+
+_BUSY_PROCS = (
+    "actuality_proc",
+    "collect_proc",
+    "post_proc",
+    "publish_drafts_proc",
+    "cleanup_proc",
+    "repair_proc",
+)
+
+if (
+    read_actuality_autostart()
+    and not any(proc_is_running(st.session_state.get(k)) for k in _BUSY_PROCS)
+    and actuality_autostart_due(
+        read_last_actuality_refresh(),
+        read_last_actuality_attempt(),
+        heartbeat=read_actuality_heartbeat(),
+    )
+):
+    write_last_actuality_attempt()
+    st.session_state.actuality_proc = launch(["uv", "run", "python", "main.py", "refresh-actuality"])
+    st.session_state.actuality_autostarted = True
 
 
 # ── Заголовок ─────────────────────────────────────────────────────────
@@ -445,6 +496,13 @@ with stat_cols[4]:
 if total:
     st.progress(summary["posted"] / total, text=f"опубліковано {summary['posted']}/{total} (всього {total})")
 render_proc_status("cadastral_proc", "Пошук кадастрових номерів...", "Кадастрові номери оновлено")
+
+# Банер стану дати актуальності: видно одразу, деталі — у вкладці «Сервіс»
+if proc_is_running(st.session_state.actuality_proc):
+    started = "автоматично" if st.session_state.actuality_autostarted else "вручну"
+    st.info(f"🔄 Оновлення дати актуальності виконується ({started}) — деталі у вкладці «Сервіс»")
+elif actuality_refresh_due(read_last_actuality_refresh()):
+    st.warning("📅 Дату актуальності сьогодні ще не оновлювали — вкладка «Сервіс» → «Дата актуальності»")
 
 st.divider()
 
@@ -577,6 +635,57 @@ with tab_objects:
 
 # ── Вкладка: Сервіс (рідкі/допоміжні дії) ─────────────────────────────
 with tab_service:
+    # Дата актуальності: звірка з CRM + підняття дати на сайті
+    with st.container(border=True):
+        st.markdown("**🔄 Дата актуальності** (rieltor.ua)")
+        st.caption(
+            "Звіряємо опубліковані об'єкти з CRM: закриті — у «Мої угоди», "
+            "решті піднімаємо дату актуальності (сайт краще ранжує свіжі)."
+        )
+
+        _last_refresh = read_last_actuality_refresh()
+        if _last_refresh is None:
+            st.caption("Останнє оновлення: ще не запускали")
+        elif _last_refresh == dt.date.today():
+            st.caption("Останнє оновлення: сьогодні ✅")
+        else:
+            _days = (dt.date.today() - _last_refresh).days
+            st.caption(f"Останнє оновлення: {_last_refresh.strftime('%d.%m.%Y')} ({_days} дн. тому)")
+
+        act_skip_crm = st.checkbox(
+            "Без звірки з CRM",
+            value=False,
+            key="actuality_skip_crm",
+            help="Для ПК поза мережею компанії: лише підняти дату, нічого не перевіряючи.",
+        )
+        if st.button(
+            "🔄 Оновити зараз",
+            width='stretch',
+            disabled=proc_is_running(st.session_state.actuality_proc),
+        ):
+            cmd = ["uv", "run", "python", "main.py", "refresh-actuality"]
+            if act_skip_crm:
+                cmd.append("--skip-crm")
+            write_last_actuality_attempt()
+            st.session_state.actuality_proc = launch(cmd)
+            st.session_state.actuality_autostarted = False
+            st.toast("Оновлення дати актуальності запущено!", icon="🔄")
+            st.rerun()
+
+        act_auto = st.checkbox(
+            "Запускати автоматично при старті (раз на добу)",
+            value=read_actuality_autostart(),
+            key="actuality_auto",
+        )
+        if act_auto != read_actuality_autostart():
+            write_actuality_autostart(act_auto)
+
+        render_proc_status(
+            "actuality_proc",
+            "Оновлення дати актуальності виконується...",
+            "Дату актуальності оновлено",
+        )
+
     # Масова публікація чернеток
     with st.container(border=True):
         st.markdown("**📤 Опублікувати чернетки** (rieltor.ua)")

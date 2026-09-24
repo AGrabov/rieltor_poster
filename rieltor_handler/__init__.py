@@ -1,3 +1,4 @@
+from .actuality_refresher import ActualityRefresher
 from .deals_mover import DealsMover
 from .published_offer_unpublisher import PublishedOfferUnpublisher
 from .rieltor_offer_poster import RieltorOfferPoster
@@ -11,5 +12,6 @@ __all__ = [
     "RieltorOfferPoster",
     "PublishedOfferUnpublisher",
     "DealsMover",
+    "ActualityRefresher",
     "run_collection",
 ]
