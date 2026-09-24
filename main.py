@@ -1274,6 +1274,7 @@ def phase_prune_stale(
         done: list[str] = []
         refreshed = 0
         completed = True
+        limit_reached = False
         with RieltorSession(
             RieltorCredentials(phone=phone, password=password),
             headless=headless,
@@ -1292,21 +1293,28 @@ def phase_prune_stale(
                             db.mark_skipped(estate_id, "закрито в CRM, записано в Мої угоди")
             if refresh:
                 try:
-                    outcome = ActualityRefresher(session.page).refresh_all(
+                    outcome = ActualityRefresher(session.page).refresh_in_priority_order(
                         max_count=max_refresh,
                         dry_run=dry_run,
                         progress_cb=lambda n: (n % HEARTBEAT_EVERY == 0) and write_actuality_heartbeat(),
                     )
                     refreshed, completed = outcome.done, outcome.completed
+                    limit_reached = outcome.limit_reached
                 except Exception as e:
                     logger.error("Оновлення дати актуальності обірвалося: %s", e, exc_info=debug)
                     completed = False
 
-        # Добу закриваємо лише за повним проходом: інакше частковий прогін
-        # (ліміт, обрив) мовчки лишив би решту оголошень до завтра, а прогін,
-        # де все вже свіже, навпаки ніколи не закривав би день.
-        if refresh and not dry_run and completed and not crm_failed:
+        # Добу закриваємо за повним проходом або коли сайт вичерпав свій ліміт
+        # (сьогодні він більше не дасть, тож смикати його щогодини марно).
+        # Інакше частковий прогін лишив би решту до завтра мовчки, а прогін, де
+        # все вже свіже, навпаки ніколи не закривав би день.
+        if refresh and not dry_run and (completed or limit_reached) and not crm_failed:
             write_last_actuality_refresh()
+            if limit_reached:
+                logger.warning(
+                    "Денний ліміт сайту вичерпано: піднято %d, решта — наступними днями",
+                    refreshed,
+                )
         elif refresh and not dry_run:
             logger.warning("Прохід неповний — добу не закриваємо, дашборд запропонує повторити")
 

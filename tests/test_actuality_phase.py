@@ -65,7 +65,7 @@ def phase(monkeypatch):
             def __init__(self, page):
                 pass
 
-            def refresh_all(self, max_count=None, dry_run=False, progress_cb=None):
+            def refresh_in_priority_order(self, max_count=None, dry_run=False, progress_cb=None):
                 return outcome
 
         monkeypatch.setattr(rieltor_handler, "ActualityRefresher", _FakeRefresher)
@@ -92,6 +92,13 @@ def test_interrupted_pass_does_not_close_the_day(phase):
     marks = phase(RefreshOutcome(done=42, completed=False))
     main_module.phase_prune_stale(refresh=True, skip_crm=True)
     assert marks == []
+
+
+def test_site_limit_closes_the_day(phase):
+    """Ліміт сайту вичерпано — сьогодні більше не дадуть, тож повторювати марно."""
+    marks = phase(RefreshOutcome(done=200, completed=False, limit_reached=True))
+    main_module.phase_prune_stale(refresh=True, skip_crm=True)
+    assert marks == ["день закрито"]
 
 
 def test_dry_run_never_closes_the_day(phase):

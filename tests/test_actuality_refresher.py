@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from rieltor_handler.actuality_refresher import ActualityPageError, ActualityRefresher
+from rieltor_handler.actuality_refresher import (
+    ActualityPageError,
+    ActualityRefresher,
+    RefreshOutcome,
+)
 
 
 class _FakeRefresher(ActualityRefresher):
@@ -31,12 +35,12 @@ class _FakeRefresher(ActualityRefresher):
         self.refreshed: list[str] = []
         self.page_reads: list[int] = []
 
-    def count(self) -> int:
+    def count(self, oper_type: int | None = None) -> int:
         return self._total
 
     MAX_PAGE_READS = 50  # запобіжник: регресія має впасти, а не зависнути
 
-    def _page_keys(self, page_no: int = 1) -> list[str]:
+    def _page_keys(self, page_no: int = 1, oper_type: int | None = None) -> list[str]:
         if self._page_error_after is not None and len(self.page_reads) >= self._page_error_after:
             raise ActualityPageError("таблиця не відрендерилась")
         if len(self.page_reads) >= self.MAX_PAGE_READS:
@@ -133,6 +137,115 @@ def test_api_ok_compares_id_as_text():
     assert ActualityRefresher._api_ok(200, '{"data":{"123":"ok"}}', 123) is True
 
 
+@pytest.mark.parametrize(
+    "status,body,expected",
+    [
+        (200, '{"data":{"13065703":"ok"},"status":"OK"}', "ok"),
+        # Сайт має денний ліміт на підняття дати (перевірено наживо: після ~200
+        # оновлень усі запити повертають саме це).
+        (200, '{"error":"refresh_update_limit","status":"ERROR"}', "limit"),
+        (200, '{"data":{"13065703":"error"},"status":"OK"}', "fail"),
+        (500, "", "fail"),
+    ],
+)
+def test_api_result(status, body, expected):
+    assert ActualityRefresher._api_result(status, body, "13065703") == expected
+
+
+class _LimitedRefresher(ActualityRefresher):
+    """Сайт віддає «ok» перші `allowed` разів, далі — ліміт."""
+
+    def __init__(self, keys: list[str], allowed: int) -> None:
+        self._keys = keys
+        self._allowed = allowed
+        self.refreshed: list[str] = []
+        self.clicks: list[str] = []
+
+    def count(self, oper_type: int | None = None) -> int:
+        return len(self._keys)
+
+    def _page_keys(self, page_no: int = 1, oper_type: int | None = None) -> list[str]:
+        return [k for k in self._keys if k not in self.refreshed]
+
+    def _refresh_via_api(self, key: str) -> str:
+        if len(self.refreshed) >= self._allowed:
+            return "limit"
+        self.refreshed.append(key)
+        return "ok"
+
+    def _refresh_via_click(self, key: str) -> bool:
+        self.clicks.append(key)
+        return True
+
+
+def test_refresh_all_stops_on_the_site_limit():
+    """Далі сайт усе одно відмовить — немає сенсу обходити решту бази."""
+    r = _LimitedRefresher(["a", "b", "c", "d", "e"], allowed=2)
+    outcome = r.refresh_all()
+    assert outcome.done == 2
+    assert outcome.limit_reached is True
+    assert outcome.completed is False
+
+
+def test_limit_never_falls_back_to_clicking():
+    """Клік при ліміті лише вдає успіх: діалог підтверджується, дата не рухається."""
+    r = _LimitedRefresher(["a", "b"], allowed=0)
+    r.refresh_all()
+    assert r.clicks == []
+
+
+# ── черга за строками зняття: спершу оренда ──────────────────────────
+
+
+class _PriorityRefresher(ActualityRefresher):
+    """Записує, якими фільтрами й з яким бюджетом ходив `refresh_all`."""
+
+    def __init__(self, outcomes: list[RefreshOutcome]) -> None:
+        self._outcomes = list(outcomes)
+        self.calls: list[tuple[int | None, int | None]] = []
+
+    def refresh_all(self, max_count=None, dry_run=False, progress_cb=None, oper_type=None):
+        self.calls.append((oper_type, max_count))
+        return self._outcomes.pop(0)
+
+
+def test_priority_order_takes_rent_first():
+    """Оренду знімають через 30 днів, продаж живе довше — тож оренда йде першою."""
+    r = _PriorityRefresher([RefreshOutcome(20, True), RefreshOutcome(30, True)])
+    outcome = r.refresh_in_priority_order()
+    assert [c[0] for c in r.calls] == [ActualityRefresher.OPER_RENT, None]
+    assert outcome.done == 50
+    assert outcome.completed is True
+
+
+def test_priority_order_shares_one_budget():
+    """--max-count — це спільний бюджет на обидва проходи, а не на кожен."""
+    r = _PriorityRefresher([RefreshOutcome(4, False), RefreshOutcome(6, False)])
+    r.refresh_in_priority_order(max_count=10)
+    assert r.calls == [(ActualityRefresher.OPER_RENT, 10), (None, 6)]
+
+
+def test_priority_order_stops_when_the_site_limit_hits():
+    """Ліміт вичерпано на оренді — продаж сьогодні вже не візьмеш."""
+    r = _PriorityRefresher([RefreshOutcome(200, False, limit_reached=True)])
+    outcome = r.refresh_in_priority_order()
+    assert len(r.calls) == 1
+    assert outcome.limit_reached is True
+    assert outcome.done == 200
+
+
+def test_priority_order_is_incomplete_if_any_pass_is():
+    r = _PriorityRefresher([RefreshOutcome(5, True), RefreshOutcome(5, False)])
+    assert r.refresh_in_priority_order().completed is False
+
+
+def test_priority_order_skips_second_pass_when_budget_is_spent():
+    r = _PriorityRefresher([RefreshOutcome(10, False)])
+    outcome = r.refresh_in_priority_order(max_count=10)
+    assert len(r.calls) == 1
+    assert outcome.done == 10
+
+
 # ── розбір рядків сторінки ───────────────────────────────────────────
 
 
@@ -174,9 +287,9 @@ class _ApiOrClickRefresher(ActualityRefresher):
         self.api_calls: list[str] = []
         self.click_calls: list[str] = []
 
-    def _refresh_via_api(self, key: str) -> bool:
+    def _refresh_via_api(self, key: str) -> str:
         self.api_calls.append(key)
-        return key not in self._api_fails
+        return "fail" if key in self._api_fails else "ok"
 
     def _refresh_via_click(self, key: str) -> bool:
         self.click_calls.append(key)

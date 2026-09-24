@@ -4,6 +4,15 @@
 піднімати регулярно — але лише тим об'єктам, які ще актуальні в CRM (закриті
 спершу йдуть у «Мої угоди», див. `DealsMover`).
 
+Це не лише про ранжування: без підтвердження сайт сам знімає оголошення в
+чернетки. Строки різні — оренду знімає рівно через 30 днів (перевірено наживо
+2026-09-24: 61 знятих оголошень, усі оренда, усі рівно 30 днів), продаж живе
+довше (активні висять і 78 днів). Тому `refresh_in_priority_order` бере спершу
+оренду (`operType=2`), а вже потім решту: у спільній черзі «найстаріші зверху»
+попереду йшов би продаж, і оренда на 29-му дні могла б не влізти в денний
+ліміт. Обсяги: ~795 оренди на 30 днів ≈ 27 підняттів на добу, тобто денного
+ліміту вистачає з запасом.
+
 Розмітка перевірена наживо (2026-09-24): масового виділення на вкладці немає —
 у рядках стоїть radio (`name="asd"`), тож вибрати можна лише один рядок, і
 кнопка «Оновити дату актуальності» в тулбарі працює так само по одному. Тому
@@ -21,7 +30,14 @@
 і їде вниз, звільняючи місце наступному найстарішому. Рядки «Сьог.» і «Вчора»
 пропускаємо: сайт приймає повторний клік і відповідає «ok», але дату не рухає.
 
-`refresh_all` повертає `RefreshOutcome(done, completed)`: `completed=False`
+У сайту є свій ліміт на підняття дати: після ~200 оновлень поспіль API віддає
+`{"error":"refresh_update_limit","status":"ERROR"}` (перевірено наживо
+2026-09-24), і клік у такому стані лише вдає успіх — діалог підтверджується, а
+дата не рухається. Тому ліміт зупиняє весь прохід, а не тягне фолбек. Практично
+це означає ~200 оголошень за добу: база з 1700 оновлюється приблизно за тиждень
+щоденних запусків, найстаріші — першими.
+
+`refresh_all` повертає `RefreshOutcome(done, completed, limit_reached)`: `completed=False`
 означає обірваний прохід (ліміт, помилка сторінки, серія невдач) — після такого
 добу закривати не можна, інакше решта оголошень лишиться до завтра.
 
@@ -53,11 +69,16 @@ class ActualityPageError(Exception):
     """
 
 
+class ActualityLimitReached(Exception):
+    """Сайт вичерпав свій ліміт підняттів дати — сьогодні більше не дасть."""
+
+
 class RefreshOutcome(NamedTuple):
-    """Результат проходу: скільки оновлено і чи дійшли до кінця."""
+    """Результат проходу: скільки оновлено, чи дійшли до кінця, чи спинив ліміт сайту."""
 
     done: int
     completed: bool
+    limit_reached: bool = False
 
 
 class ActualityRefresher:
@@ -72,6 +93,10 @@ class ActualityRefresher:
     )
     # select «На сторінці» дає максимум 200 → більше рядків на одну сторінку сайт не віддає.
     PAGE_LIMIT = 200
+    # Фільтр «Розділ» у шапці таблиці: operType=2 — оренда, 1 — продаж
+    # (перевірено наживо; параметр лишається в URL сторінки).
+    OPER_RENT = 2
+    OPER_SALE = 1
     COUNT_LIMIT = 25  # для читання лічильника достатньо малого ліміту
     TABLE = "table"
     ROW = "table tbody tr"
@@ -84,6 +109,7 @@ class ActualityRefresher:
     # замість ~6 с на клік, а кліки лишаються фолбеком.
     API_REFRESH_TMPL = "https://rieltor.ua/api/offers/item-action/?id={id}&action=refresh"
     REQUEST_DELAY_SEC = 0.3
+    LIMIT_MARKER = "refresh_update_limit"  # денний ліміт сайту на підняття дати
     DIALOG = "div[role='dialog']"
     DIALOG_CONFIRM = "div[role='dialog'] button:has-text('OK')"
     PAGINATION_TOOLBAR = "[class*='MuiTablePagination-toolbar']"
@@ -117,6 +143,22 @@ class ActualityRefresher:
         except (ValueError, AttributeError):
             return False
         return data.get(str(key)) == "ok"
+
+    @classmethod
+    def _api_result(cls, status: int, body: str | None, key: str) -> str:
+        """Розібрати відповідь: "ok" | "limit" | "fail".
+
+        `limit` — сайт відмовив через свій ліміт на підняття дати
+        (`{"error":"refresh_update_limit","status":"ERROR"}`, перевірено наживо
+        2026-09-24 після ~200 оновлень поспіль). Це не проблема конкретного
+        рядка, а стоп для всього проходу: решта запитів теж відмовить, а клік
+        у такому стані лише вдає успіх — діалог підтверджується, дата не рухається.
+        """
+        if cls._api_ok(status, body, key):
+            return "ok"
+        if body and cls.LIMIT_MARKER in body:
+            return "limit"
+        return "fail"
 
     @classmethod
     def _parse_total(cls, text: str | None) -> int | None:
@@ -171,11 +213,51 @@ class ActualityRefresher:
             keys.append(m.group(1))
         return keys, fresh, unknown
 
+    def refresh_in_priority_order(
+        self,
+        max_count: int | None = None,
+        dry_run: bool = False,
+        progress_cb: Callable[[int], None] | None = None,
+    ) -> RefreshOutcome:
+        """Пройти спершу оренду, потім усе інше.
+
+        Строки автозняття різні: оренду сайт знімає рівно через 30 днів без
+        підтвердження (перевірено наживо 2026-09-24 на 61 знятому оголошенні —
+        усі оренда, усі рівно 30 днів), а продаж висить і 78 днів. Спільне
+        сортування «найстаріші зверху» виносить наперед саме продаж, тож оренда
+        на 29-му дні могла б не влізти в денний ліміт і поїхати в чернетки.
+
+        Другий прохід іде без фільтра: оренда там уже свіжа («Вчора») і просто
+        пропускається, тож повторної роботи немає.
+
+        Args:
+            max_count: спільний бюджет на обидва проходи.
+        """
+        done = 0
+        completed = True
+        for oper_type in (self.OPER_RENT, None):
+            budget = None if max_count is None else max_count - done
+            if budget is not None and budget <= 0:
+                completed = False
+                break
+            outcome = self.refresh_all(
+                max_count=budget,
+                dry_run=dry_run,
+                progress_cb=progress_cb,
+                oper_type=oper_type,
+            )
+            done += outcome.done
+            completed = completed and outcome.completed
+            if outcome.limit_reached:
+                return RefreshOutcome(done, False, limit_reached=True)
+        return RefreshOutcome(done, completed)
+
     def refresh_all(
         self,
         max_count: int | None = None,
         dry_run: bool = False,
         progress_cb: Callable[[int], None] | None = None,
+        oper_type: int | None = None,
     ) -> RefreshOutcome:
         """Підняти дату актуальності всім опублікованим оголошенням.
 
@@ -196,27 +278,29 @@ class ActualityRefresher:
             прохід обірвався (ліміт, помилка сторінки, серія невдач), тож
             добу закривати не можна.
         """
-        total = self.count()
+        total = self.count(oper_type)
+        scope = {self.OPER_RENT: "оренда", self.OPER_SALE: "продаж"}.get(oper_type, "усі")
         if total <= 0:
-            logger.info("Опублікованих оголошень немає — нічого оновлювати")
+            logger.info("Опублікованих оголошень немає (%s) — нічого оновлювати", scope)
             return RefreshOutcome(0, True)
 
         logger.info(
-            "Оновлення дати актуальності: %d оголошень на сайті (max_count=%s, dry_run=%s)",
+            "Оновлення дати актуальності [%s]: %d оголошень на сайті (max_count=%s, dry_run=%s)",
+            scope,
             total,
             max_count,
             dry_run,
         )
 
         if dry_run:
-            return self._count_stale(total, max_count)
+            return self._count_stale(total, max_count, oper_type)
 
         processed: set[str] = set()
         done = 0
         failures = 0
         while max_count is None or done < max_count:
             try:
-                keys = [k for k in self._page_keys() if k not in processed]
+                keys = [k for k in self._page_keys(oper_type=oper_type) if k not in processed]
             except ActualityPageError as e:
                 logger.error("Прохід обірвано: %s", e)
                 return RefreshOutcome(done, False)
@@ -228,7 +312,16 @@ class ActualityRefresher:
                     logger.info("Досягнуто ліміту %d", max_count)
                     break
                 processed.add(key)
-                if self._refresh_row(key):
+                try:
+                    refreshed_row = self._refresh_row(key)
+                except ActualityLimitReached as e:
+                    logger.warning(
+                        "Денний ліміт сайту на підняття дати вичерпано (%s). Оновлено %d — решта чекає наступного дня",
+                        e,
+                        done,
+                    )
+                    return RefreshOutcome(done, False, limit_reached=True)
+                if refreshed_row:
                     done += 1
                     failures = 0
                     logger.info("Оновлено %s (%d)", key, done)
@@ -247,14 +340,14 @@ class ActualityRefresher:
         logger.info("Оновлення дати актуальності завершено: %d оголошень", done)
         return RefreshOutcome(done, max_count is None)
 
-    def _count_stale(self, total: int, max_count: int | None) -> RefreshOutcome:
+    def _count_stale(self, total: int, max_count: int | None, oper_type: int | None = None) -> RefreshOutcome:
         """Скільки рядків потребують оновлення (dry-run: обходимо сторінки, не клікаючи)."""
         seen: set[str] = set()
         for page_no in self._page_plan(total):
             if max_count is not None and len(seen) >= max_count:
                 break
             try:
-                keys = self._page_keys(page_no)
+                keys = self._page_keys(page_no, oper_type)
             except ActualityPageError as e:
                 logger.error("Сторінку %d не прочитано: %s", page_no, e)
                 return RefreshOutcome(len(seen), False)
@@ -268,8 +361,9 @@ class ActualityRefresher:
 
     # ── браузерні методи (перевіряються на живому сайті) ─────────────
 
-    def _url(self, page_no: int, limit: int) -> str:
-        return self.PUBLISHED_URL_TMPL.format(page=max(1, page_no), limit=max(1, limit))
+    def _url(self, page_no: int, limit: int, oper_type: int | None = None) -> str:
+        url = self.PUBLISHED_URL_TMPL.format(page=max(1, page_no), limit=max(1, limit))
+        return f"{url}&operType={oper_type}" if oper_type else url
 
     def _goto(self, url: str) -> bool:
         """Відкрити сторінку списку. False — таблиця так і не відрендерилась."""
@@ -288,9 +382,9 @@ class ActualityRefresher:
             logger.warning("Таблиця «Опубліковані» не з'явилася за %d мс", self.RENDER_TIMEOUT_MS)
             return False
 
-    def count(self) -> int:
+    def count(self, oper_type: int | None = None) -> int:
         """Скільки оголошень на вкладці «Опубліковані» (з MUI-пагінації)."""
-        self._goto(self._url(1, self.COUNT_LIMIT))
+        self._goto(self._url(1, self.COUNT_LIMIT, oper_type))
         try:
             toolbar = self.page.locator(self.PAGINATION_TOOLBAR).first
             toolbar.wait_for(state="visible", timeout=self.RENDER_TIMEOUT_MS)
@@ -304,7 +398,7 @@ class ActualityRefresher:
 
         # Фолбек: рахуємо видимі рядки — але на повній сторінці, інакше вийде
         # щонайбільше COUNT_LIMIT і dry-run недорахує сторінок.
-        self._goto(self._url(1, self.PAGE_LIMIT))
+        self._goto(self._url(1, self.PAGE_LIMIT, oper_type))
         n = self.page.locator(self.ROW).count()
         logger.warning("Лічильник не зчитано — рахуємо видимі рядки: %d (може бути занижено)", n)
         return n
@@ -313,7 +407,7 @@ class ActualityRefresher:
         """Локатор рядка, що містить посилання редагування з цим ID."""
         return self.page.locator(f"tr:has(a[href*='/offers/edit/{rieltor_offer_id}'])").first
 
-    def _page_keys(self, page_no: int = 1) -> list[str]:
+    def _page_keys(self, page_no: int = 1, oper_type: int | None = None) -> list[str]:
         """ID оголошень сторінки, чию дату актуальності ще треба підняти.
 
         Raises:
@@ -321,7 +415,7 @@ class ActualityRefresher:
                 логін). Порожній список означає інше — «рядків немає», тобто
                 чесно оброблену сторінку.
         """
-        if not self._goto(self._url(page_no, self.PAGE_LIMIT)):
+        if not self._goto(self._url(page_no, self.PAGE_LIMIT, oper_type)):
             raise ActualityPageError(f"сторінка {page_no} не відрендерилась")
 
         # Читаємо всі рядки одним проходом у браузері: по локатору на рядок
@@ -358,27 +452,38 @@ class ActualityRefresher:
         return keys
 
     def _refresh_row(self, key: str) -> bool:
-        """Підняти дату одного оголошення: спершу запитом, інакше — кліком."""
-        if self._refresh_via_api(key):
+        """Підняти дату одного оголошення: спершу запитом, інакше — кліком.
+
+        Raises:
+            ActualityLimitReached: сайт вичерпав денний ліміт підняттів.
+        """
+        result = self._refresh_via_api(key)
+        if result == "ok":
             return True
+        if result == "limit":
+            raise ActualityLimitReached(f"сайт відмовив на оголошенні {key}")
         logger.info("Оголошення %s: запит не спрацював — пробуємо кнопку в рядку", key)
         return self._refresh_via_click(key)
 
-    def _refresh_via_api(self, key: str) -> bool:
-        """Той самий запит, що шле кнопка підтвердження (куки беремо із сесії)."""
+    def _refresh_via_api(self, key: str) -> str:
+        """Той самий запит, що шле кнопка підтвердження (куки беремо із сесії).
+
+        Returns:
+            "ok" | "limit" | "fail".
+        """
         try:
             resp = self.page.request.get(self.API_REFRESH_TMPL.format(id=key))
             body = resp.text()
-            ok = self._api_ok(resp.status, body, key)
-            if not ok:
+            result = self._api_result(resp.status, body, key)
+            if result != "ok":
                 logger.warning("Оголошення %s: відповідь %s %s", key, resp.status, body[:200])
         except Exception as e:
             logger.warning("Оголошення %s: запит не вдався: %s", key, e)
-            ok = False
+            result = "fail"
         # Пауза, щоб не лупити сайт чергою запитів упритул (і після збою теж —
         # якщо сайт відмовляє, поспіх лише погіршить справу).
         self.page.wait_for_timeout(int(self.REQUEST_DELAY_SEC * 1000))
-        return ok
+        return result
 
     def _refresh_via_click(self, key: str) -> bool:
         """Клік по іконці актуальності в рядку + підтвердження діалогу."""
