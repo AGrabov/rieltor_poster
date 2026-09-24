@@ -1152,6 +1152,7 @@ def phase_prune_stale(
     dry_run: bool = False,
     refresh: bool = False,
     max_refresh: int | None = None,
+    refresh_delay: float | None = None,
     skip_crm: bool = False,
     headless: bool = True,
     debug: bool = False,
@@ -1173,6 +1174,7 @@ def phase_prune_stale(
         max_refresh: окремий ліміт на підняття дати (щоб `--max-count` для
             угод не різав заразом і оновлення). Прогін із лімітом не вважаємо
             повним, тож добу він не закриває.
+        refresh_delay: пауза між запитами підняття, с (дефолт — у рефрешері).
         skip_crm: не звірятися з CRM (для ПК поза мережею компанії) —
             має сенс лише разом із `refresh`.
 
@@ -1293,7 +1295,8 @@ def phase_prune_stale(
                             db.mark_skipped(estate_id, "закрито в CRM, записано в Мої угоди")
             if refresh:
                 try:
-                    outcome = ActualityRefresher(session.page).refresh_in_priority_order(
+                    refresher = ActualityRefresher(session.page, request_delay_sec=refresh_delay)
+                    outcome = refresher.refresh_in_priority_order(
                         max_count=max_refresh,
                         dry_run=dry_run,
                         progress_cb=lambda n: (n % HEARTBEAT_EVERY == 0) and write_actuality_heartbeat(),
@@ -1304,17 +1307,18 @@ def phase_prune_stale(
                     logger.error("Оновлення дати актуальності обірвалося: %s", e, exc_info=debug)
                     completed = False
 
-        # Добу закриваємо за повним проходом або коли сайт вичерпав свій ліміт
-        # (сьогодні він більше не дасть, тож смикати його щогодини марно).
-        # Інакше частковий прогін лишив би решту до завтра мовчки, а прогін, де
-        # все вже свіже, навпаки ніколи не закривав би день.
-        if refresh and not dry_run and (completed or limit_reached) and not crm_failed:
+        # Добу закриваємо лише за повним проходом. Ліміт сайту тимчасовий
+        # (перевірено наживо: вночі відмова, за кілька годин знову працює), тож
+        # після нього день лишається відкритим — дашборд повторить і добере
+        # наступну порцію. Інакше частковий прогін лишив би решту до завтра
+        # мовчки, а прогін, де все вже свіже, навпаки ніколи не закривав би день.
+        if refresh and not dry_run and completed and not crm_failed:
             write_last_actuality_refresh()
-            if limit_reached:
-                logger.warning(
-                    "Денний ліміт сайту вичерпано: піднято %d, решта — наступними днями",
-                    refreshed,
-                )
+        elif refresh and not dry_run and limit_reached:
+            logger.warning(
+                "Сайт тимчасово не дає піднімати далі: піднято %d. Добу не закриваємо — наступний запуск добере решту",
+                refreshed,
+            )
         elif refresh and not dry_run:
             logger.warning("Прохід неповний — добу не закриваємо, дашборд запропонує повторити")
 
@@ -1936,6 +1940,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_refresh.add_argument("--max-count", type=int, help="Макс. кількість оновлених оголошень")
     p_refresh.add_argument("--dry-run", action="store_true", help="Лише показати, нічого не натискати")
     p_refresh.add_argument(
+        "--delay",
+        type=float,
+        help="Пауза між запитами підняття, с (дефолт 2.0 — сайт обмежує темп)",
+    )
+    p_refresh.add_argument(
         "--skip-crm",
         action="store_true",
         help="Не звірятися з CRM (коли вона недоступна) — лише підняти дату актуальності",
@@ -2076,6 +2085,7 @@ def main() -> None:
                     dry_run=args.dry_run,
                     refresh=True,
                     max_refresh=args.max_count,
+                    refresh_delay=args.delay,
                     skip_crm=args.skip_crm,
                     headless=headless,
                     debug=args.debug,

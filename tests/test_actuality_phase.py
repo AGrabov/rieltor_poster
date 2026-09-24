@@ -62,7 +62,7 @@ def phase(monkeypatch):
 
     def _with_outcome(outcome: RefreshOutcome):
         class _FakeRefresher:
-            def __init__(self, page):
+            def __init__(self, page, request_delay_sec=None):
                 pass
 
             def refresh_in_priority_order(self, max_count=None, dry_run=False, progress_cb=None):
@@ -94,11 +94,12 @@ def test_interrupted_pass_does_not_close_the_day(phase):
     assert marks == []
 
 
-def test_site_limit_closes_the_day(phase):
-    """Ліміт сайту вичерпано — сьогодні більше не дадуть, тож повторювати марно."""
+def test_site_limit_leaves_the_day_open(phase):
+    """Ліміт тимчасовий (перевірено наживо: вночі відмова, вранці знову працює),
+    тож добу лишаємо відкритою — дашборд повторить і добере наступну порцію."""
     marks = phase(RefreshOutcome(done=200, completed=False, limit_reached=True))
     main_module.phase_prune_stale(refresh=True, skip_crm=True)
-    assert marks == ["день закрито"]
+    assert marks == []
 
 
 def test_dry_run_never_closes_the_day(phase):

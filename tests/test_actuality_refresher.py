@@ -76,6 +76,20 @@ def test_page_plan(total, expected):
     assert _plain()._page_plan(total, limit=200) == expected
 
 
+def test_default_pause_is_gentle_enough():
+    """Сайт обмежує темп, тож пауза між запитами — не декоративна."""
+    assert ActualityRefresher.REQUEST_DELAY_SEC >= 2.0
+
+
+def test_pause_can_be_tuned_per_run():
+    r = ActualityRefresher.__new__(ActualityRefresher)
+    r.__init__(page=None, request_delay_sec=5.0)
+    assert r.request_delay_sec == 5.0
+    r2 = ActualityRefresher.__new__(ActualityRefresher)
+    r2.__init__(page=None)
+    assert r2.request_delay_sec == ActualityRefresher.REQUEST_DELAY_SEC
+
+
 def test_page_limit_matches_site_maximum():
     """Сайт не віддає більше 200 рядків на сторінку — план сторінок на цьому тримається."""
     assert ActualityRefresher.PAGE_LIMIT == 200

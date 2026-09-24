@@ -226,6 +226,12 @@ def test_cli_refresh_actuality_asks_for_refresh(monkeypatch):
     assert got["max_refresh"] == 5
 
 
+def test_cli_refresh_actuality_passes_delay(monkeypatch):
+    got = _run_cli(monkeypatch, ["refresh-actuality", "--delay", "4.5"])
+    assert got["refresh_delay"] == 4.5
+    assert _run_cli(monkeypatch, ["refresh-actuality"])["refresh_delay"] is None
+
+
 def test_cli_prune_stale_max_count_does_not_limit_the_refresh(monkeypatch):
     """--max-count у prune-stale обмежує угоди, а не підняття дати."""
     got = _run_cli(monkeypatch, ["prune-stale", "--refresh", "--max-count", "10"])

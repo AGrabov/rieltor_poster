@@ -30,12 +30,16 @@
 і їде вниз, звільняючи місце наступному найстарішому. Рядки «Сьог.» і «Вчора»
 пропускаємо: сайт приймає повторний клік і відповідає «ok», але дату не рухає.
 
-У сайту є свій ліміт на підняття дати: після ~200 оновлень поспіль API віддає
-`{"error":"refresh_update_limit","status":"ERROR"}` (перевірено наживо
-2026-09-24), і клік у такому стані лише вдає успіх — діалог підтверджується, а
-дата не рухається. Тому ліміт зупиняє весь прохід, а не тягне фолбек. Практично
-це означає ~200 оголошень за добу: база з 1700 оновлюється приблизно за тиждень
-щоденних запусків, найстаріші — першими.
+Сайт обмежує темп підняттів: після ~200 поспіль API віддає
+`{"error":"refresh_update_limit","status":"ERROR"}`, і клік у такому стані лише
+вдає успіх — діалог підтверджується, а дата не рухається. Тому ліміт зупиняє
+весь прохід, а не тягне фолбек.
+
+Ліміт тимчасовий: о 03:47 сайт відмовляв, о 09:30 того ж дня знову приймав
+(перевірено наживо 2026-09-24). Тому прогін із лімітом НЕ закриває добу —
+наступний запуск добере решту. З тієї ж причини між запитами тримаємо паузу
+`REQUEST_DELAY_SEC` (2 с): денна норма — десятки оголошень, поспішати нікуди,
+а повільний темп рідше впирається в обмеження.
 
 `refresh_all` повертає `RefreshOutcome(done, completed, limit_reached)`: `completed=False`
 означає обірваний прохід (ліміт, помилка сторінки, серія невдач) — після такого
@@ -108,8 +112,11 @@ class ActualityRefresher:
     # `{"data":{"<id>":"ok"},"status":"OK"}`. Через нього оновлення йде ~0.4 с
     # замість ~6 с на клік, а кліки лишаються фолбеком.
     API_REFRESH_TMPL = "https://rieltor.ua/api/offers/item-action/?id={id}&action=refresh"
-    REQUEST_DELAY_SEC = 0.3
-    LIMIT_MARKER = "refresh_update_limit"  # денний ліміт сайту на підняття дати
+    # Пауза між запитами. Сайт обмежує темп (`refresh_update_limit`), причому
+    # ліміт тимчасовий — за кілька годин відпускає. Тому йдемо повільно: 2 с на
+    # оголошення — це ~40 денної норми за півтори хвилини, поспішати нікуди.
+    REQUEST_DELAY_SEC = 2.0
+    LIMIT_MARKER = "refresh_update_limit"  # сайт тимчасово не дає піднімати далі
     DIALOG = "div[role='dialog']"
     DIALOG_CONFIRM = "div[role='dialog'] button:has-text('OK')"
     PAGINATION_TOOLBAR = "[class*='MuiTablePagination-toolbar']"
@@ -125,8 +132,9 @@ class ActualityRefresher:
     # годину лупити таймаутами по решті бази — виходимо з ознакою «не завершено».
     MAX_CONSECUTIVE_FAILURES = 10
 
-    def __init__(self, page: Page) -> None:
+    def __init__(self, page: Page, request_delay_sec: float | None = None) -> None:
         self.page = page
+        self.request_delay_sec = self.REQUEST_DELAY_SEC if request_delay_sec is None else request_delay_sec
 
     # ── чиста логіка (юніт-тести) ────────────────────────────────────
 
@@ -482,7 +490,7 @@ class ActualityRefresher:
             result = "fail"
         # Пауза, щоб не лупити сайт чергою запитів упритул (і після збою теж —
         # якщо сайт відмовляє, поспіх лише погіршить справу).
-        self.page.wait_for_timeout(int(self.REQUEST_DELAY_SEC * 1000))
+        self.page.wait_for_timeout(int(self.request_delay_sec * 1000))
         return result
 
     def _refresh_via_click(self, key: str) -> bool:
